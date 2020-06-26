@@ -111,6 +111,7 @@ arm/mv/a37x0_iic.c				optional a37x0_iic iicbus fdt
 arm/mv/a37x0_spi.c				optional a37x0_spi spibus fdt
 arm/mv/armada38x/armada38x_rtc.c		optional mv_rtc fdt
 arm/mv/gpio.c					optional mv_gpio fdt
+arm/mv/mvebu_gpio.c				optional mv_gpio fdt
 arm/mv/mvebu_pinctrl.c				optional mvebu_pinctrl fdt
 arm/mv/mv_ap806_clock.c				optional SOC_MARVELL_8K fdt
 arm/mv/mv_ap806_gicp.c				optional mv_ap806_gicp fdt
@@ -186,6 +187,8 @@ arm64/cavium/thunder_pcie_common.c	optional	soc_cavm_thunderx pci
 arm64/cloudabi32/cloudabi32_sysvec.c	optional compat_cloudabi32
 arm64/cloudabi64/cloudabi64_sysvec.c	optional compat_cloudabi64
 arm64/coresight/coresight.c			standard
+arm64/coresight/coresight_acpi.c		optional acpi
+arm64/coresight/coresight_fdt.c			optional fdt
 arm64/coresight/coresight_if.m			standard
 arm64/coresight/coresight_cmd.c			standard
 arm64/coresight/coresight_cpu_debug.c		standard
