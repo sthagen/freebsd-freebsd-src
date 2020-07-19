@@ -3557,7 +3557,7 @@ mmu_radix_init()
 	int error, i, pv_npg;
 
 	/* L1TF, reserve page @0 unconditionally */
-	vm_page_excludelist_add(0, bootverbose);
+	vm_page_blacklist_add(0, bootverbose);
 
 	zone_radix_pgd = uma_zcache_create("radix_pgd_cache",
 		RADIX_PGD_SIZE, NULL, NULL,
@@ -5846,8 +5846,10 @@ mmu_radix_unmapdev(vm_offset_t va, vm_size_t size)
 	size = round_page(offset + size);
 	va = trunc_page(va);
 
-	if (pmap_initialized)
+	if (pmap_initialized) {
+		mmu_radix_qremove(va, atop(size));
 		kva_free(va, size);
+	}
 }
 
 static __inline void
