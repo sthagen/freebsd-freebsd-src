@@ -58,18 +58,18 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_page.h>
 #include <vm/vm_pager.h>
 #include <vm/vm_map.h>
+#include <contrib/dev/acpica/include/acpi.h>
+#include <contrib/dev/acpica/include/accommon.h>
+#include <dev/pci/pcireg.h>
+#include <dev/pci/pcivar.h>
 #include <machine/atomic.h>
 #include <machine/bus.h>
 #include <machine/md_var.h>
 #include <machine/specialreg.h>
-#include <contrib/dev/acpica/include/acpi.h>
-#include <contrib/dev/acpica/include/accommon.h>
 #include <x86/include/busdma_impl.h>
-#include <x86/iommu/intel_reg.h>
 #include <dev/iommu/busdma_iommu.h>
-#include <dev/pci/pcireg.h>
+#include <x86/iommu/intel_reg.h>
 #include <x86/iommu/intel_dmar.h>
-#include <dev/pci/pcivar.h>
 
 static MALLOC_DEFINE(M_DMAR_CTX, "dmar_ctx", "Intel DMAR Context");
 static MALLOC_DEFINE(M_DMAR_DOMAIN, "dmar_dom", "Intel DMAR Domain");
@@ -196,7 +196,7 @@ ctx_id_entry_init(struct dmar_ctx *ctx, dmar_ctx_entry_t *ctxp, bool move,
 		    IOMMU_PGF_NOALLOC);
 	}
 
-	if (dmar_is_buswide_ctx(unit, busno)) {
+	if (iommu_is_buswide_ctx((struct iommu_unit *)unit, busno)) {
 		MPASS(!move);
 		for (i = 0; i <= PCI_BUSMAX; i++) {
 			ctx_id_entry_init_one(&ctxp[i], domain, ctx_root);
@@ -341,6 +341,7 @@ dmar_domain_alloc(struct dmar_unit *dmar, bool id_mapped)
 	mtx_init(&domain->iodom.lock, "dmardom", NULL, MTX_DEF);
 	domain->dmar = dmar;
 	domain->iodom.iommu = &dmar->iommu;
+	domain_pgtbl_init(domain);
 
 	/*
 	 * For now, use the maximal usable physical address of the
@@ -464,6 +465,7 @@ dmar_get_ctx_for_dev1(struct dmar_unit *dmar, device_t dev, uint16_t rid,
 {
 	struct dmar_domain *domain, *domain1;
 	struct dmar_ctx *ctx, *ctx1;
+	struct iommu_unit *unit;
 	dmar_ctx_entry_t *ctxp;
 	struct sf_buf *sf;
 	int bus, slot, func, error;
@@ -480,9 +482,10 @@ dmar_get_ctx_for_dev1(struct dmar_unit *dmar, device_t dev, uint16_t rid,
 	}
 	enable = false;
 	TD_PREP_PINNED_ASSERT;
+	unit = (struct iommu_unit *)dmar;
 	DMAR_LOCK(dmar);
-	KASSERT(!dmar_is_buswide_ctx(dmar, bus) || (slot == 0 && func == 0),
-	    ("dmar%d pci%d:%d:%d get_ctx for buswide", dmar->iommu.unit, bus,
+	KASSERT(!iommu_is_buswide_ctx(unit, bus) || (slot == 0 && func == 0),
+	    ("iommu%d pci%d:%d:%d get_ctx for buswide", dmar->iommu.unit, bus,
 	    slot, func));
 	ctx = dmar_find_ctx_locked(dmar, rid);
 	error = 0;
@@ -840,15 +843,17 @@ dmar_domain_unload(struct dmar_domain *domain,
     struct iommu_map_entries_tailq *entries, bool cansleep)
 {
 	struct dmar_unit *unit;
+	struct iommu_domain *iodom;
 	struct iommu_map_entry *entry, *entry1;
 	int error;
 
+	iodom = (struct iommu_domain *)domain;
 	unit = (struct dmar_unit *)domain->iodom.iommu;
 
 	TAILQ_FOREACH_SAFE(entry, entries, dmamap_link, entry1) {
 		KASSERT((entry->flags & IOMMU_MAP_ENTRY_MAP) != 0,
 		    ("not mapped entry %p %p", domain, entry));
-		error = domain_unmap_buf(domain, entry->start, entry->end -
+		error = iodom->ops->unmap(iodom, entry->start, entry->end -
 		    entry->start, cansleep ? IOMMU_PGF_WAITOK : 0);
 		KASSERT(error == 0, ("unmap %p error %d", domain, error));
 		if (!unit->qi_enabled) {

@@ -58,15 +58,15 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_page.h>
 #include <vm/vm_pager.h>
 #include <vm/vm_map.h>
+#include <dev/pci/pcireg.h>
 #include <machine/atomic.h>
 #include <machine/bus.h>
 #include <machine/cpu.h>
 #include <machine/md_var.h>
 #include <machine/specialreg.h>
 #include <x86/include/busdma_impl.h>
-#include <x86/iommu/intel_reg.h>
 #include <dev/iommu/busdma_iommu.h>
-#include <dev/pci/pcireg.h>
+#include <x86/iommu/intel_reg.h>
 #include <x86/iommu/intel_dmar.h>
 
 static int domain_unmap_buf_locked(struct dmar_domain *domain,
@@ -498,7 +498,7 @@ domain_map_buf_locked(struct dmar_domain *domain, iommu_gaddr_t base,
 	return (0);
 }
 
-int
+static int
 domain_map_buf(struct iommu_domain *iodom, iommu_gaddr_t base,
     iommu_gaddr_t size, vm_page_t *ma, uint64_t eflags, int flags)
 {
@@ -684,11 +684,14 @@ domain_unmap_buf_locked(struct dmar_domain *domain, iommu_gaddr_t base,
 	return (0);
 }
 
-int
-domain_unmap_buf(struct dmar_domain *domain, iommu_gaddr_t base,
+static int
+domain_unmap_buf(struct iommu_domain *iodom, iommu_gaddr_t base,
     iommu_gaddr_t size, int flags)
 {
+	struct dmar_domain *domain;
 	int error;
+
+	domain = (struct dmar_domain *)iodom;
 
 	DMAR_DOMAIN_PGLOCK(domain);
 	error = domain_unmap_buf_locked(domain, base, size, flags);
@@ -808,4 +811,18 @@ domain_flush_iotlb_sync(struct dmar_domain *domain, iommu_gaddr_t base,
 		}
 	}
 	DMAR_UNLOCK(unit);
+}
+
+static const struct iommu_domain_map_ops dmar_domain_map_ops = {
+	.map = domain_map_buf,
+	.unmap = domain_unmap_buf,
+};
+
+void
+domain_pgtbl_init(struct dmar_domain *domain)
+{
+	struct iommu_domain *iodom;
+
+	iodom = (struct iommu_domain *)domain;
+	iodom->ops = &dmar_domain_map_ops;
 }
