@@ -233,7 +233,7 @@ udf_mount(struct mount *mp)
 	NDFREE(ndp, NDF_ONLY_PNBUF);
 	devvp = ndp->ni_vp;
 
-	if (vn_isdisk(devvp, &error) == 0) {
+	if (!vn_isdisk_error(devvp, &error)) {
 		vput(devvp);
 		return (error);
 	}
@@ -445,7 +445,6 @@ udf_mountfs(struct vnode *devvp, struct mount *mp)
 		error = EINVAL;
 		goto bail;
 	}
-
 
 	/*
 	 * Grab the Fileset Descriptor
@@ -673,7 +672,7 @@ udf_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 	}
 
 	bcopy(bp->b_data, unode->fentry, size);
-	
+
 	brelse(bp);
 	bp = NULL;
 

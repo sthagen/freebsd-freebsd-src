@@ -131,16 +131,11 @@ cubic_ack_received(struct cc_var *ccv, uint16_t type)
 	cubic_record_rtt(ccv);
 
 	/*
-	 * Regular ACK and we're not in cong/fast recovery and we're cwnd
-	 * limited and we're either not doing ABC or are just coming out
-	 * from slow-start or were application limited or are slow starting
-	 * or are doing ABC and we've sent a cwnd's worth of bytes.
+	 * For a regular ACK and we're not in cong/fast recovery and
+	 * we're cwnd limited, always recalculate cwnd.
 	 */
 	if (type == CC_ACK && !IN_RECOVERY(CCV(ccv, t_flags)) &&
-	    (ccv->flags & CCF_CWND_LIMITED) && (!V_tcp_do_rfc3465 ||
-	    (cubic_data->flags & (CUBICFLAG_IN_SLOWSTART | CUBICFLAG_IN_APPLIMIT)) ||
-	    CCV(ccv, snd_cwnd) <= CCV(ccv, snd_ssthresh) ||
-	    (V_tcp_do_rfc3465 && (ccv->flags & CCF_ABC_SENTAWND)))) {
+	    (ccv->flags & CCF_CWND_LIMITED)) {
 		 /* Use the logic in NewReno ack_received() for slow start. */
 		if (CCV(ccv, snd_cwnd) <= CCV(ccv, snd_ssthresh) ||
 		    cubic_data->min_rtt_ticks == TCPTV_SRTTBASE) {
@@ -193,15 +188,8 @@ cubic_ack_received(struct cc_var *ccv, uint16_t type)
 				 * cwnd growth.
 				 * Only update snd_cwnd, if it doesn't shrink.
 				 */
-				if (V_tcp_do_rfc3465)
-					CCV(ccv, snd_cwnd) = ulmin(w_cubic_next,
-					    INT_MAX);
-				else
-					CCV(ccv, snd_cwnd) += ulmax(1,
-					    ((ulmin(w_cubic_next, INT_MAX) -
-					    CCV(ccv, snd_cwnd)) *
-					    CCV(ccv, t_maxseg)) /
-					    CCV(ccv, snd_cwnd));
+				CCV(ccv, snd_cwnd) = ulmin(w_cubic_next,
+				    INT_MAX);
 			}
 
 			/*
@@ -242,7 +230,6 @@ cubic_after_idle(struct cc_var *ccv)
 	newreno_cc_algo.after_idle(ccv);
 	cubic_data->t_last_cong = ticks;
 }
-
 
 static void
 cubic_cb_destroy(struct cc_var *ccv)
@@ -475,7 +462,6 @@ cubic_ssthresh_update(struct cc_var *ccv)
 	}
 	CCV(ccv, snd_ssthresh) = max(ssthresh, 2 * CCV(ccv, t_maxseg));
 }
-
 
 DECLARE_CC_MODULE(cubic, &cubic_cc_algo);
 MODULE_VERSION(cubic, 1);

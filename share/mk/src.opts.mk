@@ -80,6 +80,7 @@ __DEFAULT_YES_OPTIONS = \
     CLANG \
     CLANG_BOOTSTRAP \
     CLANG_IS_CC \
+    CLEAN \
     CPP \
     CROSS_COMPILER \
     CRYPT \
@@ -213,6 +214,7 @@ __DEFAULT_NO_OPTIONS = \
     LOADER_FORCE_LE \
     LOADER_VERBOSE \
     LOADER_VERIEXEC_PASS_MANIFEST \
+    MALLOC_PRODUCTION \
     OFED_EXTRA \
     OPENLDAP \
     REPRODUCIBLE_BUILD \
@@ -359,7 +361,8 @@ BROKEN_OPTIONS+=HYPERV
 BROKEN_OPTIONS+=NVME
 .endif
 
-.if ${__T} == "amd64" || ${__T} == "i386" || ${__T} == "powerpc64"
+.if ${__T} == "aarch64" || ${__T} == "amd64" || ${__T} == "i386" || \
+    ${__T} == "powerpc64"
 __DEFAULT_YES_OPTIONS+=OPENMP
 .else
 __DEFAULT_NO_OPTIONS+=OPENMP
@@ -457,11 +460,6 @@ MK_AUTHPF:=	no
 
 .if ${MK_OFED} == "no"
 MK_OFED_EXTRA:=	no
-.endif
-
-.if ${MK_PORTSNAP} == "no"
-# freebsd-update depends on phttpget from portsnap
-MK_FREEBSD_UPDATE:=	no
 .endif
 
 .if ${MK_TESTS} == "no"

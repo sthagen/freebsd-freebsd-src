@@ -459,7 +459,6 @@ vmcb_init(struct svm_softc *sc, int vcpu, uint64_t iopm_base_pa,
 			svm_enable_intercept(sc, vcpu, VMCB_CR_INTCPT, mask);
 	}
 
-
 	/*
 	 * Intercept everything when tracing guest exceptions otherwise
 	 * just intercept machine check exception.
@@ -560,7 +559,7 @@ svm_vminit(struct vm *vm, pmap_t pmap)
 		panic("contigmalloc of SVM IO bitmap failed");
 
 	svm_sc->vm = vm;
-	svm_sc->nptp = (vm_offset_t)vtophys(pmap->pm_pml4);
+	svm_sc->nptp = (vm_offset_t)vtophys(pmap->pm_pmltop);
 
 	/*
 	 * Intercept read and write accesses to all MSRs.
@@ -821,7 +820,7 @@ npf_fault_type(uint64_t exitinfo1)
 static bool
 svm_npf_emul_fault(uint64_t exitinfo1)
 {
-	
+
 	if (exitinfo1 & VMCB_NPF_INFO1_ID) {
 		return (false);
 	}

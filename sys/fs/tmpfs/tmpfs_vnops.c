@@ -1144,10 +1144,7 @@ tmpfs_rename(struct vop_rename_args *v)
 	tmpfs_dir_attach(tdvp, de);
 
 	if (tmpfs_use_nc(fvp)) {
-		cache_purge(fvp);
-		if (tvp != NULL)
-			cache_purge(tvp);
-		cache_purge_negative(tdvp);
+		cache_rename(fdvp, fvp, tdvp, tvp, fcnp, tcnp);
 	}
 
 	error = 0;
@@ -1246,7 +1243,6 @@ tmpfs_rmdir(struct vop_rmdir_args *v)
 		error = EPERM;
 		goto out;
 	}
-
 
 	/* Detach the directory entry from the directory (dnode). */
 	tmpfs_dir_detach(dvp, de);
@@ -1439,8 +1435,6 @@ tmpfs_reclaim(struct vop_reclaim_args *v)
 	if (vp->v_type == VREG)
 		tmpfs_destroy_vobject(vp, node->tn_reg.tn_aobj);
 	vp->v_object = NULL;
-	if (tmpfs_use_nc(vp))
-		cache_purge(vp);
 
 	TMPFS_NODE_LOCK(node);
 	tmpfs_free_vp(vp);

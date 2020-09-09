@@ -42,7 +42,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/malloc.h>
 #include <sys/systm.h> 
 #include <sys/endian.h>
- 
+
 #include <sys/socket.h>
 
 #include <net/if.h>
@@ -1957,7 +1957,7 @@ ieee80211_vht_get_vhtflags(struct ieee80211_node *ni, uint32_t htflags)
 		    (MS(vap->iv_vhtcaps,
 		     IEEE80211_VHTCAP_SUPP_CHAN_WIDTH_MASK) == 2) &&
 		    (vap->iv_flags_vht & IEEE80211_FVHT_USEVHT80P80)) {
-			vhtflags = IEEE80211_CHAN_VHT80_80;
+			vhtflags = IEEE80211_CHAN_VHT80P80;
 			/* Mirror the HT40 flags */
 			if (htflags == IEEE80211_CHAN_HT40U) {
 				vhtflags |= IEEE80211_CHAN_HT40U;
@@ -2914,7 +2914,6 @@ ieee80211_send_bar(struct ieee80211_node *ni,
 	uint16_t barctl, barseqctl;
 	uint8_t *frm;
 	int tid, ret;
-
 
 	IEEE80211_NOTE(tap->txa_ni->ni_vap, IEEE80211_MSG_11N,
 	    tap->txa_ni,
