@@ -28,7 +28,7 @@
 .\"     From: @(#)ifconfig.8	8.3 (Berkeley) 1/5/94
 .\" $FreeBSD$
 .\"
-.Dd June 4, 2020
+.Dd October 21, 2020
 .Dt IFCONFIG 8
 .Os
 .Sh NAME
@@ -582,12 +582,12 @@ they support in their capabilities.
 is a synonym for enabling all available WOL mechanisms.
 To disable WOL use
 .Fl wol .
-.It Cm vlanmtu , vlanhwtag, vlanhwfilter, vlanhwcsum, vlanhwtso
+.It Cm vlanmtu , vlanhwtag , vlanhwfilter , vlanhwcsum , vlanhwtso
 If the driver offers user-configurable VLAN support, enable
 reception of extended frames, tag processing in hardware,
 frame filtering in hardware, checksum offloading, or TSO on VLAN,
 respectively.
-Note that this must be issued on a physical interface associated with
+Note that this must be configured on a physical interface associated with
 .Xr vlan 4 ,
 not on a
 .Xr vlan 4
@@ -597,6 +597,21 @@ If the driver offers user-configurable VLAN support, disable
 reception of extended frames, tag processing in hardware,
 frame filtering in hardware, or TSO on VLAN,
 respectively.
+.It Cm vxlanhwcsum , vxlanhwtso
+If the driver offers user-configurable VXLAN support, enable inner checksum
+offloading (receive and transmit) or TSO on VXLAN, respectively.
+Note that this must be configured on a physical interface associated with
+.Xr vxlan 4 ,
+not on a
+.Xr vxlan 4
+interface itself.
+The physical interface is either the interface specified as the vxlandev
+or the interface hosting the vxlanlocal address.
+The driver will offload as much checksum work and TSO as it can reliably
+support, the exact level of offloading may vary between drivers.
+.It Fl vxlanhwcsum , vxlanhwtso
+If the driver offers user-configurable VXLAN support, disable checksum
+offloading (receive and transmit) or TSO on VXLAN, respectively.
 .It Cm vnet Ar jail
 Move the interface to the
 .Xr jail 8 ,
@@ -2466,6 +2481,12 @@ Set to 0 to disable.
 .Pp
 The following parameters are specific to lagg interfaces:
 .Bl -tag -width indent
+.It Cm laggtype Ar type
+When creating a lagg interface the type can be specified as either
+.Cm ethernet
+or
+.Cm infiniband .
+If not specified ethernet is the default lagg type.
 .It Cm laggport Ar interface
 Add the interface named by
 .Ar interface
@@ -2681,7 +2702,7 @@ interfaces:
 Set the VLAN tag value to
 .Ar vlan_tag .
 This value is a 12-bit VLAN Identifier (VID) which is used to create an 802.1Q
-VLAN header for packets sent from the
+or 802.1ad VLAN header for packets sent from the
 .Xr vlan 4
 interface.
 Note that
@@ -2689,6 +2710,15 @@ Note that
 and
 .Cm vlandev
 must both be set at the same time.
+.It Cm vlanproto Ar vlan_proto
+Set the VLAN encapsulation protocol to
+.Ar vlan_proto .
+Supported encapsulation protocols are currently
+.Dq 802.1Q
+and
+.Dq 802.1ad .
+The default encapsulation protocol is
+.Dq 802.1Q .
 .It Cm vlanpcp Ar priority_code_point
 Priority code point
 .Pq Dv PCP

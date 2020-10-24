@@ -335,22 +335,22 @@ pl061_pic_setup_intr(device_t dev, struct intr_irqsrc *isrc,
 
 	PL061_LOCK(sc);
 
-	if (mask & GPIO_INTR_EDGE_BOTH) {
+	if (mode & GPIO_INTR_EDGE_BOTH) {
 		mask_and_set(sc, PL061_INTBOTHEDGES, mask, mask);
 		mask_and_set(sc, PL061_INTSENSE, mask, 0);
-	} else if (mask & GPIO_INTR_EDGE_RISING) {
+	} else if (mode & GPIO_INTR_EDGE_RISING) {
 		mask_and_set(sc, PL061_INTBOTHEDGES, mask, 0);
 		mask_and_set(sc, PL061_INTSENSE, mask, 0);
 		mask_and_set(sc, PL061_INTEVENT, mask, mask);
-	} else if (mask & GPIO_INTR_EDGE_FALLING) {
+	} else if (mode & GPIO_INTR_EDGE_FALLING) {
 		mask_and_set(sc, PL061_INTBOTHEDGES, mask, 0);
 		mask_and_set(sc, PL061_INTSENSE, mask, 0);
 		mask_and_set(sc, PL061_INTEVENT, mask, 0);
-	} else if (mask & GPIO_INTR_LEVEL_HIGH) {
+	} else if (mode & GPIO_INTR_LEVEL_HIGH) {
 		mask_and_set(sc, PL061_INTBOTHEDGES, mask, 0);
 		mask_and_set(sc, PL061_INTSENSE, mask, mask);
 		mask_and_set(sc, PL061_INTEVENT, mask, mask);
-	} else if (mask & GPIO_INTR_LEVEL_LOW) {
+	} else if (mode & GPIO_INTR_LEVEL_LOW) {
 		mask_and_set(sc, PL061_INTBOTHEDGES, mask, 0);
 		mask_and_set(sc, PL061_INTSENSE, mask, mask);
 		mask_and_set(sc, PL061_INTEVENT, mask, 0);
@@ -553,6 +553,11 @@ static device_method_t pl061_methods[] = {
 	DEVMETHOD(device_attach,	pl061_attach),
 	DEVMETHOD(device_detach,	pl061_detach),
 
+	/* Bus interface */
+	DEVMETHOD(bus_setup_intr,	bus_generic_setup_intr),
+	DEVMETHOD(bus_activate_resource,	bus_generic_activate_resource),
+	DEVMETHOD(bus_deactivate_resource,	bus_generic_deactivate_resource),
+
 	/* GPIO protocol */
 	DEVMETHOD(gpio_get_bus,		pl061_get_bus),
 	DEVMETHOD(gpio_pin_max,		pl061_pin_max),
@@ -577,4 +582,4 @@ static device_method_t pl061_methods[] = {
 	DEVMETHOD_END
 };
 
-DEFINE_CLASS_0(pl061, pl061_driver, pl061_methods, sizeof(struct pl061_softc));
+DEFINE_CLASS_0(gpio, pl061_driver, pl061_methods, sizeof(struct pl061_softc));

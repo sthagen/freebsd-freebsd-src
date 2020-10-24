@@ -52,6 +52,7 @@ struct thread;
 struct uio;
 struct knote;
 struct vnode;
+struct nameidata;
 
 #endif /* _KERNEL */
 
@@ -268,6 +269,7 @@ fo_fill_kinfo_t	vn_fill_kinfo;
 int vn_fill_kinfo_vnode(struct vnode *vp, struct kinfo_file *kif);
 
 void finit(struct file *, u_int, short, void *, struct fileops *);
+void finit_vnode(struct file *, u_int, void *, struct fileops *);
 int fgetvp(struct thread *td, int fd, cap_rights_t *rightsp,
     struct vnode **vpp);
 int fgetvp_exec(struct thread *td, int fd, cap_rights_t *rightsp,
@@ -278,6 +280,7 @@ int fgetvp_read(struct thread *td, int fd, cap_rights_t *rightsp,
     struct vnode **vpp);
 int fgetvp_write(struct thread *td, int fd, cap_rights_t *rightsp,
     struct vnode **vpp);
+int fgetvp_lookup_smr(int fd, struct nameidata *ndp, struct vnode **vpp, bool *fsearch);
 
 static __inline __result_use_check bool
 fhold(struct file *fp)

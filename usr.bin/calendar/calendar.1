@@ -28,7 +28,7 @@
 .\"     @(#)calendar.1  8.1 (Berkeley) 6/29/93
 .\" $FreeBSD$
 .\"
-.Dd July 24, 2016
+.Dd Oktober 23, 2020
 .Dt CALENDAR 1
 .Os
 .Sh NAME
@@ -70,9 +70,24 @@ Print lines from today and the next
 .Ar num
 days (forward, future).
 .It Fl a
-Process the ``calendar'' files of all users and mail the results
+Process the ``calendar'' files for users found in
+.Pa /etc/passwd
+and mail the results
 to them.
-This requires super-user privileges.
+This can result in multiple messages for specific files, since
+.Pa /etc/passwd
+does not require home directories to be unique.
+In particular, by default
+.Ar root ,
+.Ar toor
+and
+.Ar daemon
+share the same home directory.
+If this directory contains calendar information,
+.Nm
+will process the file three times.
+.Pp
+This option requires super-user privileges.
 .It Fl B Ar num
 Print lines from today and the previous
 .Ar num
@@ -185,7 +200,7 @@ internally, allowing the inclusion of shared files such as
 lists of company holidays or meetings.
 This limited subset consists of \fB#include #ifndef #endif\fR and \fB#define\fR.
 If the shared file is not referenced by a full pathname,
-.Xr calendar 1
+.Nm
 searches in the current (or home) directory first, and then in the
 directory
 .Pa /usr/share/calendar .
@@ -230,10 +245,18 @@ A chdir is done into this directory if it exists.
 calendar file to use if no calendar file exists in the current directory.
 .It Pa ~/.calendar/nomail
 do not send mail if this file exists.
+.It Pa /usr/share/calendar
+system wide location of calendar files provided as part of the base system.
+.It Pa /usr/local/share/calendar
+system wide location for calendar files provided by a port or package.
 .El
 .Pp
+The order of precedence in searches for a calendar file is:
+current directory, ~/.calendar, /usr/local/share/calendar, /usr/share/calendar.
+Files of similar names are ignored in lower precedence locations.
+.Pp
 The following default calendar files are provided in
-.Pa /usr/share/calendar:
+.Pa /usr/share/calendar :
 .Pp
 .Bl -tag -width calendar.southafrica -compact
 .It Pa calendar.all
