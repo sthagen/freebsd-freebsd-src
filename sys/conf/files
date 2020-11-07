@@ -1312,8 +1312,8 @@ dev/ath/ath_rate/sample/sample.c	optional ath_rate_sample \
 dev/ath/ath_dfs/null/dfs_null.c	optional ath \
 	compile-with "${NORMAL_C} -I$S/dev/ath"
 #
-dev/backlight/backlight_if.m		optional backlight
-dev/backlight/backlight.c		optional backlight
+dev/backlight/backlight_if.m		optional backlight | compat_linuxkpi
+dev/backlight/backlight.c		optional backlight | compat_linuxkpi
 dev/bce/if_bce.c			optional bce
 dev/bfe/if_bfe.c			optional bfe
 dev/bge/if_bge.c			optional bge
@@ -1516,7 +1516,7 @@ t4fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t4fw.fwo"
 t4fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t4fw-1.25.0.0.bin"	\
+	dependency	"$S/dev/cxgbe/firmware/t4fw-1.25.0.40.bin"	\
 	compile-with	"${CP} ${.ALLSRC} ${.TARGET}"			\
 	no-obj no-implicit-rule						\
 	clean		"t4fw.fw"
@@ -1550,7 +1550,7 @@ t5fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t5fw.fwo"
 t5fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t5fw-1.25.0.0.bin"	\
+	dependency	"$S/dev/cxgbe/firmware/t5fw-1.25.0.40.bin"	\
 	compile-with	"${CP} ${.ALLSRC} ${.TARGET}"			\
 	no-obj no-implicit-rule						\
 	clean		"t5fw.fw"
@@ -1584,7 +1584,7 @@ t6fw.fwo		optional cxgbe					\
 	no-implicit-rule						\
 	clean		"t6fw.fwo"
 t6fw.fw			optional cxgbe					\
-	dependency	"$S/dev/cxgbe/firmware/t6fw-1.25.0.0.bin"	\
+	dependency	"$S/dev/cxgbe/firmware/t6fw-1.25.0.40.bin"	\
 	compile-with	"${CP} ${.ALLSRC} ${.TARGET}"			\
 	no-obj no-implicit-rule						\
 	clean		"t6fw.fw"

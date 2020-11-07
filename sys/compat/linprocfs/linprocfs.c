@@ -1886,7 +1886,7 @@ linprocfs_init(PFS_INIT_ARGS)
 	pfs_create_link(dir, "exe", &procfs_doprocfile,
 	    NULL, &procfs_notsystem, NULL, 0);
 	pfs_create_file(dir, "maps", &linprocfs_doprocmaps,
-	    NULL, NULL, NULL, PFS_RD);
+	    NULL, NULL, NULL, PFS_RD | PFS_AUTODRAIN);
 	pfs_create_file(dir, "mem", &linprocfs_doprocmem,
 	    procfs_attr_rw, &procfs_candebug, NULL, PFS_RDWR | PFS_RAW);
 	pfs_create_file(dir, "mounts", &linprocfs_domtab,

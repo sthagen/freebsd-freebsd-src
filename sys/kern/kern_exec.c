@@ -225,6 +225,7 @@ sys_execve(struct thread *td, struct execve_args *uap)
 	if (error == 0)
 		error = kern_execve(td, &args, NULL, oldvmspace);
 	post_execve(td, error, oldvmspace);
+	AUDIT_SYSCALL_EXIT(error == EJUSTRETURN ? 0 : error, td);
 	return (error);
 }
 
@@ -252,6 +253,7 @@ sys_fexecve(struct thread *td, struct fexecve_args *uap)
 		error = kern_execve(td, &args, NULL, oldvmspace);
 	}
 	post_execve(td, error, oldvmspace);
+	AUDIT_SYSCALL_EXIT(error == EJUSTRETURN ? 0 : error, td);
 	return (error);
 }
 
@@ -280,6 +282,7 @@ sys___mac_execve(struct thread *td, struct __mac_execve_args *uap)
 	if (error == 0)
 		error = kern_execve(td, &args, uap->mac_p, oldvmspace);
 	post_execve(td, error, oldvmspace);
+	AUDIT_SYSCALL_EXIT(error == EJUSTRETURN ? 0 : error, td);
 	return (error);
 #else
 	return (ENOSYS);
@@ -1057,7 +1060,8 @@ exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
 		sv_minuser = sv->sv_minuser;
 	else
 		sv_minuser = MAX(sv->sv_minuser, PAGE_SIZE);
-	if (vmspace->vm_refcnt == 1 && vm_map_min(map) == sv_minuser &&
+	if (refcount_load(&vmspace->vm_refcnt) == 1 &&
+	    vm_map_min(map) == sv_minuser &&
 	    vm_map_max(map) == sv->sv_maxuser &&
 	    cpu_exec_vmspace_reuse(p, map)) {
 		shmexit(vmspace);
