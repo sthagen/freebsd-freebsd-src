@@ -1453,7 +1453,7 @@ zfs_lookup_lock(vnode_t *dvp, vnode_t *vp, const char *name, int lkflags)
 		ASSERT_VOP_LOCKED(dvp, __func__);
 #ifdef DIAGNOSTIC
 	if ((zdp->z_pflags & ZFS_XATTR) == 0)
-		VERIFY(!RRM_LOCK_HELD(&zfsvfs->z_teardown_lock));
+		VERIFY(!ZFS_TEARDOWN_HELD(zfsvfs));
 #endif
 
 	if (name[0] == 0 || (name[0] == '.' && name[1] == 0)) {
@@ -2273,6 +2273,16 @@ zfs_mkdir(znode_t *dzp, const char *dirname, vattr_t *vap, znode_t **zpp,
 	return (0);
 }
 
+#if	__FreeBSD_version < 1300124
+static void
+cache_vop_rmdir(struct vnode *dvp, struct vnode *vp)
+{
+
+	cache_purge(dvp);
+	cache_purge(vp);
+}
+#endif
+
 /*
  * Remove a directory subdir entry.  If the current working
  * directory is the same as the subdir to be removed, the
@@ -2342,7 +2352,7 @@ zfs_rmdir_(vnode_t *dvp, vnode_t *vp, const char *name, cred_t *cr)
 
 	dmu_tx_commit(tx);
 
-	cache_purge(vp);
+	cache_vop_rmdir(dvp, vp);
 out:
 	if (zfsvfs->z_os->os_sync == ZFS_SYNC_ALWAYS)
 		zil_commit(zilog, 0);
@@ -3901,7 +3911,7 @@ zfs_rename_check(znode_t *szp, znode_t *sdzp, znode_t *tdzp)
 
 #if	__FreeBSD_version < 1300110
 static void
-cache_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
+cache_vop_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
     struct vnode *tvp, struct componentname *fcnp, struct componentname *tcnp)
 {
 
@@ -4170,7 +4180,7 @@ zfs_rename_(vnode_t *sdvp, vnode_t **svpp, struct componentname *scnp,
 			}
 		}
 		if (error == 0) {
-			cache_rename(sdvp, *svpp, tdvp, *tvpp, scnp, tcnp);
+			cache_vop_rename(sdvp, *svpp, tdvp, *tvpp, scnp, tcnp);
 		}
 	}
 
@@ -4639,13 +4649,13 @@ zfs_inactive(vnode_t *vp, cred_t *cr, caller_context_t *ct)
 	zfsvfs_t *zfsvfs = zp->z_zfsvfs;
 	int error;
 
-	ZFS_RLOCK_TEARDOWN_INACTIVE(zfsvfs);
+	ZFS_TEARDOWN_INACTIVE_ENTER_READ(zfsvfs);
 	if (zp->z_sa_hdl == NULL) {
 		/*
 		 * The fs has been unmounted, or we did a
 		 * suspend/resume and this file no longer exists.
 		 */
-		ZFS_RUNLOCK_TEARDOWN_INACTIVE(zfsvfs);
+		ZFS_TEARDOWN_INACTIVE_EXIT_READ(zfsvfs);
 		vrecycle(vp);
 		return;
 	}
@@ -4654,7 +4664,7 @@ zfs_inactive(vnode_t *vp, cred_t *cr, caller_context_t *ct)
 		/*
 		 * Fast path to recycle a vnode of a removed file.
 		 */
-		ZFS_RUNLOCK_TEARDOWN_INACTIVE(zfsvfs);
+		ZFS_TEARDOWN_INACTIVE_EXIT_READ(zfsvfs);
 		vrecycle(vp);
 		return;
 	}
@@ -4674,7 +4684,7 @@ zfs_inactive(vnode_t *vp, cred_t *cr, caller_context_t *ct)
 			dmu_tx_commit(tx);
 		}
 	}
-	ZFS_RUNLOCK_TEARDOWN_INACTIVE(zfsvfs);
+	ZFS_TEARDOWN_INACTIVE_EXIT_READ(zfsvfs);
 }
 
 
@@ -5841,10 +5851,10 @@ zfs_freebsd_need_inactive(struct vop_need_inactive_args *ap)
 	if (vn_need_pageq_flush(vp))
 		return (1);
 
-	if (!ZFS_TRYRLOCK_TEARDOWN_INACTIVE(zfsvfs))
+	if (!ZFS_TEARDOWN_INACTIVE_TRY_ENTER_READ(zfsvfs))
 		return (1);
 	need = (zp->z_sa_hdl == NULL || zp->z_unlinked || zp->z_atime_dirty);
-	ZFS_RUNLOCK_TEARDOWN_INACTIVE(zfsvfs);
+	ZFS_TEARDOWN_INACTIVE_EXIT_READ(zfsvfs);
 
 	return (need);
 }
@@ -5875,12 +5885,12 @@ zfs_freebsd_reclaim(struct vop_reclaim_args *ap)
 	 * zfs_znode_dmu_fini in zfsvfs_teardown during
 	 * force unmount.
 	 */
-	ZFS_RLOCK_TEARDOWN_INACTIVE(zfsvfs);
+	ZFS_TEARDOWN_INACTIVE_ENTER_READ(zfsvfs);
 	if (zp->z_sa_hdl == NULL)
 		zfs_znode_free(zp);
 	else
 		zfs_zinactive(zp);
-	ZFS_RUNLOCK_TEARDOWN_INACTIVE(zfsvfs);
+	ZFS_TEARDOWN_INACTIVE_EXIT_READ(zfsvfs);
 
 	vp->v_data = NULL;
 	return (0);
@@ -6540,7 +6550,7 @@ zfs_lock(struct vop_lock1_args *ap)
 		zp = vp->v_data;
 		if (vp->v_mount != NULL && !VN_IS_DOOMED(vp) &&
 		    zp != NULL && (zp->z_pflags & ZFS_XATTR) == 0)
-			VERIFY(!RRM_LOCK_HELD(&zp->z_zfsvfs->z_teardown_lock));
+			VERIFY(!ZFS_TEARDOWN_HELD(zp->z_zfsvfs));
 	}
 	return (err);
 }

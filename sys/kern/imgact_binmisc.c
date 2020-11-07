@@ -29,17 +29,14 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/ctype.h>
-#include <sys/sbuf.h>
-#include <sys/systm.h>
-#include <sys/sysproto.h>
 #include <sys/exec.h>
 #include <sys/imgact.h>
 #include <sys/imgact_binmisc.h>
 #include <sys/kernel.h>
-#include <sys/libkern.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/sbuf.h>
 #include <sys/sysctl.h>
 #include <sys/sx.h>
 
@@ -97,9 +94,19 @@ MALLOC_DEFINE(M_BINMISC, KMOD_NAME, "misc binary image activator");
 static SLIST_HEAD(, imgact_binmisc_entry) interpreter_list =
 	SLIST_HEAD_INITIALIZER(interpreter_list);
 
-static int interp_list_entry_count = 0;
+static int interp_list_entry_count;
 
 static struct sx interp_list_sx;
+
+#define	INTERP_LIST_WLOCK()		sx_xlock(&interp_list_sx)
+#define	INTERP_LIST_RLOCK()		sx_slock(&interp_list_sx)
+#define	INTERP_LIST_WUNLOCK()		sx_xunlock(&interp_list_sx)
+#define	INTERP_LIST_RUNLOCK()		sx_sunlock(&interp_list_sx)
+
+#define	INTERP_LIST_LOCK_INIT()		sx_init(&interp_list_sx, KMOD_NAME)
+#define	INTERP_LIST_LOCK_DESTROY()	sx_destroy(&interp_list_sx)
+
+#define	INTERP_LIST_ASSERT_LOCKED()	sx_assert(&interp_list_sx, SA_LOCKED)
 
 /*
  * Populate the entry with the information about the interpreter.
@@ -201,7 +208,7 @@ imgact_binmisc_find_entry(char *name)
 {
 	imgact_binmisc_entry_t *ibe;
 
-	sx_assert(&interp_list_sx, SA_LOCKED);
+	INTERP_LIST_ASSERT_LOCKED();
 
 	SLIST_FOREACH(ibe, &interpreter_list, link) {
 		if (strncmp(name, ibe->ibe_name, IBE_NAME_MAX) == 0)
@@ -259,9 +266,9 @@ imgact_binmisc_add_entry(ximgact_binmisc_entry_t *xbe)
 		}
 	}
 
-	sx_xlock(&interp_list_sx);
+	INTERP_LIST_WLOCK();
 	if (imgact_binmisc_find_entry(xbe->xbe_name) != NULL) {
-		sx_xunlock(&interp_list_sx);
+		INTERP_LIST_WUNLOCK();
 		return (EEXIST);
 	}
 
@@ -270,7 +277,7 @@ imgact_binmisc_add_entry(ximgact_binmisc_entry_t *xbe)
 
 	SLIST_INSERT_HEAD(&interpreter_list, ibe, link);
 	interp_list_entry_count++;
-	sx_xunlock(&interp_list_sx);
+	INTERP_LIST_WUNLOCK();
 
 	return (0);
 }
@@ -284,14 +291,14 @@ imgact_binmisc_remove_entry(char *name)
 {
 	imgact_binmisc_entry_t *ibe;
 
-	sx_xlock(&interp_list_sx);
+	INTERP_LIST_WLOCK();
 	if ((ibe = imgact_binmisc_find_entry(name)) == NULL) {
-		sx_xunlock(&interp_list_sx);
+		INTERP_LIST_WUNLOCK();
 		return (ENOENT);
 	}
 	SLIST_REMOVE(&interpreter_list, ibe, imgact_binmisc_entry, link);
 	interp_list_entry_count--;
-	sx_xunlock(&interp_list_sx);
+	INTERP_LIST_WUNLOCK();
 
 	imgact_binmisc_destroy_entry(ibe);
 
@@ -307,14 +314,14 @@ imgact_binmisc_disable_entry(char *name)
 {
 	imgact_binmisc_entry_t *ibe;
 
-	sx_xlock(&interp_list_sx);
+	INTERP_LIST_WLOCK();
 	if ((ibe = imgact_binmisc_find_entry(name)) == NULL) {
-		sx_xunlock(&interp_list_sx);
+		INTERP_LIST_WUNLOCK();
 		return (ENOENT);
 	}
 
 	ibe->ibe_flags &= ~IBF_ENABLED;
-	sx_xunlock(&interp_list_sx);
+	INTERP_LIST_WUNLOCK();
 
 	return (0);
 }
@@ -328,14 +335,14 @@ imgact_binmisc_enable_entry(char *name)
 {
 	imgact_binmisc_entry_t *ibe;
 
-	sx_xlock(&interp_list_sx);
+	INTERP_LIST_WLOCK();
 	if ((ibe = imgact_binmisc_find_entry(name)) == NULL) {
-		sx_xunlock(&interp_list_sx);
+		INTERP_LIST_WUNLOCK();
 		return (ENOENT);
 	}
 
 	ibe->ibe_flags |= IBF_ENABLED;
-	sx_xunlock(&interp_list_sx);
+	INTERP_LIST_WUNLOCK();
 
 	return (0);
 }
@@ -346,8 +353,7 @@ imgact_binmisc_populate_xbe(ximgact_binmisc_entry_t *xbe,
 {
 	uint32_t i;
 
-	sx_assert(&interp_list_sx, SA_LOCKED);
-
+	INTERP_LIST_ASSERT_LOCKED();
 	memset(xbe, 0, sizeof(*xbe));
 	strlcpy(xbe->xbe_name, ibe->ibe_name, IBE_NAME_MAX);
 
@@ -378,14 +384,14 @@ imgact_binmisc_lookup_entry(char *name, ximgact_binmisc_entry_t *xbe)
 	imgact_binmisc_entry_t *ibe;
 	int error = 0;
 
-	sx_slock(&interp_list_sx);
+	INTERP_LIST_RLOCK();
 	if ((ibe = imgact_binmisc_find_entry(name)) == NULL) {
-		sx_sunlock(&interp_list_sx);
+		INTERP_LIST_RUNLOCK();
 		return (ENOENT);
 	}
 
 	error = imgact_binmisc_populate_xbe(xbe, ibe);
-	sx_sunlock(&interp_list_sx);
+	INTERP_LIST_RUNLOCK();
 
 	return (error);
 }
@@ -400,7 +406,7 @@ imgact_binmisc_get_all_entries(struct sysctl_req *req)
 	imgact_binmisc_entry_t *ibe;
 	int error = 0, count;
 
-	sx_slock(&interp_list_sx);
+	INTERP_LIST_RLOCK();
 	count = interp_list_entry_count;
 	xbe = malloc(sizeof(*xbe) * count, M_BINMISC, M_WAITOK|M_ZERO);
 
@@ -410,7 +416,7 @@ imgact_binmisc_get_all_entries(struct sysctl_req *req)
 		if (error)
 			break;
 	}
-	sx_sunlock(&interp_list_sx);
+	INTERP_LIST_RUNLOCK();
 
 	if (!error)
 		error = SYSCTL_OUT(req, xbe, sizeof(*xbe) * count);
@@ -436,6 +442,8 @@ sysctl_kern_binmisc(SYSCTL_HANDLER_ARGS)
 		if (error)
 			return (error);
 		if (IBE_VERSION != xbe.xbe_version)
+			return (EINVAL);
+		if ((xbe.xbe_flags & ~IBF_VALID_UFLAGS) != 0)
 			return (EINVAL);
 		if (interp_list_entry_count == IBE_MAX_ENTRIES)
 			return (ENOSPC);
@@ -547,7 +555,7 @@ imgact_binmisc_find_interpreter(const char *image_header)
 	int i;
 	size_t sz;
 
-	sx_assert(&interp_list_sx, SA_LOCKED);
+	INTERP_LIST_ASSERT_LOCKED();
 
 	SLIST_FOREACH(ibe, &interpreter_list, link) {
 		if (!(IBF_ENABLED & ibe->ibe_flags))
@@ -583,24 +591,24 @@ imgact_binmisc_exec(struct image_params *imgp)
 	struct sbuf *sname;
 	char *s, *d;
 
+	sname = NULL;
 	/* Do we have an interpreter for the given image header? */
-	sx_slock(&interp_list_sx);
+	INTERP_LIST_RLOCK();
 	if ((ibe = imgact_binmisc_find_interpreter(image_header)) == NULL) {
-		sx_sunlock(&interp_list_sx);
-		return (-1);
+		error = -1;
+		goto done;
 	}
 
 	/* No interpreter nesting allowed. */
 	if (imgp->interpreted & IMGACT_BINMISC) {
-		sx_sunlock(&interp_list_sx);
-		return (ENOEXEC);
+		error = ENOEXEC;
+		goto done;
 	}
 
 	imgp->interpreted |= IMGACT_BINMISC;
 
 	if (imgp->args->fname != NULL) {
 		fname = imgp->args->fname;
-		sname = NULL;
 	} else {
 		/* Use the fdescfs(5) path for fexecve(2). */
 		sname = sbuf_new_auto();
@@ -639,7 +647,6 @@ imgact_binmisc_exec(struct image_params *imgp)
 
 		default:
 			/* Hmm... This shouldn't happen. */
-			sx_sunlock(&interp_list_sx);
 			printf("%s: Unknown macro #%c sequence in "
 			    "interpreter string\n", KMOD_NAME, *(s + 1));
 			error = EINVAL;
@@ -651,7 +658,6 @@ imgact_binmisc_exec(struct image_params *imgp)
 	/* Make room for the interpreter */
 	error = exec_args_adjust_args(imgp->args, 0, offset);
 	if (error != 0) {
-		sx_sunlock(&interp_list_sx);
 		goto done;
 	}
 
@@ -701,12 +707,11 @@ imgact_binmisc_exec(struct image_params *imgp)
 		s++;
 	}
 	*d = '\0';
-	sx_sunlock(&interp_list_sx);
 
-	if (!error)
-		imgp->interpreter_name = imgp->args->begin_argv;
+	imgp->interpreter_name = imgp->args->begin_argv;
 
 done:
+	INTERP_LIST_RUNLOCK();
 	if (sname)
 		sbuf_delete(sname);
 	return (error);
@@ -716,7 +721,7 @@ static void
 imgact_binmisc_init(void *arg)
 {
 
-	sx_init(&interp_list_sx, KMOD_NAME);
+	INTERP_LIST_LOCK_INIT();
 }
 
 static void
@@ -725,15 +730,15 @@ imgact_binmisc_fini(void *arg)
 	imgact_binmisc_entry_t *ibe, *ibe_tmp;
 
 	/* Free all the interpreters. */
-	sx_xlock(&interp_list_sx);
+	INTERP_LIST_WLOCK();
 	SLIST_FOREACH_SAFE(ibe, &interpreter_list, link, ibe_tmp) {
 		SLIST_REMOVE(&interpreter_list, ibe, imgact_binmisc_entry,
 		    link);
 		imgact_binmisc_destroy_entry(ibe);
 	}
-	sx_xunlock(&interp_list_sx);
+	INTERP_LIST_WUNLOCK();
 
-	sx_destroy(&interp_list_sx);
+	INTERP_LIST_LOCK_DESTROY();
 }
 
 SYSINIT(imgact_binmisc, SI_SUB_EXEC, SI_ORDER_MIDDLE, imgact_binmisc_init,
