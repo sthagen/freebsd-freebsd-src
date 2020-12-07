@@ -130,6 +130,7 @@ MAN=	aac.4 \
 	ddb.4 \
 	devctl.4 \
 	disc.4 \
+	disk.4 \
 	divert.4 \
 	${_dpms.4} \
 	ds1307.4 \
@@ -157,6 +158,7 @@ MAN=	aac.4 \
 	ffclock.4 \
 	filemon.4 \
 	firewire.4 \
+	${_ftwd.4} \
 	full.4 \
 	fwe.4 \
 	fwip.4 \
@@ -249,6 +251,7 @@ MAN=	aac.4 \
 	kld.4 \
 	ksyms.4 \
 	ksz8995ma.4 \
+	ktls.4 \
 	ktr.4 \
 	kue.4 \
 	lagg.4 \
@@ -445,6 +448,7 @@ MAN=	aac.4 \
 	rl.4 \
 	rndtest.4 \
 	route.4 \
+	rtsx.4 \
 	rtwn.4 \
 	rtwnfw.4 \
 	rtwn_pci.4 \
@@ -782,6 +786,7 @@ _chvgpio.4=	chvgpio.4
 _coretemp.4=	coretemp.4
 _cpuctl.4=	cpuctl.4
 _dpms.4=	dpms.4
+_ftwd.4=	ftwd.4
 _hpt27xx.4=	hpt27xx.4
 _hptiop.4=	hptiop.4
 _hptmv.4=	hptmv.4

@@ -1055,8 +1055,8 @@ ffs_mountfs(odevvp, mp, td)
 	BO_UNLOCK(&odevvp->v_bufobj);
 	if (dev->si_iosize_max != 0)
 		mp->mnt_iosize_max = dev->si_iosize_max;
-	if (mp->mnt_iosize_max > MAXPHYS)
-		mp->mnt_iosize_max = MAXPHYS;
+	if (mp->mnt_iosize_max > maxphys)
+		mp->mnt_iosize_max = maxphys;
 	if ((SBLOCKSIZE % cp->provider->sectorsize) != 0) {
 		error = EINVAL;
 		vfs_mount_error(mp,
@@ -1861,8 +1861,14 @@ loop:
 #ifdef QUOTA
 		qsyncvp(vp);
 #endif
-		if ((error = ffs_syncvnode(vp, waitfor, 0)) != 0)
-			allerror = error;
+		for (;;) {
+			error = ffs_syncvnode(vp, waitfor, 0);
+			if (error == ERELOOKUP)
+				continue;
+			if (error != 0)
+				allerror = error;
+			break;
+		}
 		vput(vp);
 	}
 	/*
@@ -2001,6 +2007,9 @@ ffs_vgetf(mp, ino, flags, vpp, ffs_flags)
 	ip->i_nextclustercg = -1;
 	ip->i_flag = fs->fs_magic == FS_UFS1_MAGIC ? 0 : IN_UFS2;
 	ip->i_mode = 0; /* ensure error cases below throw away vnode */
+#ifdef DIAGNOSTIC
+	ufs_init_trackers(ip);
+#endif
 #ifdef QUOTA
 	{
 		int i;

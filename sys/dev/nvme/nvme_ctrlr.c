@@ -1053,15 +1053,15 @@ nvme_ctrlr_start(void *ctrlr_arg, bool resetting)
 	 *  the number of I/O queues supported, so cannot reset
 	 *  the adminq again here.
 	 */
-	if (resetting)
+	if (resetting) {
 		nvme_qpair_reset(&ctrlr->adminq);
+		nvme_admin_qpair_enable(&ctrlr->adminq);
+	}
 
 	if (ctrlr->ioq != NULL) {
 		for (i = 0; i < ctrlr->num_io_queues; i++)
 			nvme_qpair_reset(&ctrlr->ioq[i]);
 	}
-
-	nvme_admin_qpair_enable(&ctrlr->adminq);
 
 	/*
 	 * If it was a reset on initialization command timeout, just
@@ -1070,7 +1070,7 @@ nvme_ctrlr_start(void *ctrlr_arg, bool resetting)
 	if (resetting && !ctrlr->is_initialized)
 		return;
 
-	if (nvme_ctrlr_identify(ctrlr) != 0) {
+	if (resetting && nvme_ctrlr_identify(ctrlr) != 0) {
 		nvme_ctrlr_fail(ctrlr);
 		return;
 	}
@@ -1135,6 +1135,7 @@ nvme_ctrlr_start_config_hook(void *arg)
 fail:
 		nvme_ctrlr_fail(ctrlr);
 		config_intrhook_disestablish(&ctrlr->config_hook);
+		ctrlr->config_hook.ich_arg = NULL;
 		return;
 	}
 
@@ -1144,7 +1145,8 @@ fail:
 	nvme_qpair_reset(&ctrlr->adminq);
 	nvme_admin_qpair_enable(&ctrlr->adminq);
 
-	if (nvme_ctrlr_set_num_qpairs(ctrlr) == 0 &&
+	if (nvme_ctrlr_identify(ctrlr) == 0 &&
+	    nvme_ctrlr_set_num_qpairs(ctrlr) == 0 &&
 	    nvme_ctrlr_construct_io_qpairs(ctrlr) == 0)
 		nvme_ctrlr_start(ctrlr, false);
 	else
@@ -1152,6 +1154,7 @@ fail:
 
 	nvme_sysctl_initialize_ctrlr(ctrlr);
 	config_intrhook_disestablish(&ctrlr->config_hook);
+	ctrlr->config_hook.ich_arg = NULL;
 
 	ctrlr->is_initialized = 1;
 	nvme_notify_new_controller(ctrlr);
@@ -1241,20 +1244,8 @@ nvme_ctrlr_passthrough_cmd(struct nvme_controller *ctrlr,
 	struct mtx		*mtx;
 	struct buf		*buf = NULL;
 	int			ret = 0;
-	vm_offset_t		addr, end;
 
 	if (pt->len > 0) {
-		/*
-		 * vmapbuf calls vm_fault_quick_hold_pages which only maps full
-		 * pages. Ensure this request has fewer than MAXPHYS bytes when
-		 * extended to full pages.
-		 */
-		addr = (vm_offset_t)pt->buf;
-		end = round_page(addr + pt->len);
-		addr = trunc_page(addr);
-		if (end - addr > MAXPHYS)
-			return EIO;
-
 		if (pt->len > ctrlr->max_xfer_size) {
 			nvme_printf(ctrlr, "pt->len (%d) "
 			    "exceeds max_xfer_size (%d)\n", pt->len,
@@ -1365,7 +1356,7 @@ nvme_ctrlr_construct(struct nvme_controller *ctrlr, device_t dev)
 	struct make_dev_args	md_args;
 	uint32_t	cap_lo;
 	uint32_t	cap_hi;
-	uint32_t	to, vs;
+	uint32_t	to, vs, pmrcap;
 	uint8_t		mpsmin;
 	int		status, timeout_period;
 
@@ -1388,20 +1379,32 @@ nvme_ctrlr_construct(struct nvme_controller *ctrlr, device_t dev)
 	cap_hi = nvme_mmio_read_4(ctrlr, cap_hi);
 	if (bootverbose) {
 		device_printf(dev, "CapHi: 0x%08x: DSTRD %u%s, CSS %x%s, "
-		    "MPSMIN %u, MPSMAX %u %s%s\n", cap_hi,
+		    "MPSMIN %u, MPSMAX %u%s%s\n", cap_hi,
 		    NVME_CAP_HI_DSTRD(cap_hi),
-		    NVME_CAP_HI_NSSRS(cap_lo) ? ", NSSRS" : "",
+		    NVME_CAP_HI_NSSRS(cap_hi) ? ", NSSRS" : "",
 		    NVME_CAP_HI_CSS(cap_hi),
-		    NVME_CAP_HI_BPS(cap_lo) ? ", BPS" : "",
+		    NVME_CAP_HI_BPS(cap_hi) ? ", BPS" : "",
 		    NVME_CAP_HI_MPSMIN(cap_hi),
 		    NVME_CAP_HI_MPSMAX(cap_hi),
-		    NVME_CAP_HI_PMRS(cap_lo) ? ", PMRS" : "",
-		    NVME_CAP_HI_CMBS(cap_lo) ? ", CMBS" : "");
+		    NVME_CAP_HI_PMRS(cap_hi) ? ", PMRS" : "",
+		    NVME_CAP_HI_CMBS(cap_hi) ? ", CMBS" : "");
 	}
 	if (bootverbose) {
 		vs = nvme_mmio_read_4(ctrlr, vs);
 		device_printf(dev, "Version: 0x%08x: %d.%d\n", vs,
 		    NVME_MAJOR(vs), NVME_MINOR(vs));
+	}
+	if (bootverbose && NVME_CAP_HI_PMRS(cap_hi)) {
+		pmrcap = nvme_mmio_read_4(ctrlr, pmrcap);
+		device_printf(dev, "PMRCap: 0x%08x: BIR %u%s%s, PMRTU %u, "
+		    "PMRWBM %x, PMRTO %u%s\n", pmrcap,
+		    NVME_PMRCAP_BIR(pmrcap),
+		    NVME_PMRCAP_RDS(pmrcap) ? ", RDS" : "",
+		    NVME_PMRCAP_WDS(pmrcap) ? ", WDS" : "",
+		    NVME_PMRCAP_PMRTU(pmrcap),
+		    NVME_PMRCAP_PMRWBM(pmrcap),
+		    NVME_PMRCAP_PMRTO(pmrcap),
+		    NVME_PMRCAP_CMSS(pmrcap) ? ", CMSS" : "");
 	}
 
 	ctrlr->dstrd = NVME_CAP_HI_DSTRD(cap_hi) + 2;

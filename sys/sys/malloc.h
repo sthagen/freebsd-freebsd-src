@@ -92,6 +92,9 @@ struct malloc_type_stats {
 	uint64_t	_mts_reserved3;	/* Reserved field. */
 };
 
+_Static_assert(sizeof(struct malloc_type_stats) == 64,
+    "allocations come from pcpu_zone_64");
+
 /*
  * Index definitions for the mti_probes[] array.
  */
@@ -144,7 +147,6 @@ struct malloc_type_header {
 			.ks_next = NULL,				\
 			.ks_version = M_VERSION,			\
 			.ks_shortdesc = shortdesc,			\
-			.ks_mti = { 0 },				\
 		}							\
 	};								\
 	SYSINIT(type##_init, SI_SUB_KMEM, SI_ORDER_THIRD, malloc_init,	\
@@ -249,7 +251,6 @@ void	*malloc_domainset_exec(size_t size, struct malloc_type *type,
 	    struct domainset *ds, int flags) __malloc_like __result_use_check
 	    __alloc_size(1);
 void	malloc_init(void *);
-int	malloc_last_fail(void);
 void	malloc_type_allocated(struct malloc_type *type, unsigned long size);
 void	malloc_type_freed(struct malloc_type *type, unsigned long size);
 void	malloc_type_list(malloc_type_list_func_t *, void *);

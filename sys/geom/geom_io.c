@@ -341,15 +341,15 @@ g_io_zonecmd(struct disk_zone_args *zone_args, struct g_consumer *cp)
  * operation should be done.
  */
 int
-g_io_speedup(size_t shortage, u_int flags, size_t *resid, struct g_consumer *cp)
+g_io_speedup(off_t shortage, u_int flags, size_t *resid, struct g_consumer *cp)
 {
 	struct bio *bp;
 	int error;
 
 	KASSERT((flags & (BIO_SPEEDUP_TRIM | BIO_SPEEDUP_WRITE)) != 0,
 	    ("Invalid flags passed to g_io_speedup: %#x", flags));
-	g_trace(G_T_BIO, "bio_speedup(%s, %zu, %#x)", cp->provider->name,
-	    shortage, flags);
+	g_trace(G_T_BIO, "bio_speedup(%s, %jd, %#x)", cp->provider->name,
+	    (intmax_t)shortage, flags);
 	bp = g_new_bio();
 	if (bp == NULL)
 		return (ENOMEM);
@@ -882,7 +882,7 @@ g_read_data(struct g_consumer *cp, off_t offset, off_t length, int *error)
 	int errorc;
 
 	KASSERT(length > 0 && length >= cp->provider->sectorsize &&
-	    length <= MAXPHYS, ("g_read_data(): invalid length %jd",
+	    length <= maxphys, ("g_read_data(): invalid length %jd",
 	    (intmax_t)length));
 
 	bp = g_alloc_bio();
@@ -937,7 +937,7 @@ g_write_data(struct g_consumer *cp, off_t offset, void *ptr, off_t length)
 	int error;
 
 	KASSERT(length > 0 && length >= cp->provider->sectorsize &&
-	    length <= MAXPHYS, ("g_write_data(): invalid length %jd",
+	    length <= maxphys, ("g_write_data(): invalid length %jd",
 	    (intmax_t)length));
 
 	bp = g_alloc_bio();
