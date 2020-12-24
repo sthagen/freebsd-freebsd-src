@@ -11,7 +11,7 @@
 .error Do make obj first.
 .endif
 
-LOCALESRCDIR?=	${DESTDIR}/usr/src/share
+LOCALESRCDIR?=	${SRCTOP}/share
 TMPDIR?=	/tmp
 
 BASEDIR=	${.CURDIR}
@@ -96,7 +96,7 @@ install-${t}:
 	cd ${LOCALESRCDIR}/${t} && \
 	    rm -f Makefile *.src && \
 	    cd ${.OBJDIR} && \
-	    install -c ${t}/* ${LOCALESRCDIR}/${t}
+	    install -m 644 ${t}/* ${LOCALESRCDIR}/${t}
 .  endif
 .endfor
 
@@ -126,9 +126,8 @@ build-colldef:	static-colldef
 
 static-colldef:
 .for area enc in ${COLLATION_SPECIAL}
-colldef.draft/${area}.${enc}.src: posix/${area}.${enc}.src
 	awk -f ${TOOLSDIR}/extract-colldef.awk \
-	    ${.ALLSRC} > ${.TARGET} || (rm -f ${.TARGET} && false)
+	    posix/${area}.${enc}.src > colldef.draft/${area}.${enc}.src
 .endfor
 
 BASE_LOCALES_OF_INTEREST?= \
