@@ -1514,7 +1514,7 @@ printb(const char *s, unsigned v, const char *bits)
 		bits++;
 		putchar('<');
 		while ((i = *bits++) != '\0') {
-			if (v & (1 << (i-1))) {
+			if (v & (1u << (i-1))) {
 				if (any)
 					putchar(',');
 				any = 1;
@@ -1658,8 +1658,8 @@ static struct cmd basic_cmds[] = {
 	DEF_CMD("-link2",	-IFF_LINK2,	setifflags),
 	DEF_CMD("monitor",	IFF_MONITOR,	setifflags),
 	DEF_CMD("-monitor",	-IFF_MONITOR,	setifflags),
-	DEF_CMD("nomap",	IFCAP_NOMAP,	setifcap),
-	DEF_CMD("-nomap",	-IFCAP_NOMAP,	setifcap),
+	DEF_CMD("mextpg",	IFCAP_MEXTPG,	setifcap),
+	DEF_CMD("-mextpg",	-IFCAP_MEXTPG,	setifcap),
 	DEF_CMD("staticarp",	IFF_STATICARP,	setifflags),
 	DEF_CMD("-staticarp",	-IFF_STATICARP,	setifflags),
 	DEF_CMD("rxcsum6",	IFCAP_RXCSUM_IPV6,	setifcap),

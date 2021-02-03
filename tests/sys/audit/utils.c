@@ -25,6 +25,8 @@
  * $FreeBSD$
  */
 
+#include <sys/types.h>
+#include <sys/extattr.h>
 #include <sys/ioctl.h>
 
 #include <bsm/libbsm.h>
@@ -146,13 +148,18 @@ check_auditpipe(struct pollfd fd[], const char *auditregex, FILE *pipestream)
 
 	/* Set the expire time for poll(2) while waiting for syscall audit */
 	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &endtime));
-	endtime.tv_sec += 10;
-	timeout.tv_nsec = endtime.tv_nsec;
+	/* Set limit to 30 seconds total and ~10s without an event. */
+	endtime.tv_sec += 30;
 
 	for (;;) {
 		/* Update the time left for auditpipe to return any event */
 		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &currtime));
-		timeout.tv_sec = endtime.tv_sec - currtime.tv_sec;
+		timespecsub(&endtime, &currtime, &timeout);
+		timeout.tv_sec = MIN(timeout.tv_sec, 9);
+		if (timeout.tv_sec < 0) {
+			atf_tc_fail("%s not found in auditpipe within the "
+			    "time limit", auditregex);
+		}
 
 		switch (ppoll(fd, 1, &timeout, NULL)) {
 		/* ppoll(2) returns, check if it's what we want */
@@ -197,6 +204,22 @@ check_audit(struct pollfd fd[], const char *auditrgx, FILE *pipestream) {
 
 	/* Teardown: /dev/auditpipe's instance opened for this test-suite */
 	ATF_REQUIRE_EQ(0, fclose(pipestream));
+}
+
+void
+skip_if_extattr_not_supported(const char *path)
+{
+	ssize_t result;
+
+	/*
+	 * Some file systems (e.g. tmpfs) do not support extattr, so we need
+	 * skip tests that use extattrs. To detect this we can check whether
+	 * the extattr_list_file returns EOPNOTSUPP.
+	 */
+	result = extattr_list_file(path, EXTATTR_NAMESPACE_USER, NULL, 0);
+	if (result == -1 && errno == EOPNOTSUPP) {
+		atf_tc_skip("File system does not support extattrs.");
+	}
 }
 
 FILE

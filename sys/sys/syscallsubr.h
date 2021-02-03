@@ -201,12 +201,10 @@ int	kern_mknodat(struct thread *td, int fd, const char *path,
 	    enum uio_seg pathseg, int mode, dev_t dev);
 int	kern_mlock(struct proc *proc, struct ucred *cred, uintptr_t addr,
 	    size_t len);
-int	kern_mmap(struct thread *td, uintptr_t addr, size_t len, int prot,
-	    int flags, int fd, off_t pos);
+int	kern_mmap(struct thread *td, const struct mmap_req *mrp);
 int	kern_mmap_racct_check(struct thread *td, struct vm_map *map,
 	    vm_size_t size);
 int	kern_mmap_maxprot(struct proc *p, int prot);
-int	kern_mmap_req(struct thread *td, const struct mmap_req *mrp);
 int	kern_mprotect(struct thread *td, uintptr_t addr, size_t size, int prot);
 int	kern_msgctl(struct thread *, int, int, struct msqid_ds *);
 int	kern_msgrcv(struct thread *, int, void *, size_t, long, int, long *);
@@ -304,6 +302,7 @@ int	kern_socket(struct thread *td, int domain, int type, int protocol);
 int	kern_statat(struct thread *td, int flag, int fd, const char *path,
 	    enum uio_seg pathseg, struct stat *sbp,
 	    void (*hook)(struct vnode *vp, struct stat *sbp));
+int	kern_specialfd(struct thread *td, int type, void *arg);
 int	kern_statfs(struct thread *td, const char *path, enum uio_seg pathseg,
 	    struct statfs *buf);
 int	kern_symlinkat(struct thread *td, const char *path1, int fd,

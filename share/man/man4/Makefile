@@ -69,6 +69,7 @@ MAN=	aac.4 \
 	aue.4 \
 	axe.4 \
 	axge.4 \
+	axp.4 \
 	bce.4 \
 	bcma.4 \
 	bfe.4 \
@@ -106,12 +107,12 @@ MAN=	aac.4 \
 	cdceem.4 \
 	cfi.4 \
 	cfumass.4 \
+	${_cgem.4} \
 	ch.4 \
 	chromebook_platform.4 \
 	${_chvgpio.4} \
 	ciss.4 \
 	cloudabi.4 \
-	cmx.4 \
 	${_coretemp.4} \
 	cp2112.4 \
 	${_cpuctl.4} \
@@ -179,13 +180,25 @@ MAN=	aac.4 \
 	gpioths.4 \
 	gre.4 \
 	h_ertt.4 \
+	hconf.4 \
+	hcons.4 \
+	hgame.4 \
+	hidbus.4 \
+	hidquirk.4 \
+	hidraw.4 \
 	hifn.4 \
+	hkbd.4 \
+	hms.4 \
+	hmt.4 \
+	hpen.4 \
 	hpet.4 \
 	${_hpt27xx.4} \
 	${_hptiop.4} \
 	${_hptmv.4} \
 	${_hptnr.4} \
 	${_hptrr.4} \
+	hsctrl.4 \
+	htu21.4 \
 	${_hv_kvp.4} \
 	${_hv_netvsc.4} \
 	${_hv_storvsc.4} \
@@ -209,6 +222,7 @@ MAN=	aac.4 \
 	iic_gpiomux.4 \
 	iicbb.4 \
 	iicbus.4 \
+	iichid.4 \
 	iicmux.4 \
 	iicsmb.4 \
 	iir.4 \
@@ -286,7 +300,6 @@ MAN=	aac.4 \
 	meteor.4 \
 	mfi.4 \
 	miibus.4 \
-	mk48txx.4 \
 	mld.4 \
 	mlx.4 \
 	mlx4en.4 \
@@ -312,7 +325,6 @@ MAN=	aac.4 \
 	mx25l.4 \
 	mxge.4 \
 	my.4 \
-	${_ndis.4} \
 	net80211.4 \
 	netdump.4 \
 	netfpga10g_nf10bmac.4 \
@@ -327,7 +339,6 @@ MAN=	aac.4 \
 	ng_atmllc.4 \
 	ng_bpf.4 \
 	ng_bridge.4 \
-	ng_bt3c.4 \
 	ng_btsocket.4 \
 	ng_car.4 \
 	ng_ccatm.4 \
@@ -382,6 +393,7 @@ MAN=	aac.4 \
 	ng_uni.4 \
 	ng_vjc.4 \
 	ng_vlan.4 \
+	ng_vlan_rotate.4 \
 	nmdm.4 \
 	${_ntb.4} \
 	${_ntb_hw_amd.4} \
@@ -400,6 +412,7 @@ MAN=	aac.4 \
 	oce.4 \
 	ocs_fc.4\
 	ohci.4 \
+	openfirm.4 \
 	orm.4 \
 	${_ossl.4} \
 	ow.4 \
@@ -426,6 +439,7 @@ MAN=	aac.4 \
 	ppi.4 \
 	procdesc.4 \
 	proto.4 \
+	ps4dshock.4 \
 	psm.4 \
 	pst.4 \
 	pt.4 \
@@ -551,12 +565,12 @@ MAN=	aac.4 \
 	vge.4 \
 	viapm.4 \
 	${_viawd.4} \
-	${_virtio.4} \
-	${_virtio_balloon.4} \
-	${_virtio_blk.4} \
-	${_virtio_console.4} \
-	${_virtio_random.4} \
-	${_virtio_scsi.4} \
+	virtio.4 \
+	virtio_balloon.4 \
+	virtio_blk.4 \
+	virtio_console.4 \
+	virtio_random.4 \
+	virtio_scsi.4 \
 	${_vmci.4} \
 	vkbd.4 \
 	vlan.4 \
@@ -567,10 +581,10 @@ MAN=	aac.4 \
 	vr.4 \
 	vt.4 \
 	vte.4 \
-	${_vtnet.4} \
+	vtnet.4 \
 	watchdog.4 \
 	${_wbwd.4} \
-	wi.4 \
+	wg.4 \
 	witness.4 \
 	wlan.4 \
 	wlan_acl.4 \
@@ -582,6 +596,7 @@ MAN=	aac.4 \
 	wmt.4 \
 	${_wpi.4} \
 	wsp.4 \
+	xb360gp.4 \
 	${_xen.4} \
 	xhci.4 \
 	xl.4 \
@@ -701,12 +716,12 @@ MLINKS+=msk.4 if_msk.4
 MLINKS+=mwl.4 if_mwl.4
 MLINKS+=mxge.4 if_mxge.4
 MLINKS+=my.4 if_my.4
-MLINKS+=${_ndis.4} ${_if_ndis.4}
 MLINKS+=netfpga10g_nf10bmac.4 if_nf10bmac.4
 MLINKS+=netintro.4 net.4 \
 	netintro.4 networking.4
 MLINKS+=${_nfe.4} ${_if_nfe.4}
 MLINKS+=nge.4 if_nge.4
+MLINKS+=openfirm.4 openfirmware.4
 MLINKS+=ow.4 onewire.4
 MLINKS+=pccbb.4 cbb.4
 MLINKS+=pcm.4 snd.4 \
@@ -750,9 +765,8 @@ MLINKS+=vxlan.4 if_vxlan.4
 MLINKS+=${_vmx.4} ${_if_vmx.4}
 MLINKS+=vr.4 if_vr.4
 MLINKS+=vte.4 if_vte.4
-MLINKS+=${_vtnet.4} ${_if_vtnet.4}
+MLINKS+=vtnet.4 if_vtnet.4
 MLINKS+=watchdog.4 SW_WATCHDOG.4
-MLINKS+=wi.4 if_wi.4
 MLINKS+=${_wpi.4} ${_if_wpi.4}
 MLINKS+=xl.4 if_xl.4
 
@@ -801,11 +815,9 @@ _hwpstate_intel.4=	hwpstate_intel.4
 _i8254.4=	i8254.4
 _ichwd.4=	ichwd.4
 _if_bxe.4=	if_bxe.4
-_if_ndis.4=	if_ndis.4
 _if_nfe.4=	if_nfe.4
 _if_urtw.4=	if_urtw.4
 _if_vmx.4=	if_vmx.4
-_if_vtnet.4=	if_vtnet.4
 _if_wpi.4=	if_wpi.4
 _imcsmb.4=	imcsmb.4
 _ipmi.4=	ipmi.4
@@ -813,7 +825,6 @@ _io.4=		io.4
 _itwd.4=	itwd.4
 _linux.4=	linux.4
 _nda.4=		nda.4
-_ndis.4=	ndis.4
 _nfe.4=		nfe.4
 _nfsmb.4=	nfsmb.4
 _if_ntb.4=	if_ntb.4
@@ -836,15 +847,8 @@ _superio.4=	superio.4
 _tpm.4=		tpm.4
 _urtw.4=	urtw.4
 _viawd.4=	viawd.4
-_virtio.4=	virtio.4
-_virtio_balloon.4=virtio_balloon.4
-_virtio_blk.4=	virtio_blk.4
-_virtio_console.4=virtio_console.4
-_virtio_random.4= virtio_random.4
-_virtio_scsi.4= virtio_scsi.4
 _vmci.4=	vmci.4
 _vmx.4=		vmx.4
-_vtnet.4=	vtnet.4
 _wbwd.4=	wbwd.4
 _wpi.4=		wpi.4
 _xen.4=		xen.4
@@ -882,16 +886,14 @@ _nvram2env.4=	nvram2env.4
 .endif
 
 .if ${MACHINE_CPUARCH} == "powerpc"
-_if_vtnet.4=    if_vtnet.4
 _nvd.4= 	nvd.4
 _nvme.4=	nvme.4
-_virtio.4=	virtio.4
-_virtio_balloon.4=virtio_balloon.4
-_virtio_blk.4=	virtio_blk.4
-_virtio_console.4=virtio_console.4
-_virtio_random.4= virtio_random.4
-_virtio_scsi.4=	virtio_scsi.4
-_vtnet.4=	vtnet.4
+.endif
+
+.if ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "aarch64" || \
+	 ${MACHINE_CPUARCH} == "riscv"
+_cgem.4=	cgem.4
+MLINKS+=cgem.4 if_cgem.4
 .endif
 
 .if empty(MAN_ARCH)
@@ -1015,6 +1017,7 @@ MAN+=	\
 	usb.4 \
 	usb_quirk.4 \
 	usb_template.4 \
+	usbhid.4 \
 	usfs.4 \
 	uslcom.4 \
 	uvisor.4 \

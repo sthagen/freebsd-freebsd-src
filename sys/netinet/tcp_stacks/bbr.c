@@ -5551,7 +5551,7 @@ lost_rate:
 				   bbr->rc_inp->inp_route.ro_nh->nh_ifp,
 				   rate,
 				   (RS_PACING_GEQ|RS_PACING_SUB_OK),
-				   &error);
+				   &error, NULL);
 	if (nrte == NULL) {
 		goto lost_rate;
 	}
@@ -11463,10 +11463,12 @@ bbr_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * If timestamps were negotiated during SYN/ACK and a
 	 * segment without a timestamp is received, silently drop
-	 * the segment.
+	 * the segment, unless it is a RST segment or missing timestamps are
+	 * tolerated.
 	 * See section 3.2 of RFC 7323.
 	 */
-	if ((tp->t_flags & TF_RCVD_TSTMP) && !(to.to_flags & TOF_TS)) {
+	if ((tp->t_flags & TF_RCVD_TSTMP) && !(to.to_flags & TOF_TS) &&
+	    ((thflags & TH_RST) == 0) && (V_tcp_tolerate_missing_ts == 0)) {
 		retval = 0;
 		goto done_with_input;
 	}
@@ -14079,7 +14081,7 @@ nomore:
 						      inp->inp_route.ro_nh->nh_ifp,
 						      rate_wanted,
 						      (RS_PACING_GEQ|RS_PACING_SUB_OK),
-						      &err);
+						      &err, NULL);
 		if (bbr->r_ctl.crte) {
 			bbr_type_log_hdwr_pacing(bbr,
 						 bbr->r_ctl.crte->ptbl->rs_ifp,

@@ -66,6 +66,7 @@ enum vgetstate	{ VGET_NONE, VGET_HOLDCNT, VGET_USECOUNT };
  */
 
 struct namecache;
+struct cache_fpl;
 
 struct vpollinfo {
 	struct	mtx vpi_lock;		/* lock to protect below */
@@ -246,6 +247,7 @@ struct xvnode {
 #define	VIRF_DOOMED	0x0001	/* This vnode is being recycled */
 #define	VIRF_PGREAD	0x0002	/* Direct reads from the page cache are permitted,
 				   never cleared once set */
+#define	VIRF_MOUNTPOINT	0x0004	/* This vnode is mounted on */
 
 #define	VI_TEXT_REF	0x0001	/* Text ref grabbed use ref */
 #define	VI_MOUNT	0x0002	/* Mount in progress */
@@ -325,6 +327,7 @@ struct vattr {
 #define	IO_NOMACCHECK	0x1000		/* MAC checks unnecessary */
 #define	IO_BUFLOCKED	0x2000		/* ffs flag; indir buf is locked */
 #define	IO_RANGELOCKED	0x4000		/* range locked */
+#define	IO_DATASYNC	0x8000		/* do only data I/O synchronously */
 
 #define IO_SEQMAX	0x7F		/* seq heuristic max value */
 #define IO_SEQSHIFT	16		/* seq heuristic in upper 16 bits */
@@ -644,6 +647,10 @@ void	cache_purge(struct vnode *vp);
 void	cache_purge_vgone(struct vnode *vp);
 void	cache_purge_negative(struct vnode *vp);
 void	cache_purgevfs(struct mount *mp);
+char	*cache_symlink_alloc(size_t size, int flags);
+void	cache_symlink_free(char *string, size_t size);
+int	cache_symlink_resolve(struct cache_fpl *fpl, const char *string,
+	    size_t len);
 void	cache_vop_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
     struct vnode *tvp, struct componentname *fcnp, struct componentname *tcnp);
 void	cache_vop_rmdir(struct vnode *dvp, struct vnode *vp);
@@ -656,6 +663,7 @@ cache_validate(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 {
 }
 #endif
+void	cache_fast_lookup_enabled_recalc(void);
 int	change_dir(struct vnode *vp, struct thread *td);
 void	cvtstat(struct stat *st, struct ostat *ost);
 void	freebsd11_cvtnstat(struct stat *sb, struct nstat *nsb);
@@ -781,6 +789,7 @@ void	vn_seqc_write_begin(struct vnode *vp);
 void	vn_seqc_write_end_locked(struct vnode *vp);
 void	vn_seqc_write_end(struct vnode *vp);
 #define	vn_seqc_read_any(vp)		seqc_read_any(&(vp)->v_seqc)
+#define	vn_seqc_read_notmodify(vp)	seqc_read_notmodify(&(vp)->v_seqc)
 #define	vn_seqc_consistent(vp, seq)	seqc_consistent(&(vp)->v_seqc, seq)
 
 #define	vn_rangelock_unlock(vp, cookie)					\
@@ -796,6 +805,14 @@ void	vn_seqc_write_end(struct vnode *vp);
 	rangelock_wlock(&(vp)->v_rl, (start), (end), VI_MTX(vp))
 #define	vn_rangelock_trywlock(vp, start, end)				\
 	rangelock_trywlock(&(vp)->v_rl, (start), (end), VI_MTX(vp))
+
+#define	vn_irflag_read(vp)	atomic_load_short(&(vp)->v_irflag)
+void	vn_irflag_set_locked(struct vnode *vp, short toset);
+void	vn_irflag_set(struct vnode *vp, short toset);
+void	vn_irflag_set_cond_locked(struct vnode *vp, short toset);
+void	vn_irflag_set_cond(struct vnode *vp, short toset);
+void	vn_irflag_unset_locked(struct vnode *vp, short tounset);
+void	vn_irflag_unset(struct vnode *vp, short tounset);
 
 int	vfs_cache_lookup(struct vop_lookup_args *ap);
 int	vfs_cache_root(struct mount *mp, int flags, struct vnode **vpp);
@@ -888,6 +905,8 @@ int	vop_sigdefer(struct vop_vector *vop, struct vop_generic_args *a);
 #ifdef DEBUG_VFS_LOCKS
 void	vop_fplookup_vexec_debugpre(void *a);
 void	vop_fplookup_vexec_debugpost(void *a, int rc);
+void	vop_fplookup_symlink_debugpre(void *a);
+void	vop_fplookup_symlink_debugpost(void *a, int rc);
 void	vop_strategy_debugpre(void *a);
 void	vop_lock_debugpre(void *a);
 void	vop_lock_debugpost(void *a, int rc);
@@ -898,6 +917,8 @@ void	vop_mkdir_debugpost(void *a, int rc);
 #else
 #define	vop_fplookup_vexec_debugpre(x)		do { } while (0)
 #define	vop_fplookup_vexec_debugpost(x, y)	do { } while (0)
+#define	vop_fplookup_symlink_debugpre(x)	do { } while (0)
+#define	vop_fplookup_symlink_debugpost(x, y)	do { } while (0)
 #define	vop_strategy_debugpre(x)		do { } while (0)
 #define	vop_lock_debugpre(x)			do { } while (0)
 #define	vop_lock_debugpost(x, y)		do { } while (0)
@@ -979,7 +1000,7 @@ do {									\
 #define	VOP_UNSET_TEXT_CHECKED(vp)		VOP_UNSET_TEXT((vp))
 #endif
 
-#define	VN_IS_DOOMED(vp)	__predict_false((vp)->v_irflag & VIRF_DOOMED)
+#define	VN_IS_DOOMED(vp)	__predict_false((vn_irflag_read(vp) & VIRF_DOOMED) != 0)
 
 void	vput(struct vnode *vp);
 void	vrele(struct vnode *vp);
@@ -1091,7 +1112,7 @@ int vn_dir_check_exec(struct vnode *vp, struct componentname *cnp);
 	struct vnode *_vp = (vp);		\
 						\
 	VFS_SMR_ASSERT_ENTERED();		\
-	atomic_load_ptr(&(_vp)->v_data);	\
+	atomic_load_consume_ptr(&(_vp)->v_data);\
 })
 
 #endif /* _KERNEL */

@@ -154,10 +154,10 @@ if __name__ == "__main__":
                         help="Print information on inferred env vars")
     parser.add_argument("--clean", action="store_true",
                         help="Do a clean rebuild instead of building with "
-                             "-DNO_CLEAN")
+                             "-DWITHOUT_CLEAN")
     parser.add_argument("--no-clean", action="store_false", dest="clean",
                         help="Do a clean rebuild instead of building with "
-                             "-DNO_CLEAN")
+                             "-DWITHOUT_CLEAN")
     try:
         import argcomplete  # bash completion:
 
@@ -207,8 +207,8 @@ if __name__ == "__main__":
                                     parsed_args.host_bindir)
         # Using the default value for LD is fine (but not for XLD!)
 
-        use_cross_gcc = parsed_args.cross_compiler_type == "gcc"
         # On non-FreeBSD we need to explicitly pass XCC/XLD/X_COMPILER_TYPE
+        use_cross_gcc = parsed_args.cross_compiler_type == "gcc"
         check_required_make_env_var("XCC", "gcc" if use_cross_gcc else "clang",
                                     parsed_args.cross_bindir)
         check_required_make_env_var("XCXX",
@@ -219,9 +219,26 @@ if __name__ == "__main__":
                                     parsed_args.cross_bindir)
         check_required_make_env_var("XLD", "ld" if use_cross_gcc else "ld.lld",
                                     parsed_args.cross_bindir)
-        check_required_make_env_var("STRIPBIN",
-                                    "strip" if use_cross_gcc else "llvm-strip",
-                                    parsed_args.cross_bindir)
+
+        # We also need to set STRIPBIN if there is no working strip binary
+        # in $PATH.
+        if not shutil.which("strip"):
+            if sys.platform.startswith("darwin"):
+                # On macOS systems we have to use /usr/bin/strip.
+                sys.exit("Cannot find required tool 'strip'. Please install the"
+                         " host compiler and command line tools.")
+            if parsed_args.host_compiler_type == "clang":
+                strip_binary = "llvm-strip"
+            else:
+                strip_binary = "strip"
+            check_required_make_env_var("STRIPBIN", strip_binary,
+                                        parsed_args.cross_bindir)
+        if os.getenv("STRIPBIN") or "STRIPBIN" in new_env_vars:
+            # If we are setting STRIPBIN, we have to set XSTRIPBIN to the
+            # default if it is not set otherwise already.
+            if not os.getenv("XSTRIPBIN") and not is_make_var_set("XSTRIPBIN"):
+                # Use the bootstrapped elftoolchain strip:
+                new_env_vars["XSTRIPBIN"] = "strip"
 
     bmake_binary = bootstrap_bmake(source_root, objdir_prefix)
     # at -j1 cleandir+obj is unbearably slow. AUTO_OBJ helps a lot
@@ -233,10 +250,10 @@ if __name__ == "__main__":
             and not is_make_var_set("WITHOUT_CLEAN")):
         # Avoid accidentally deleting all of the build tree and wasting lots of
         # time cleaning directories instead of just doing a rm -rf ${.OBJDIR}
-        want_clean = input("You did not set -DNO_CLEAN/--clean/--no-clean."
-                           " Did you really mean to do a  clean build? y/[N] ")
+        want_clean = input("You did not set -DWITHOUT_CLEAN/--clean/--no-clean."
+                           " Did you really mean to do a clean build? y/[N] ")
         if not want_clean.lower().startswith("y"):
-            bmake_args.append("-DNO_CLEAN")
+            bmake_args.append("-DWITHOUT_CLEAN")
 
     env_cmd_str = " ".join(
         shlex.quote(k + "=" + v) for k, v in new_env_vars.items())

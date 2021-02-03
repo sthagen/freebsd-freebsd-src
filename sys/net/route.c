@@ -79,8 +79,8 @@ EVENTHANDLER_LIST_DEFINE(rt_addrmsg);
 
 static int rt_ifdelroute(const struct rtentry *rt, const struct nhop_object *,
     void *arg);
-static int rt_exportinfo(struct rtentry *rt, struct rt_addrinfo *info,
-    int flags);
+static int rt_exportinfo(struct rtentry *rt, struct nhop_object *nh,
+    struct rt_addrinfo *info, int flags);
 
 /*
  * route initialization must occur before ip6_init2(), which happenas at
@@ -150,6 +150,14 @@ rt_freeentry(struct radix_node *rn, void *arg)
 void
 rt_table_destroy(struct rib_head *rh)
 {
+
+	RIB_WLOCK(rh);
+	rh->rib_dying = true;
+	RIB_WUNLOCK(rh);
+
+#ifdef FIB_ALGO
+	fib_destroy_rib(rh);
+#endif
 
 	tmproutes_destroy(rh);
 
@@ -322,15 +330,14 @@ ifa_ifwithroute(int flags, const struct sockaddr *dst,
  *
  * Returns 0 on success.
  */
-int
-rt_exportinfo(struct rtentry *rt, struct rt_addrinfo *info, int flags)
+static int
+rt_exportinfo(struct rtentry *rt, struct nhop_object *nh,
+    struct rt_addrinfo *info, int flags)
 {
 	struct rt_metrics *rmx;
 	struct sockaddr *src, *dst;
-	struct nhop_object *nh;
 	int sa_len;
 
-	nh = rt->rt_nhop;
 	if (flags & NHR_COPY) {
 		/* Copy destination if dst is non-zero */
 		src = rt_key(rt);
@@ -416,6 +423,7 @@ rib_lookup_info(uint32_t fibnum, const struct sockaddr *dst, uint32_t flags,
 	struct rib_head *rh;
 	struct radix_node *rn;
 	struct rtentry *rt;
+	struct nhop_object *nh;
 	int error;
 
 	KASSERT((fibnum < rt_numfibs), ("rib_lookup_rte: bad fibnum"));
@@ -427,10 +435,11 @@ rib_lookup_info(uint32_t fibnum, const struct sockaddr *dst, uint32_t flags,
 	rn = rh->rnh_matchaddr(__DECONST(void *, dst), &rh->head);
 	if (rn != NULL && ((rn->rn_flags & RNF_ROOT) == 0)) {
 		rt = RNTORT(rn);
+		nh = nhop_select(rt->rt_nhop, flowid);
 		/* Ensure route & ifp is UP */
-		if (RT_LINK_IS_UP(rt->rt_nhop->nh_ifp)) {
+		if (RT_LINK_IS_UP(nh->nh_ifp)) {
 			flags = (flags & NHR_REF) | NHR_COPY;
-			error = rt_exportinfo(rt, info, flags);
+			error = rt_exportinfo(rt, nh, info, flags);
 			RIB_RUNLOCK(rh);
 
 			return (error);
@@ -702,10 +711,13 @@ rt_addrmsg(int cmd, struct ifaddr *ifa, int fibnum)
 
 	KASSERT(cmd == RTM_ADD || cmd == RTM_DELETE,
 	    ("unexpected cmd %d", cmd));
-	KASSERT(fibnum == RT_ALL_FIBS || (fibnum >= 0 && fibnum < rt_numfibs),
+	KASSERT((fibnum >= 0 && fibnum < rt_numfibs),
 	    ("%s: fib out of range 0 <=%d<%d", __func__, fibnum, rt_numfibs));
 
 	EVENTHANDLER_DIRECT_INVOKE(rt_addrmsg, ifa, cmd);
+
+	if (V_rt_add_addr_allfibs)
+		fibnum = RT_ALL_FIBS;
 	return (rtsock_addrmsg(cmd, ifa, fibnum));
 }
 
@@ -713,13 +725,13 @@ rt_addrmsg(int cmd, struct ifaddr *ifa, int fibnum)
  * Announce kernel-originated route addition/removal to rtsock based on @rt data.
  * cmd: RTM_ cmd
  * @rt: valid rtentry
- * @ifp: target route interface
+ * @nh: nhop object to announce
  * @fibnum: fib id or RT_ALL_FIBS
  *
  * Returns 0 on success.
  */
 int
-rt_routemsg(int cmd, struct rtentry *rt, struct ifnet *ifp, int rti_addrs,
+rt_routemsg(int cmd, struct rtentry *rt, struct nhop_object *nh,
     int fibnum)
 {
 
@@ -731,7 +743,7 @@ rt_routemsg(int cmd, struct rtentry *rt, struct ifnet *ifp, int rti_addrs,
 
 	KASSERT(rt_key(rt) != NULL, (":%s: rt_key must be supplied", __func__));
 
-	return (rtsock_routemsg(cmd, rt, ifp, 0, fibnum));
+	return (rtsock_routemsg(cmd, rt, nh, fibnum));
 }
 
 /*
@@ -755,28 +767,4 @@ rt_routemsg_info(int cmd, struct rt_addrinfo *info, int fibnum)
 	KASSERT(info->rti_info[RTAX_DST] != NULL, (":%s: RTAX_DST must be supplied", __func__));
 
 	return (rtsock_routemsg_info(cmd, info, fibnum));
-}
-
-/*
- * This is called to generate messages from the routing socket
- * indicating a network interface has had addresses associated with it.
- */
-void
-rt_newaddrmsg_fib(int cmd, struct ifaddr *ifa, struct rtentry *rt, int fibnum)
-{
-
-	KASSERT(cmd == RTM_ADD || cmd == RTM_DELETE,
-		("unexpected cmd %u", cmd));
-	KASSERT(fibnum == RT_ALL_FIBS || (fibnum >= 0 && fibnum < rt_numfibs),
-	    ("%s: fib out of range 0 <=%d<%d", __func__, fibnum, rt_numfibs));
-
-	if (cmd == RTM_ADD) {
-		rt_addrmsg(cmd, ifa, fibnum);
-		if (rt != NULL)
-			rt_routemsg(cmd, rt, ifa->ifa_ifp, 0, fibnum);
-	} else {
-		if (rt != NULL)
-			rt_routemsg(cmd, rt, ifa->ifa_ifp, 0, fibnum);
-		rt_addrmsg(cmd, ifa, fibnum);
-	}
 }

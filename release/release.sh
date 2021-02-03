@@ -1,6 +1,6 @@
 #!/bin/sh
 #-
-# Copyright (c) 2020 Rubicon Communications, LLC (netgate.com)
+# Copyright (c) 2020-2021 Rubicon Communications, LLC (netgate.com)
 # Copyright (c) 2013-2019 The FreeBSD Foundation
 # Copyright (c) 2013 Glen Barber
 # Copyright (c) 2011 Nathan Whitehorn
@@ -34,8 +34,6 @@
 #  totally clean, fresh trees.
 # Based on release/generate-release.sh written by Nathan Whitehorn
 #
-# $FreeBSD$
-#
 
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin"
 
@@ -67,6 +65,17 @@ env_setup() {
 		[ ! -z "${VCSCMD}" ] && break 2
 	done
 
+	# Find the Subversion binary to use.  This is a workaround to use
+	# the source of truth for the ports tree, as the conversion to Git
+	# is targeted to occur slightly after the currently-scheduled 13.0
+	# release.
+	for _dir in /usr/bin /usr/local/bin; do
+		for _svn in svn svnlite; do
+			[ -x "${_dir}/${_svn}" ] && SVNCMD="${_dir}/${_svn}"
+			[ ! -z "${SVNCMD}" ] && break 2
+		done
+	done
+
 	if [ -z "${VCSCMD}" -a -z "${NOGIT}" ]; then
 		echo "*** The devel/git port/package is required."
 		exit 1
@@ -75,10 +84,10 @@ env_setup() {
 
 	# The default git checkout server, and branches for src/, doc/,
 	# and ports/.
-	GITROOT="https://cgit-beta.FreeBSD.org/"
+	GITROOT="https://git.FreeBSD.org/"
 	SRCBRANCH="main"
 	DOCBRANCH="main"
-	PORTBRANCH="main"
+	PORTBRANCH="head"
 	GITSRC="src.git"
 	GITPORTS="ports.git"
 	GITDOC="doc.git"
@@ -137,7 +146,8 @@ env_check() {
 	# Prefix the branches with the GITROOT for the full checkout URL.
 	SRC="${GITROOT}${GITSRC}"
 	DOC="${GITROOT}${GITDOC}"
-	PORT="${GITROOT}${GITPORTS}"
+	#PORT="${GITROOT}${GITPORTS}"
+	PORT="svn://svn.freebsd.org/ports/"
 
 	if [ -n "${EMBEDDEDBUILD}" ]; then
 		WITH_DVD=
@@ -236,10 +246,16 @@ chroot_setup() {
 		fi
 	fi
 	if [ -z "${NOPORTS}" ] && [ -z "${PORTS_UPDATE_SKIP}" ]; then
-		if [ -d "${CHROOTDIR}/usr/ports/.git" ]; then
-			git -C ${CHROOTDIR}/usr/ports pull -q
+		# if [ -d "${CHROOTDIR}/usr/ports/.git" ]; then
+			# git -C ${CHROOTDIR}/usr/ports pull -q
+		# XXX: Workaround for the overlap in the Git conversion timeframe.
+		if [ -d "${CHROOTDIR}/usr/ports/.svn" ]; then
+			${SVNCMD} update ${CHROOTDIR}/usr/ports
 		else
-			${VCSCMD} ${PORT} -b ${PORTBRANCH} ${CHROOTDIR}/usr/ports
+			#${VCSCMD} ${PORT} -b ${PORTBRANCH} ${CHROOTDIR}/usr/ports
+			# XXX: Workaround for the overlap in the Git
+			# conversion timeframe.
+			${SVNCMD} co ${PORT}/${PORTBRANCH} ${CHROOTDIR}/usr/ports
 		fi
 	fi
 
@@ -304,7 +320,7 @@ extra_chroot_setup() {
 				pkg clean -y
 		fi
 	fi
-	if [ -d ${CHROOTDIR}/usr/ports ]; then
+	if [ -z "${NODOC}" ] && [ -d ${CHROOTDIR}/usr/ports ]; then
 		# Trick the ports 'run-autotools-fixup' target to do the right
 		# thing.
 		_OSVERSION=$(chroot ${CHROOTDIR} /usr/bin/uname -U)

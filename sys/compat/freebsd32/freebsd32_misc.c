@@ -502,8 +502,14 @@ freebsd32_mmap(struct thread *td, struct freebsd32_mmap_args *uap)
 		prot |= PROT_EXEC;
 #endif
 
-	return (kern_mmap(td, (uintptr_t)uap->addr, uap->len, prot,
-	    uap->flags, uap->fd, PAIR32TO64(off_t, uap->pos)));
+	return (kern_mmap(td, &(struct mmap_req){
+		.mr_hint = (uintptr_t)uap->addr,
+		.mr_len = uap->len,
+		.mr_prot = prot,
+		.mr_flags = uap->flags,
+		.mr_fd = uap->fd,
+		.mr_pos = PAIR32TO64(off_t, uap->pos),
+	    }));
 }
 
 #ifdef COMPAT_FREEBSD6
@@ -519,8 +525,14 @@ freebsd6_freebsd32_mmap(struct thread *td,
 		prot |= PROT_EXEC;
 #endif
 
-	return (kern_mmap(td, (uintptr_t)uap->addr, uap->len, prot,
-	    uap->flags, uap->fd, PAIR32TO64(off_t, uap->pos)));
+	return (kern_mmap(td, &(struct mmap_req){
+		.mr_hint = (uintptr_t)uap->addr,
+		.mr_len = uap->len,
+		.mr_prot = prot,
+		.mr_flags = uap->flags,
+		.mr_fd = uap->fd,
+		.mr_pos = PAIR32TO64(off_t, uap->pos),
+	    }));
 }
 #endif
 
@@ -1070,7 +1082,7 @@ freebsd32_ptrace(struct thread *td, struct freebsd32_ptrace_args *uap)
 	return (error);
 }
 
-static int
+int
 freebsd32_copyinuio(struct iovec32 *iovp, u_int iovcnt, struct uio **uiop)
 {
 	struct iovec32 iov32;
@@ -2095,7 +2107,7 @@ freebsd32_do_sendfile(struct thread *td,
 	AUDIT_ARG_FD(uap->fd);
 
 	if ((error = fget_read(td, uap->fd,
-	    cap_rights_init(&rights, CAP_PREAD), &fp)) != 0)
+	    cap_rights_init_one(&rights, CAP_PREAD), &fp)) != 0)
 		goto out;
 
 	error = fo_sendfile(fp, uap->s, hdr_uio, trl_uio, offset,

@@ -113,7 +113,7 @@ static int ktls_bind_threads;
 #endif
 SYSCTL_INT(_kern_ipc_tls, OID_AUTO, bind_threads, CTLFLAG_RDTUN,
     &ktls_bind_threads, 0,
-    "Bind crypto threads to cores or domains at boot");
+    "Bind crypto threads to cores (1) or cores and domains (2) at boot");
 
 static u_int ktls_maxlen = 16384;
 SYSCTL_UINT(_kern_ipc_tls, OID_AUTO, maxlen, CTLFLAG_RWTUN,
@@ -435,10 +435,12 @@ ktls_init(void *dummy __unused)
 	 * If we somehow have an empty domain, fall back to choosing
 	 * among all KTLS threads.
 	 */
-	for (i = 0; i < vm_ndomains; i++) {
-		if (ktls_domains[i].count == 0) {
-			ktls_bind_threads = 0;
-			break;
+	if (ktls_bind_threads > 1) {
+		for (i = 0; i < vm_ndomains; i++) {
+			if (ktls_domains[i].count == 0) {
+				ktls_bind_threads = 1;
+				break;
+			}
 		}
 	}
 
@@ -866,7 +868,7 @@ ktls_alloc_snd_tag(struct inpcb *inp, struct ktls_session *tls, bool force,
 	params.hdr.numa_domain = inp->inp_numa_domain;
 	INP_RUNLOCK(inp);
 
-	if ((ifp->if_capenable & IFCAP_NOMAP) == 0) {	
+	if ((ifp->if_capenable & IFCAP_MEXTPG) == 0) {
 		error = EOPNOTSUPP;
 		goto out;
 	}
@@ -1014,6 +1016,8 @@ ktls_enable_rx(struct socket *so, struct tls_enable *en)
 
 	if (!ktls_offload_enable)
 		return (ENOTSUP);
+	if (SOLISTENING(so))
+		return (EINVAL);
 
 	counter_u64_add(ktls_offload_enable_calls, 1);
 
@@ -1079,6 +1083,8 @@ ktls_enable_tx(struct socket *so, struct tls_enable *en)
 
 	if (!ktls_offload_enable)
 		return (ENOTSUP);
+	if (SOLISTENING(so))
+		return (EINVAL);
 
 	counter_u64_add(ktls_offload_enable_calls, 1);
 
@@ -1155,6 +1161,8 @@ ktls_get_rx_mode(struct socket *so)
 	struct inpcb *inp;
 	int mode;
 
+	if (SOLISTENING(so))
+		return (EINVAL);
 	inp = so->so_pcb;
 	INP_WLOCK_ASSERT(inp);
 	SOCKBUF_LOCK(&so->so_rcv);
@@ -1174,6 +1182,8 @@ ktls_get_tx_mode(struct socket *so)
 	struct inpcb *inp;
 	int mode;
 
+	if (SOLISTENING(so))
+		return (EINVAL);
 	inp = so->so_pcb;
 	INP_WLOCK_ASSERT(inp);
 	SOCKBUF_LOCK(&so->so_snd);
@@ -1196,6 +1206,8 @@ ktls_set_tx_mode(struct socket *so, int mode)
 	struct inpcb *inp;
 	int error;
 
+	if (SOLISTENING(so))
+		return (EINVAL);
 	switch (mode) {
 	case TCP_TLS_MODE_SW:
 	case TCP_TLS_MODE_IFNET:

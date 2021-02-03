@@ -1860,10 +1860,14 @@ fdgrowtable(struct filedesc *fdp, int nfd)
 	 * which must not be freed.
 	 */
 	if (onfiles > NDFILE) {
-		if (curproc->p_numthreads == 1 &&
-		    refcount_load(&fdp->fd_refcnt) == 1)
+		/*
+		 * Note we may be called here from fdinit while allocating a
+		 * table for a new process in which case ->p_fd points
+		 * elsewhere.
+		 */
+		if (curproc->p_fd != fdp || FILEDESC_IS_ONLY_USER(fdp)) {
 			free(otable, M_FILEDESC);
-		else {
+		} else {
 			ft = (struct freetable *)&otable->fdt_ofiles[onfiles];
 			fdp0 = (struct filedesc0 *)fdp;
 			ft->ft_table = otable;
@@ -1976,23 +1980,22 @@ falloc_caps(struct thread *td, struct file **resultfp, int *resultfd, int flags,
 	struct file *fp;
 	int error, fd;
 
-	error = falloc_noinstall(td, &fp);
-	if (error)
-		return (error);		/* no reference held on error */
+	MPASS(resultfp != NULL);
+	MPASS(resultfd != NULL);
 
-	error = finstall(td, fp, &fd, flags, fcaps);
-	if (error) {
-		fdrop(fp, td);		/* one reference (fp only) */
+	error = _falloc_noinstall(td, &fp, 2);
+	if (__predict_false(error != 0)) {
 		return (error);
 	}
 
-	if (resultfp != NULL)
-		*resultfp = fp;		/* copy out result */
-	else
-		fdrop(fp, td);		/* release local reference */
+	error = finstall_refed(td, fp, &fd, flags, fcaps);
+	if (__predict_false(error != 0)) {
+		falloc_abort(td, fp);
+		return (error);
+	}
 
-	if (resultfd != NULL)
-		*resultfd = fd;
+	*resultfp = fp;
+	*resultfd = fd;
 
 	return (0);
 }
@@ -2001,7 +2004,7 @@ falloc_caps(struct thread *td, struct file **resultfp, int *resultfd, int flags,
  * Create a new open file structure without allocating a file descriptor.
  */
 int
-falloc_noinstall(struct thread *td, struct file **resultfp)
+_falloc_noinstall(struct thread *td, struct file **resultfp, u_int n)
 {
 	struct file *fp;
 	int maxuserfiles = maxfiles - (maxfiles / 20);
@@ -2010,6 +2013,7 @@ falloc_noinstall(struct thread *td, struct file **resultfp)
 	static int curfail;
 
 	KASSERT(resultfp != NULL, ("%s: resultfp == NULL", __func__));
+	MPASS(n > 0);
 
 	openfiles_new = atomic_fetchadd_int(&openfiles, 1) + 1;
 	if ((openfiles_new >= maxuserfiles &&
@@ -2024,11 +2028,22 @@ falloc_noinstall(struct thread *td, struct file **resultfp)
 	}
 	fp = uma_zalloc(file_zone, M_WAITOK);
 	bzero(fp, sizeof(*fp));
-	refcount_init(&fp->f_count, 1);
+	refcount_init(&fp->f_count, n);
 	fp->f_cred = crhold(td->td_ucred);
 	fp->f_ops = &badfileops;
 	*resultfp = fp;
 	return (0);
+}
+
+void
+falloc_abort(struct thread *td, struct file *fp)
+{
+
+	/*
+	 * For assertion purposes.
+	 */
+	refcount_init(&fp->f_count, 0);
+	_fdrop(fp, td);
 }
 
 /*
@@ -2061,7 +2076,7 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 }
 
 int
-finstall(struct thread *td, struct file *fp, int *fd, int flags,
+finstall_refed(struct thread *td, struct file *fp, int *fd, int flags,
     struct filecaps *fcaps)
 {
 	struct filedesc *fdp = td->td_proc->p_fd;
@@ -2069,18 +2084,30 @@ finstall(struct thread *td, struct file *fp, int *fd, int flags,
 
 	MPASS(fd != NULL);
 
-	if (!fhold(fp))
-		return (EBADF);
 	FILEDESC_XLOCK(fdp);
 	error = fdalloc(td, 0, fd);
-	if (__predict_false(error != 0)) {
-		FILEDESC_XUNLOCK(fdp);
-		fdrop(fp, td);
-		return (error);
+	if (__predict_true(error == 0)) {
+		_finstall(fdp, fp, *fd, flags, fcaps);
 	}
-	_finstall(fdp, fp, *fd, flags, fcaps);
 	FILEDESC_XUNLOCK(fdp);
-	return (0);
+	return (error);
+}
+
+int
+finstall(struct thread *td, struct file *fp, int *fd, int flags,
+    struct filecaps *fcaps)
+{
+	int error;
+
+	MPASS(fd != NULL);
+
+	if (!fhold(fp))
+		return (EBADF);
+	error = finstall_refed(td, fp, fd, flags, fcaps);
+	if (__predict_false(error != 0)) {
+		fdrop(fp, td);
+	}
+	return (error);
 }
 
 /*
@@ -2739,6 +2766,8 @@ closef(struct file *fp, struct thread *td)
 	struct filedesc_to_leader *fdtol;
 	struct filedesc *fdp;
 
+	MPASS(td != NULL);
+
 	/*
 	 * POSIX record locking dictates that any close releases ALL
 	 * locks owned by this process.  This is handled by setting
@@ -2751,7 +2780,7 @@ closef(struct file *fp, struct thread *td)
 	 * context that might have locks, or the locks will be
 	 * leaked.
 	 */
-	if (fp->f_type == DTYPE_VNODE && td != NULL) {
+	if (fp->f_type == DTYPE_VNODE) {
 		vp = fp->f_vnode;
 		if ((td->td_proc->p_leader->p_flag & P_ADVLOCK) != 0) {
 			lf.l_whence = SEEK_SET;
@@ -2797,6 +2826,16 @@ closef(struct file *fp, struct thread *td)
 		}
 	}
 	return (fdrop_close(fp, td));
+}
+
+/*
+ * Hack for file descriptor passing code.
+ */
+void
+closef_nothread(struct file *fp)
+{
+
+	fdrop(fp, NULL);
 }
 
 /*
@@ -2923,9 +2962,7 @@ fgetvp_lookup_smr(int fd, struct nameidata *ndp, struct vnode **vpp, bool *fsear
 	fdt = fdp->fd_files;
 	if (__predict_false((u_int)fd >= fdt->fdt_nfiles))
 		return (EBADF);
-	seq = seqc_read_any(fd_seqc(fdt, fd));
-	if (__predict_false(seqc_in_modify(seq)))
-		return (EAGAIN);
+	seq = seqc_read_notmodify(fd_seqc(fdt, fd));
 	fde = &fdt->fdt_ofiles[fd];
 	haverights = cap_rights_fde_inline(fde);
 	fp = fde->fde_file;
@@ -3034,7 +3071,7 @@ fget_unlocked_seq(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 	 */
 	for (;;) {
 #ifdef CAPABILITIES
-		seq = seqc_read(fd_seqc(fdt, fd));
+		seq = seqc_read_notmodify(fd_seqc(fdt, fd));
 		fde = &fdt->fdt_ofiles[fd];
 		haverights = *cap_rights_fde_inline(fde);
 		fp = fde->fde_file;
@@ -3107,9 +3144,7 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 	if (__predict_false((u_int)fd >= fdt->fdt_nfiles))
 		return (EBADF);
 #ifdef CAPABILITIES
-	seq = seqc_read_any(fd_seqc(fdt, fd));
-	if (__predict_false(seqc_in_modify(seq)))
-		goto out_fallback;
+	seq = seqc_read_notmodify(fd_seqc(fdt, fd));
 	fde = &fdt->fdt_ofiles[fd];
 	haverights = cap_rights_fde_inline(fde);
 	fp = fde->fde_file;
@@ -3144,6 +3179,66 @@ out_fdrop:
 out_fallback:
 	return (fget_unlocked_seq(fdp, fd, needrightsp, fpp, NULL));
 }
+
+/*
+ * Translate fd -> file when the caller guarantees the file descriptor table
+ * can't be changed by others.
+ *
+ * Note this does not mean the file object itself is only visible to the caller,
+ * merely that it wont disappear without having to be referenced.
+ *
+ * Must be paired with fput_only_user.
+ */
+#ifdef	CAPABILITIES
+int
+fget_only_user(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
+    struct file **fpp)
+{
+	const struct filedescent *fde;
+	const struct fdescenttbl *fdt;
+	const cap_rights_t *haverights;
+	struct file *fp;
+	int error;
+
+	MPASS(FILEDESC_IS_ONLY_USER(fdp));
+
+	if (__predict_false(fd >= fdp->fd_nfiles))
+		return (EBADF);
+
+	fdt = fdp->fd_files;
+	fde = &fdt->fdt_ofiles[fd];
+	fp = fde->fde_file;
+	if (__predict_false(fp == NULL))
+		return (EBADF);
+	MPASS(refcount_load(&fp->f_count) > 0);
+	haverights = cap_rights_fde_inline(fde);
+	error = cap_check_inline(haverights, needrightsp);
+	if (__predict_false(error != 0))
+		return (EBADF);
+	*fpp = fp;
+	return (0);
+}
+#else
+int
+fget_only_user(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
+    struct file **fpp)
+{
+	struct file *fp;
+
+	MPASS(FILEDESC_IS_ONLY_USER(fdp));
+
+	if (__predict_false(fd >= fdp->fd_nfiles))
+		return (EBADF);
+
+	fp = fdp->fd_ofiles[fd].fde_file;
+	if (__predict_false(fp == NULL))
+		return (EBADF);
+
+	MPASS(refcount_load(&fp->f_count) > 0);
+	*fpp = fp;
+	return (0);
+}
+#endif
 
 /*
  * Extract the file pointer associated with the specified descriptor for the
@@ -3669,16 +3764,6 @@ pwd_hold(struct thread *td)
 	pwd = pwd_hold_pwddesc(pdp);
 	MPASS(pwd != NULL);
 	PWDDESC_XUNLOCK(pdp);
-	return (pwd);
-}
-
-struct pwd *
-pwd_get_smr(void)
-{
-	struct pwd *pwd;
-
-	pwd = vfs_smr_entered_load(&curproc->p_pd->pd_pwd);
-	MPASS(pwd != NULL);
 	return (pwd);
 }
 
@@ -4609,8 +4694,8 @@ file_type_to_name(short type)
 		return ("dev");
 	case DTYPE_PROCDESC:
 		return ("proc");
-	case DTYPE_LINUXEFD:
-		return ("levent");
+	case DTYPE_EVENTFD:
+		return ("eventfd");
 	case DTYPE_LINUXTFD:
 		return ("ltimer");
 	default:

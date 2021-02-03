@@ -283,10 +283,8 @@ ufs_open(struct vop_open_args *ap)
 
 	ip = VTOI(vp);
 	vnode_create_vobject(vp, DIP(ip, i_size), ap->a_td);
-	if (vp->v_type == VREG && (vp->v_irflag & VIRF_PGREAD) == 0) {
-		VI_LOCK(vp);
-		vp->v_irflag |= VIRF_PGREAD;
-		VI_UNLOCK(vp);
+	if (vp->v_type == VREG && (vn_irflag_read(vp) & VIRF_PGREAD) == 0) {
+		vn_irflag_set_cond(vp, VIRF_PGREAD);
 	}
 
 	/*
@@ -2947,7 +2945,7 @@ ufs_read_pgcache(struct vop_read_pgcache_args *ap)
 
 	uio = ap->a_uio;
 	vp = ap->a_vp;
-	MPASS((vp->v_irflag & VIRF_PGREAD) != 0);
+	VNPASS((vn_irflag_read(vp) & VIRF_PGREAD) != 0, vp);
 
 	if (uio->uio_resid > ptoa(io_hold_cnt) || uio->uio_offset < 0 ||
 	    (ap->a_ioflag & IO_DIRECT) != 0)
@@ -2965,6 +2963,7 @@ struct vop_vector ufs_vnodeops = {
 	.vop_accessx =		ufs_accessx,
 	.vop_bmap =		ufs_bmap,
 	.vop_fplookup_vexec =	ufs_fplookup_vexec,
+	.vop_fplookup_symlink =	VOP_EAGAIN,
 	.vop_cachedlookup =	ufs_lookup,
 	.vop_close =		ufs_close,
 	.vop_create =		ufs_create,
