@@ -256,11 +256,11 @@ struct tp_params {
 	unsigned int la_mask;        /* what events are recorded by TP LA */
 	unsigned short tx_modq[MAX_NCHAN];  /* channel to modulation queue map */
 
-	uint32_t vlan_pri_map;
-	uint32_t ingress_config;
+	uint16_t filter_mode;
+	uint16_t filter_mask;	/* Used by TOE and hashfilters */
+	int vnic_mode;
 	uint32_t max_rx_pdu;
 	uint32_t max_tx_pdu;
-	uint64_t hash_filter_mask;
 	bool rx_pkt_encap;
 
 	int8_t fcoe_shift;
@@ -309,6 +309,7 @@ struct chip_params {
 	u8 cng_ch_bits_log;		/* congestion channel map bits width */
 	u8 nsched_cls;
 	u8 cim_num_obq;
+	u8 filter_opt_len;
 	u16 mps_rplc_size;
 	u16 vfcount;
 	u32 sge_fl_db;
@@ -753,8 +754,7 @@ int t4_set_sched_ipg(struct adapter *adap, int sched, unsigned int ipg);
 int t4_set_pace_tbl(struct adapter *adap, const unsigned int *pace_vals,
 		    unsigned int start, unsigned int n);
 void t4_get_chan_txrate(struct adapter *adap, u64 *nic_rate, u64 *ofld_rate);
-int t4_set_filter_mode(struct adapter *adap, unsigned int mode_map,
-    bool sleep_ok);
+int t4_set_filter_cfg(struct adapter *adap, int mode, int mask, int vnic_mode);
 void t4_mk_filtdelwr(unsigned int ftid, struct fw_filter_wr *wr, int qid);
 
 void t4_wol_magic_enable(struct adapter *adap, unsigned int port, const u8 *addr);
