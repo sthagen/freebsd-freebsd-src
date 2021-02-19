@@ -1550,10 +1550,10 @@ in6ifa_ifpforlinklocal(struct ifnet *ifp, int ignoreflags)
 
 /*
  * find the interface address corresponding to a given IPv6 address.
- * ifaddr is returned referenced.
+ * ifaddr is returned referenced if @referenced flag is set.
  */
 struct in6_ifaddr *
-in6ifa_ifwithaddr(const struct in6_addr *addr, uint32_t zoneid)
+in6ifa_ifwithaddr(const struct in6_addr *addr, uint32_t zoneid, bool referenced)
 {
 	struct rm_priotracker in6_ifa_tracker;
 	struct in6_ifaddr *ia;
@@ -1564,7 +1564,8 @@ in6ifa_ifwithaddr(const struct in6_addr *addr, uint32_t zoneid)
 			if (zoneid != 0 &&
 			    zoneid != ia->ia_addr.sin6_scope_id)
 				continue;
-			ifa_ref(&ia->ia_ifa);
+			if (referenced)
+				ifa_ref(&ia->ia_ifa);
 			break;
 		}
 	}
@@ -1921,10 +1922,8 @@ in6_ifawithifp(struct ifnet *ifp, struct in6_addr *dst)
 				besta = (struct in6_ifaddr *)ifa;
 		}
 	}
-	if (besta) {
-		ifa_ref(&besta->ia_ifa);
+	if (besta)
 		return (besta);
-	}
 
 	CK_STAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 		if (ifa->ifa_addr->sa_family != AF_INET6)
@@ -1941,20 +1940,14 @@ in6_ifawithifp(struct ifnet *ifp, struct in6_addr *dst)
 			continue;
 		}
 
-		if (ifa != NULL)
-			ifa_ref(ifa);
 		return (struct in6_ifaddr *)ifa;
 	}
 
 	/* use the last-resort values, that are, deprecated addresses */
-	if (dep[0]) {
-		ifa_ref((struct ifaddr *)dep[0]);
+	if (dep[0])
 		return dep[0];
-	}
-	if (dep[1]) {
-		ifa_ref((struct ifaddr *)dep[1]);
+	if (dep[1])
 		return dep[1];
-	}
 
 	return NULL;
 }
