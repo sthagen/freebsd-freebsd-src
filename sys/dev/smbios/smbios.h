@@ -1,9 +1,9 @@
-/*
- * Copyright (C) 2016 Cavium Inc.
- * All rights reserved.
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * Developed by Semihalf.
- * Based on work by Nathan Whitehorn.
+ * Copyright (c) 1997 Michael Smith
+ * Copyright (c) 1998 Jonathan Lemon
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,78 +29,39 @@
  * $FreeBSD$
  */
 
-#include <sys/types.h>
-#include <string.h>
-
-#include "partedit.h"
+#ifndef _SMBIOS_H_
+#define _SMBIOS_H_
 
 /*
- * partedit implementation for platforms on which the installer only offers
- * UEFI-based boot. Currently, this includes arm64 and RISC-V.
+ * System Management BIOS
  */
+#define	SMBIOS_START	0xf0000
+#define	SMBIOS_STEP	0x10
+#define	SMBIOS_OFF	0
+#define	SMBIOS_LEN	4
+#define	SMBIOS_SIG	"_SM_"
 
-/* EFI partition size in bytes */
-#define	EFI_BOOTPART_SIZE	(260 * 1024 * 1024)
+struct smbios_eps {
+	uint8_t		anchor_string[4];		/* '_SM_' */
+	uint8_t		checksum;
+	uint8_t		length;
+	uint8_t		major_version;
+	uint8_t		minor_version;
+	uint16_t	maximum_structure_size;
+	uint8_t		entry_point_revision;
+	uint8_t		formatted_area[5];
+	uint8_t		intermediate_anchor_string[5];	/* '_DMI_' */
+	uint8_t		intermediate_checksum;
+	uint16_t	structure_table_length;
+	uint32_t	structure_table_address;
+	uint16_t	number_structures;
+	uint8_t		BCD_revision;
+};
 
-const char *
-default_scheme(void)
-{
+struct smbios_structure_header {
+	uint8_t		type;
+	uint8_t		length;
+	uint16_t	handle;
+};
 
-	return ("GPT");
-}
-
-int
-is_scheme_bootable(const char *part_type)
-{
-
-	if (strcmp(part_type, "GPT") == 0)
-		return (1);
-
-	return (0);
-}
-
-int
-is_fs_bootable(const char *part_type, const char *fs)
-{
-
-	if (strcmp(fs, "freebsd-ufs") == 0)
-		return (1);
-
-	return (0);
-}
-
-size_t
-bootpart_size(const char *scheme)
-{
-
-	/* We only support GPT with EFI */
-	if (strcmp(scheme, "GPT") != 0)
-		return (0);
-
-	return (EFI_BOOTPART_SIZE);
-}
-
-const char *
-bootpart_type(const char *scheme, const char **mountpoint)
-{
-
-	/* Only EFI is supported as boot partition */
-	*mountpoint = "/boot/efi";
-	return ("efi");
-}
-
-const char *
-bootcode_path(const char *part_type)
-{
-
-	return (NULL);
-}
-
-const char *
-partcode_path(const char *part_type, const char *fs_type)
-{
-
-	/* No boot partition data. */
-	return (NULL);
-}
-
+#endif /* _SMBIOS_H_ */
