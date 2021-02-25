@@ -1835,7 +1835,8 @@ kern_jail_set(struct thread *td, struct uio *optuio, int flags)
 
 	/* Attach this process to the prison if requested. */
 	if (flags & JAIL_ATTACH) {
-		error = do_jail_attach(td, pr, prison_lock_xlock(pr, drflags));
+		error = do_jail_attach(td, pr,
+		    prison_lock_xlock(pr, drflags & ~PD_KILL));
 		drflags &= ~(PD_LOCKED | PD_LIST_XLOCKED);
 		if (error) {
 			vfs_opterror(opts, "attach failed");
@@ -2899,6 +2900,7 @@ prison_deref_kill(struct prison *pr, struct prisonlist *freeprison)
 			cpr->pr_state = PRISON_STATE_DYING;
 			cpr->pr_flags |= PR_REMOVE;
 			mtx_unlock(&cpr->pr_mtx);
+			continue;
 		}
 		if (!(cpr->pr_flags & PR_REMOVE))
 			continue;
