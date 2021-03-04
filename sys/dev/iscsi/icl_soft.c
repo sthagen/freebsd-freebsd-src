@@ -866,6 +866,7 @@ icl_conn_send_pdus(struct icl_conn *ic, struct icl_pdu_stailq *queue)
 	 * of error.
 	 */
 	available = sbspace(&so->so_snd);
+	ic->ic_check_send_space = false;
 
 	/*
 	 * Notify the socket upcall that we don't need wakeups
@@ -933,7 +934,6 @@ icl_conn_send_pdus(struct icl_conn *ic, struct icl_pdu_stailq *queue)
 				request2->ip_bhs_mbuf = NULL;
 				request->ip_bhs_mbuf->m_pkthdr.len += size2;
 				size += size2;
-				STAILQ_REMOVE_AFTER(queue, request, ip_next);
 				icl_soft_pdu_done(request2, 0);
 			}
 #if 0
@@ -972,15 +972,13 @@ icl_send_thread(void *arg)
 	for (;;) {
 		for (;;) {
 			/*
-			 * If the local queue is empty, populate it from
-			 * the main one.  This way the icl_conn_send_pdus()
-			 * can go through all the queued PDUs without holding
-			 * any locks.
+			 * Populate the local queue from the main one.
+			 * This way the icl_conn_send_pdus() can go through
+			 * all the queued PDUs without holding any locks.
 			 */
-			if (STAILQ_EMPTY(&queue))
-				STAILQ_SWAP(&ic->ic_to_send, &queue, icl_pdu);
+			if (STAILQ_EMPTY(&queue) || ic->ic_check_send_space)
+				STAILQ_CONCAT(&queue, &ic->ic_to_send);
 
-			ic->ic_check_send_space = false;
 			ICL_CONN_UNLOCK(ic);
 			icl_conn_send_pdus(ic, &queue);
 			ICL_CONN_LOCK(ic);
