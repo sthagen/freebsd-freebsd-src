@@ -307,7 +307,6 @@ MAN=	aac.4 \
 	mly.4 \
 	mmc.4 \
 	mmcsd.4 \
-	mn.4 \
 	mod_cc.4 \
 	mos.4 \
 	mouse.4 \
@@ -526,6 +525,7 @@ MAN=	aac.4 \
 	snd_via8233.4 \
 	snd_via82c686.4 \
 	snd_vibes.4 \
+	sndstat.4 \
 	snp.4 \
 	spigen.4 \
 	${_spkr.4} \
@@ -584,7 +584,6 @@ MAN=	aac.4 \
 	vtnet.4 \
 	watchdog.4 \
 	${_wbwd.4} \
-	wg.4 \
 	witness.4 \
 	wlan.4 \
 	wlan_acl.4 \
@@ -710,7 +709,6 @@ MLINKS+=mem.4 kmem.4
 MLINKS+=mfi.4 mfi_linux.4 \
 	mfi.4 mfip.4
 MLINKS+=mlx5en.4 mce.4
-MLINKS+=mn.4 if_mn.4
 MLINKS+=mos.4 if_mos.4
 MLINKS+=msk.4 if_msk.4
 MLINKS+=mwl.4 if_mwl.4
@@ -767,7 +765,6 @@ MLINKS+=vr.4 if_vr.4
 MLINKS+=vte.4 if_vte.4
 MLINKS+=vtnet.4 if_vtnet.4
 MLINKS+=watchdog.4 SW_WATCHDOG.4
-MLINKS+=wg.4 if_wg.4
 MLINKS+=${_wpi.4} ${_if_wpi.4}
 MLINKS+=xl.4 if_xl.4
 

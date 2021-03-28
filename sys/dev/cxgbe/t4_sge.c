@@ -270,6 +270,11 @@ static int free_wrq(struct adapter *, struct sge_wrq *);
 static int alloc_txq(struct vi_info *, struct sge_txq *, int,
     struct sysctl_oid *);
 static int free_txq(struct vi_info *, struct sge_txq *);
+#if defined(TCP_OFFLOAD) || defined(RATELIMIT)
+static int alloc_ofld_txq(struct vi_info *, struct sge_ofld_txq *, int,
+    struct sysctl_oid *);
+static int free_ofld_txq(struct vi_info *, struct sge_ofld_txq *);
+#endif
 static void oneseg_dma_callback(void *, bus_dma_segment_t *, int, int);
 static inline void ring_fl_db(struct adapter *, struct sge_fl *);
 static int refill_fl(struct adapter *, struct sge_fl *, int);
@@ -1109,7 +1114,7 @@ t4_setup_vi_queues(struct vi_info *vi)
 	struct sge_ofld_rxq *ofld_rxq;
 #endif
 #if defined(TCP_OFFLOAD) || defined(RATELIMIT)
-	struct sge_wrq *ofld_txq;
+	struct sge_ofld_txq *ofld_txq;
 #endif
 #ifdef DEV_NETMAP
 	int saved_idx;
@@ -1228,26 +1233,20 @@ t4_setup_vi_queues(struct vi_info *vi)
 	oid = SYSCTL_ADD_NODE(&vi->ctx, children, OID_AUTO, "ofld_txq",
 	    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "tx queues for TOE/ETHOFLD");
 	for_each_ofld_txq(vi, i, ofld_txq) {
-		struct sysctl_oid *oid2;
-
 		snprintf(name, sizeof(name), "%s ofld_txq%d",
 		    device_get_nameunit(vi->dev), i);
 		if (vi->nofldrxq > 0) {
 			iqidx = vi->first_ofld_rxq + (i % vi->nofldrxq);
-			init_eq(sc, &ofld_txq->eq, EQ_OFLD, vi->qsize_txq,
+			init_eq(sc, &ofld_txq->wrq.eq, EQ_OFLD, vi->qsize_txq,
 			    pi->tx_chan, sc->sge.ofld_rxq[iqidx].iq.cntxt_id,
 			    name);
 		} else {
 			iqidx = vi->first_rxq + (i % vi->nrxq);
-			init_eq(sc, &ofld_txq->eq, EQ_OFLD, vi->qsize_txq,
+			init_eq(sc, &ofld_txq->wrq.eq, EQ_OFLD, vi->qsize_txq,
 			    pi->tx_chan, sc->sge.rxq[iqidx].iq.cntxt_id, name);
 		}
 
-		snprintf(name, sizeof(name), "%d", i);
-		oid2 = SYSCTL_ADD_NODE(&vi->ctx, SYSCTL_CHILDREN(oid), OID_AUTO,
-		    name, CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "offload tx queue");
-
-		rc = alloc_wrq(sc, vi, ofld_txq, oid2);
+		rc = alloc_ofld_txq(vi, ofld_txq, i, oid);
 		if (rc != 0)
 			goto done;
 	}
@@ -1269,9 +1268,7 @@ t4_teardown_vi_queues(struct vi_info *vi)
 	struct sge_rxq *rxq;
 	struct sge_txq *txq;
 #if defined(TCP_OFFLOAD) || defined(RATELIMIT)
-	struct port_info *pi = vi->pi;
-	struct adapter *sc = pi->adapter;
-	struct sge_wrq *ofld_txq;
+	struct sge_ofld_txq *ofld_txq;
 #endif
 #ifdef TCP_OFFLOAD
 	struct sge_ofld_rxq *ofld_rxq;
@@ -1309,7 +1306,7 @@ t4_teardown_vi_queues(struct vi_info *vi)
 	}
 #if defined(TCP_OFFLOAD) || defined(RATELIMIT)
 	for_each_ofld_txq(vi, i, ofld_txq) {
-		free_wrq(sc, ofld_txq);
+		free_ofld_txq(vi, ofld_txq);
 	}
 #endif
 
@@ -3737,15 +3734,12 @@ add_iq_sysctls(struct sysctl_ctx_list *ctx, struct sysctl_oid *oid,
 	    "bus address of descriptor ring");
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "dmalen", CTLFLAG_RD, NULL,
 	    iq->qsize * IQ_ESIZE, "descriptor ring size in bytes");
-	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "abs_id",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &iq->abs_id, 0,
-	    sysctl_uint16, "I", "absolute id of the queue");
-	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "cntxt_id",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &iq->cntxt_id, 0,
-	    sysctl_uint16, "I", "SGE context id of the queue");
-	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "cidx",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &iq->cidx, 0,
-	    sysctl_uint16, "I", "consumer index");
+	SYSCTL_ADD_U16(ctx, children, OID_AUTO, "abs_id", CTLFLAG_RD,
+	    &iq->abs_id, 0, "absolute id of the queue");
+	SYSCTL_ADD_U16(ctx, children, OID_AUTO, "cntxt_id", CTLFLAG_RD,
+	    &iq->cntxt_id, 0, "SGE context id of the queue");
+	SYSCTL_ADD_U16(ctx, children, OID_AUTO, "cidx", CTLFLAG_RD, &iq->cidx,
+	    0, "consumer index");
 }
 
 static void
@@ -3763,9 +3757,8 @@ add_fl_sysctls(struct adapter *sc, struct sysctl_ctx_list *ctx,
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "dmalen", CTLFLAG_RD, NULL,
 	    fl->sidx * EQ_ESIZE + sc->params.sge.spg_len,
 	    "desc ring size in bytes");
-	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "cntxt_id",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &fl->cntxt_id, 0,
-	    sysctl_uint16, "I", "SGE context id of the freelist");
+	SYSCTL_ADD_U16(ctx, children, OID_AUTO, "cntxt_id", CTLFLAG_RD,
+	    &fl->cntxt_id, 0, "SGE context id of the freelist");
 	SYSCTL_ADD_UINT(ctx, children, OID_AUTO, "padding", CTLFLAG_RD, NULL,
 	    fl_pad ? 1 : 0, "padding enabled");
 	SYSCTL_ADD_UINT(ctx, children, OID_AUTO, "packing", CTLFLAG_RD, NULL,
@@ -3964,6 +3957,13 @@ alloc_ofld_rxq(struct vi_info *vi, struct sge_ofld_rxq *ofld_rxq,
 	    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "rx queue");
 	add_iq_sysctls(&vi->ctx, oid, &ofld_rxq->iq);
 	add_fl_sysctls(pi->adapter, &vi->ctx, oid, &ofld_rxq->fl);
+
+	SYSCTL_ADD_ULONG(&vi->ctx, SYSCTL_CHILDREN(oid), OID_AUTO,
+	    "rx_toe_tls_records", CTLFLAG_RD, &ofld_rxq->rx_toe_tls_records,
+	    "# of TOE TLS records received");
+	SYSCTL_ADD_ULONG(&vi->ctx, SYSCTL_CHILDREN(oid), OID_AUTO,
+	    "rx_toe_tls_octets", CTLFLAG_RD, &ofld_rxq->rx_toe_tls_octets,
+	    "# of payload octets in received TOE TLS records");
 
 	return (rc);
 }
@@ -4275,12 +4275,10 @@ alloc_wrq(struct adapter *sc, struct vi_info *vi, struct sge_wrq *wrq,
 	    "desc ring size in bytes");
 	SYSCTL_ADD_UINT(ctx, children, OID_AUTO, "cntxt_id", CTLFLAG_RD,
 	    &wrq->eq.cntxt_id, 0, "SGE context id of the queue");
-	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "cidx",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &wrq->eq.cidx, 0,
-	    sysctl_uint16, "I", "consumer index");
-	SYSCTL_ADD_PROC(ctx, children, OID_AUTO, "pidx",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &wrq->eq.pidx, 0,
-	    sysctl_uint16, "I", "producer index");
+	SYSCTL_ADD_U16(ctx, children, OID_AUTO, "cidx", CTLFLAG_RD,
+	    &wrq->eq.cidx, 0, "consumer index");
+	SYSCTL_ADD_U16(ctx, children, OID_AUTO, "pidx", CTLFLAG_RD,
+	    &wrq->eq.pidx, 0, "producer index");
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "sidx", CTLFLAG_RD, NULL,
 	    wrq->eq.sidx, "status page index");
 	SYSCTL_ADD_UQUAD(ctx, children, OID_AUTO, "tx_wrs_direct", CTLFLAG_RD,
@@ -4377,12 +4375,10 @@ alloc_txq(struct vi_info *vi, struct sge_txq *txq, int idx,
 	    &eq->abs_id, 0, "absolute id of the queue");
 	SYSCTL_ADD_UINT(&vi->ctx, children, OID_AUTO, "cntxt_id", CTLFLAG_RD,
 	    &eq->cntxt_id, 0, "SGE context id of the queue");
-	SYSCTL_ADD_PROC(&vi->ctx, children, OID_AUTO, "cidx",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &eq->cidx, 0,
-	    sysctl_uint16, "I", "consumer index");
-	SYSCTL_ADD_PROC(&vi->ctx, children, OID_AUTO, "pidx",
-	    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, &eq->pidx, 0,
-	    sysctl_uint16, "I", "producer index");
+	SYSCTL_ADD_U16(&vi->ctx, children, OID_AUTO, "cidx", CTLFLAG_RD,
+	    &eq->cidx, 0, "consumer index");
+	SYSCTL_ADD_U16(&vi->ctx, children, OID_AUTO, "pidx", CTLFLAG_RD,
+	    &eq->pidx, 0, "producer index");
 	SYSCTL_ADD_INT(&vi->ctx, children, OID_AUTO, "sidx", CTLFLAG_RD, NULL,
 	    eq->sidx, "status page index");
 
@@ -4427,7 +4423,7 @@ alloc_txq(struct vi_info *vi, struct sge_txq *txq, int idx,
 	    "# of times hardware assisted with inner checksums (VXLAN)");
 
 #ifdef KERN_TLS
-	if (sc->flags & KERN_TLS_OK) {
+	if (is_ktls(sc)) {
 		SYSCTL_ADD_UQUAD(&vi->ctx, children, OID_AUTO,
 		    "kern_tls_records", CTLFLAG_RD, &txq->kern_tls_records,
 		    "# of NIC TLS records transmitted");
@@ -4489,6 +4485,57 @@ free_txq(struct vi_info *vi, struct sge_txq *txq)
 	bzero(txq, sizeof(*txq));
 	return (0);
 }
+
+#if defined(TCP_OFFLOAD) || defined(RATELIMIT)
+static int
+alloc_ofld_txq(struct vi_info *vi, struct sge_ofld_txq *ofld_txq, int idx,
+    struct sysctl_oid *oid)
+{
+	struct adapter *sc = vi->adapter;
+	struct sysctl_oid_list *children;
+	char name[16];
+	int rc;
+
+	children = SYSCTL_CHILDREN(oid);
+
+	snprintf(name, sizeof(name), "%d", idx);
+	oid = SYSCTL_ADD_NODE(&vi->ctx, children, OID_AUTO, name,
+	    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "offload tx queue");
+	children = SYSCTL_CHILDREN(oid);
+
+	rc = alloc_wrq(sc, vi, &ofld_txq->wrq, oid);
+	if (rc != 0)
+		return (rc);
+
+	ofld_txq->tx_toe_tls_records = counter_u64_alloc(M_WAITOK);
+	ofld_txq->tx_toe_tls_octets = counter_u64_alloc(M_WAITOK);
+	SYSCTL_ADD_COUNTER_U64(&vi->ctx, children, OID_AUTO,
+	    "tx_toe_tls_records", CTLFLAG_RD, &ofld_txq->tx_toe_tls_records,
+	    "# of TOE TLS records transmitted");
+	SYSCTL_ADD_COUNTER_U64(&vi->ctx, children, OID_AUTO,
+	    "tx_toe_tls_octets", CTLFLAG_RD, &ofld_txq->tx_toe_tls_octets,
+	    "# of payload octets in transmitted TOE TLS records");
+
+	return (rc);
+}
+
+static int
+free_ofld_txq(struct vi_info *vi, struct sge_ofld_txq *ofld_txq)
+{
+	struct adapter *sc = vi->adapter;
+	int rc;
+
+	rc = free_wrq(sc, &ofld_txq->wrq);
+	if (rc != 0)
+		return (rc);
+
+	counter_u64_free(ofld_txq->tx_toe_tls_records);
+	counter_u64_free(ofld_txq->tx_toe_tls_octets);
+
+	bzero(ofld_txq, sizeof(*ofld_txq));
+	return (0);
+}
+#endif
 
 static void
 oneseg_dma_callback(void *arg, bus_dma_segment_t *segs, int nseg, int error)
@@ -6033,15 +6080,6 @@ t4_handle_wrerr_rpl(struct adapter *adap, const __be64 *rpl)
 	return (0);
 }
 
-int
-sysctl_uint16(SYSCTL_HANDLER_ARGS)
-{
-	uint16_t *id = arg1;
-	int i = *id;
-
-	return sysctl_handle_int(oidp, &i, 0, req);
-}
-
 static inline bool
 bufidx_used(struct adapter *sc, int idx)
 {
@@ -6125,7 +6163,7 @@ send_etid_flowc_wr(struct cxgbe_rate_tag *cst, struct port_info *pi,
 	MPASS((cst->flags & (EO_FLOWC_PENDING | EO_FLOWC_RPL_PENDING)) ==
 	    EO_FLOWC_PENDING);
 
-	flowc = start_wrq_wr(cst->eo_txq, ETID_FLOWC_LEN16, &cookie);
+	flowc = start_wrq_wr(&cst->eo_txq->wrq, ETID_FLOWC_LEN16, &cookie);
 	if (__predict_false(flowc == NULL))
 		return (ENOMEM);
 
@@ -6147,7 +6185,7 @@ send_etid_flowc_wr(struct cxgbe_rate_tag *cst, struct port_info *pi,
 	flowc->mnemval[5].mnemonic = FW_FLOWC_MNEM_SCHEDCLASS;
 	flowc->mnemval[5].val = htobe32(cst->schedcl);
 
-	commit_wrq_wr(cst->eo_txq, flowc, &cookie);
+	commit_wrq_wr(&cst->eo_txq->wrq, flowc, &cookie);
 
 	cst->flags &= ~EO_FLOWC_PENDING;
 	cst->flags |= EO_FLOWC_RPL_PENDING;
@@ -6167,7 +6205,7 @@ send_etid_flush_wr(struct cxgbe_rate_tag *cst)
 
 	mtx_assert(&cst->lock, MA_OWNED);
 
-	flowc = start_wrq_wr(cst->eo_txq, ETID_FLUSH_LEN16, &cookie);
+	flowc = start_wrq_wr(&cst->eo_txq->wrq, ETID_FLUSH_LEN16, &cookie);
 	if (__predict_false(flowc == NULL))
 		CXGBE_UNIMPLEMENTED(__func__);
 
@@ -6177,7 +6215,7 @@ send_etid_flush_wr(struct cxgbe_rate_tag *cst)
 	flowc->flowid_len16 = htobe32(V_FW_WR_LEN16(ETID_FLUSH_LEN16) |
 	    V_FW_WR_FLOWID(cst->etid));
 
-	commit_wrq_wr(cst->eo_txq, flowc, &cookie);
+	commit_wrq_wr(&cst->eo_txq->wrq, flowc, &cookie);
 
 	cst->flags |= EO_FLUSH_RPL_PENDING;
 	MPASS(cst->tx_credits >= ETID_FLUSH_LEN16);
@@ -6362,7 +6400,7 @@ ethofld_tx(struct cxgbe_rate_tag *cst)
 			MPASS(cst->ncompl > 0);
 			return;
 		}
-		wr = start_wrq_wr(cst->eo_txq, next_credits, &cookie);
+		wr = start_wrq_wr(&cst->eo_txq->wrq, next_credits, &cookie);
 		if (__predict_false(wr == NULL)) {
 			/* XXX: wishful thinking, not a real assertion. */
 			MPASS(cst->ncompl > 0);
@@ -6373,7 +6411,7 @@ ethofld_tx(struct cxgbe_rate_tag *cst)
 		compl = cst->ncompl == 0 || cst->tx_nocompl >= cst->tx_total / 2;
 		ETHER_BPF_MTAP(cst->com.ifp, m);
 		write_ethofld_wr(cst, wr, m, compl);
-		commit_wrq_wr(cst->eo_txq, wr, &cookie);
+		commit_wrq_wr(&cst->eo_txq->wrq, wr, &cookie);
 		if (compl) {
 			cst->ncompl++;
 			cst->tx_nocompl	= 0;

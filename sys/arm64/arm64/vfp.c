@@ -33,6 +33,7 @@ __FBSDID("$FreeBSD$");
 #ifdef VFP
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/limits.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/pcpu.h>
@@ -199,6 +200,26 @@ vfp_save_state(struct thread *td, struct pcb *pcb)
 	critical_exit();
 }
 
+/*
+ * Reset the FP state to avoid leaking state from the parent process across
+ * execve() (and to ensure that we get a consistent floating point environment
+ * in every new process).
+ */
+void
+vfp_reset_state(struct thread *td, struct pcb *pcb)
+{
+	critical_enter();
+	bzero(&pcb->pcb_fpustate.vfp_regs, sizeof(pcb->pcb_fpustate.vfp_regs));
+	KASSERT(pcb->pcb_fpusaved == &pcb->pcb_fpustate,
+	    ("pcb_fpusaved should point to pcb_fpustate."));
+	pcb->pcb_fpustate.vfp_fpcr = VFPCR_INIT;
+	pcb->pcb_fpustate.vfp_fpsr = 0;
+	pcb->pcb_vfpcpu = UINT_MAX;
+	pcb->pcb_fpflags = 0;
+	vfp_discard(td);
+	critical_exit();
+}
+
 void
 vfp_restore_state(void)
 {
@@ -241,7 +262,7 @@ vfp_init(void)
 	vfp_disable();
 
 	if (PCPU_GET(cpuid) == 0)
-		thread0.td_pcb->pcb_fpusaved->vfp_fpcr = initial_fpcr;
+		thread0.td_pcb->pcb_fpusaved->vfp_fpcr = VFPCR_INIT;
 }
 
 SYSINIT(vfp, SI_SUB_CPU, SI_ORDER_ANY, vfp_init, NULL);

@@ -57,6 +57,10 @@ __FBSDID("$FreeBSD$");
 #include <compat/linux/linux_util.h>
 #include <compat/linux/linux_vdso.h>
 
+#ifdef VFP
+#include <machine/vfp.h>
+#endif
+
 MODULE_VERSION(linux64elf, 1);
 
 const char *linux_kplatform;
@@ -360,6 +364,15 @@ linux_exec_setregs(struct thread *td, struct image_params *imgp,
         regs->tf_lr = 0xffffffffffffffff;
 #endif
         regs->tf_elr = imgp->entry_addr;
+
+	td->td_pcb->pcb_tpidr_el0 = 0;
+	td->td_pcb->pcb_tpidrro_el0 = 0;
+	WRITE_SPECIALREG(tpidrro_el0, 0);
+	WRITE_SPECIALREG(tpidr_el0, 0);
+
+#ifdef VFP
+	vfp_reset_state(td, td->td_pcb);
+#endif
 }
 
 int

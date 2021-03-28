@@ -489,36 +489,35 @@ set_regs32(struct thread *td, struct reg32 *regs)
 	return (0);
 }
 
+/* XXX fill/set dbregs/fpregs are stubbed on 32-bit arm. */
 int
 fill_fpregs32(struct thread *td, struct fpreg32 *regs)
 {
 
-	printf("ARM64TODO: fill_fpregs32");
-	return (EDOOFUS);
+	memset(regs, 0, sizeof(*regs));
+	return (0);
 }
 
 int
 set_fpregs32(struct thread *td, struct fpreg32 *regs)
 {
 
-	printf("ARM64TODO: set_fpregs32");
-	return (EDOOFUS);
+	return (0);
 }
 
 int
 fill_dbregs32(struct thread *td, struct dbreg32 *regs)
 {
 
-	printf("ARM64TODO: fill_dbregs32");
-	return (EDOOFUS);
+	memset(regs, 0, sizeof(*regs));
+	return (0);
 }
 
 int
 set_dbregs32(struct thread *td, struct dbreg32 *regs)
 {
 
-	printf("ARM64TODO: set_dbregs32");
-	return (EDOOFUS);
+	return (0);
 }
 #endif
 
@@ -552,6 +551,7 @@ void
 exec_setregs(struct thread *td, struct image_params *imgp, uintptr_t stack)
 {
 	struct trapframe *tf = td->td_frame;
+	struct pcb *pcb = td->td_pcb;
 
 	memset(tf, 0, sizeof(struct trapframe));
 
@@ -559,6 +559,17 @@ exec_setregs(struct thread *td, struct image_params *imgp, uintptr_t stack)
 	tf->tf_sp = STACKALIGN(stack);
 	tf->tf_lr = imgp->entry_addr;
 	tf->tf_elr = imgp->entry_addr;
+
+	td->td_pcb->pcb_tpidr_el0 = 0;
+	td->td_pcb->pcb_tpidrro_el0 = 0;
+	WRITE_SPECIALREG(tpidrro_el0, 0);
+	WRITE_SPECIALREG(tpidr_el0, 0);
+
+#ifdef VFP
+	vfp_reset_state(td, pcb);
+#endif
+
+	/* TODO: Shouldn't we also reset pcb_dbg_regs? */
 }
 
 /* Sanity check these are the same size, they will be memcpy'd to and fro */
@@ -1230,6 +1241,8 @@ initarm(struct arm64_bootparams *abp)
 #ifdef FDT
 	struct mem_region mem_regions[FDT_MEM_REGIONS];
 	int mem_regions_sz;
+	phandle_t root;
+	char dts_version[255];
 #endif
 	vm_offset_t lastaddr;
 	caddr_t kmdp;
@@ -1341,6 +1354,22 @@ initarm(struct arm64_bootparams *abp)
 	env = kern_getenv("kernelname");
 	if (env != NULL)
 		strlcpy(kernelname, env, sizeof(kernelname));
+
+#ifdef FDT
+	if (arm64_bus_method == ARM64_BUS_FDT) {
+		root = OF_finddevice("/");
+		if (OF_getprop(root, "freebsd,dts-version", dts_version, sizeof(dts_version)) > 0) {
+			if (strcmp(LINUX_DTS_VERSION, dts_version) != 0)
+				printf("WARNING: DTB version is %s while kernel expects %s, "
+				    "please update the DTB in the ESP\n",
+				    dts_version,
+				    LINUX_DTS_VERSION);
+		} else {
+			printf("WARNING: Cannot find freebsd,dts-version property, "
+			    "cannot check DTB compliance\n");
+		}
+	}
+#endif
 
 	if (boothowto & RB_VERBOSE) {
 		if (efihdr != NULL)

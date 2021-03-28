@@ -2475,7 +2475,6 @@ dev/mmc/mmcbus_if.m		standard
 dev/mmc/mmcsd.c			optional mmcsd !mmccam
 dev/mmc/mmc_fdt_helpers.c	optional mmc fdt | mmccam fdt
 dev/mmcnull/mmcnull.c		optional mmcnull
-dev/mn/if_mn.c			optional mn pci
 dev/mpr/mpr.c			optional mpr
 dev/mpr/mpr_config.c		optional mpr
 # XXX Work around clang warning, until maintainer approves fix.
@@ -4564,6 +4563,8 @@ compat/linuxkpi/common/src/linux_current.c	optional compat_linuxkpi \
 compat/linuxkpi/common/src/linux_devres.c	optional compat_linuxkpi \
 	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_dmi.c		optional compat_linuxkpi \
+	compile-with "${LINUXKPI_C}"
+compat/linuxkpi/common/src/linux_domain.c	optional compat_linuxkpi \
 	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_firmware.c	optional compat_linuxkpi \
 	compile-with "${LINUXKPI_C}"

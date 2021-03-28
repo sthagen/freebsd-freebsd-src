@@ -163,7 +163,7 @@ enum {
 	ADAP_ERR	= (1 << 5),
 	BUF_PACKING_OK	= (1 << 6),
 	IS_VF		= (1 << 7),
-	KERN_TLS_OK	= (1 << 8),
+	KERN_TLS_ON	= (1 << 8),	/* HW is configured for KERN_TLS */
 	CXGBE_BUSY	= (1 << 9),
 
 	/* port flags */
@@ -316,10 +316,6 @@ struct port_info {
 	u_int tx_parse_error;
 	int fcs_reg;
 	uint64_t fcs_base;
-	u_long	tx_toe_tls_records;
-	u_long	tx_toe_tls_octets;
-	u_long	rx_toe_tls_records;
-	u_long	rx_toe_tls_octets;
 
 	struct callout tick;
 };
@@ -654,6 +650,8 @@ iq_to_rxq(struct sge_iq *iq)
 struct sge_ofld_rxq {
 	struct sge_iq iq;	/* MUST be first */
 	struct sge_fl fl;	/* MUST follow iq */
+	u_long	rx_toe_tls_records;
+	u_long	rx_toe_tls_octets;
 } __aligned(CACHE_LINE_SIZE);
 
 static inline struct sge_ofld_rxq *
@@ -677,8 +675,8 @@ struct wrq_cookie {
 };
 
 /*
- * wrq: SGE egress queue that is given prebuilt work requests.  Both the control
- * and offload tx queues are of this type.
+ * wrq: SGE egress queue that is given prebuilt work requests.  Control queues
+ * are of this type.
  */
 struct sge_wrq {
 	struct sge_eq eq;	/* MUST be first */
@@ -710,6 +708,13 @@ struct sge_wrq {
 	uint16_t ss_len;
 	uint8_t ss[SGE_MAX_WR_LEN];
 
+} __aligned(CACHE_LINE_SIZE);
+
+/* ofld_txq: SGE egress queue + miscellaneous items */
+struct sge_ofld_txq {
+	struct sge_wrq wrq;
+	counter_u64_t tx_toe_tls_records;
+	counter_u64_t tx_toe_tls_octets;
 } __aligned(CACHE_LINE_SIZE);
 
 #define INVALID_NM_RXQ_CNTXT_ID ((uint16_t)(-1))
@@ -792,7 +797,7 @@ struct sge {
 	struct sge_wrq *ctrlq;	/* Control queues */
 	struct sge_txq *txq;	/* NIC tx queues */
 	struct sge_rxq *rxq;	/* NIC rx queues */
-	struct sge_wrq *ofld_txq;	/* TOE tx queues */
+	struct sge_ofld_txq *ofld_txq;	/* TOE tx queues */
 	struct sge_ofld_rxq *ofld_rxq;	/* TOE rx queues */
 	struct sge_nm_txq *nm_txq;	/* netmap tx queues */
 	struct sge_nm_rxq *nm_rxq;	/* netmap rx queues */
@@ -1272,7 +1277,6 @@ int alloc_ring(struct adapter *, size_t, bus_dma_tag_t *, bus_dmamap_t *,
     bus_addr_t *, void **);
 int free_ring(struct adapter *, bus_dma_tag_t, bus_dmamap_t, bus_addr_t,
     void *);
-int sysctl_uint16(SYSCTL_HANDLER_ARGS);
 int t4_setup_adapter_queues(struct adapter *);
 int t4_teardown_adapter_queues(struct adapter *);
 int t4_setup_vi_queues(struct vi_info *);
