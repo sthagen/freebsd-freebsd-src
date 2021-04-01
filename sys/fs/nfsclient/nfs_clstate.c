@@ -267,17 +267,15 @@ nfscl_open(vnode_t vp, u_int8_t *nfhp, int fhlen, u_int32_t amode, int usedeleg,
 		}
 	}
 
-	if (dp != NULL) {
+	/* For NFSv4.1/4.2 and this option, use a single open_owner. */
+	if (NFSHASONEOPENOWN(VFSTONFS(vp->v_mount)))
+		nfscl_filllockowner(NULL, own, F_POSIX);
+	else
 		nfscl_filllockowner(p->td_proc, own, F_POSIX);
+	if (dp != NULL)
 		ohp = &dp->nfsdl_owner;
-	} else {
-		/* For NFSv4.1 and this option, use a single open_owner. */
-		if (NFSHASONEOPENOWN(VFSTONFS(vp->v_mount)))
-			nfscl_filllockowner(NULL, own, F_POSIX);
-		else
-			nfscl_filllockowner(p->td_proc, own, F_POSIX);
+	else
 		ohp = &clp->nfsc_owner;
-	}
 	/* Now, search for an openowner */
 	LIST_FOREACH(owp, ohp, nfsow_list) {
 		if (!NFSBCMP(owp->nfsow_owner, own, NFSV4CL_LOCKNAMELEN))
@@ -509,7 +507,8 @@ nfscl_getstateid(vnode_t vp, u_int8_t *nfhp, int fhlen, u_int32_t mode,
 	struct nfsnode *np;
 	struct nfsmount *nmp;
 	u_int8_t own[NFSV4CL_LOCKNAMELEN];
-	int error, done;
+	int error;
+	bool done;
 
 	*lckpp = NULL;
 	/*
@@ -598,9 +597,8 @@ nfscl_getstateid(vnode_t vp, u_int8_t *nfhp, int fhlen, u_int32_t mode,
 	if (op == NULL) {
 		/* If not found, just look for any OpenOwner that will work. */
 		top = NULL;
-		done = 0;
-		owp = LIST_FIRST(&clp->nfsc_owner);
-		while (!done && owp != NULL) {
+		done = false;
+		LIST_FOREACH(owp, &clp->nfsc_owner, nfsow_list) {
 			LIST_FOREACH(op, &owp->nfsow_open, nfso_list) {
 				if (op->nfso_fhlen == fhlen &&
 				    !NFSBCMP(op->nfso_fh, nfhp, fhlen)) {
@@ -609,13 +607,13 @@ nfscl_getstateid(vnode_t vp, u_int8_t *nfhp, int fhlen, u_int32_t mode,
 					    (mode & NFSV4OPEN_ACCESSREAD) != 0)
 						top = op;
 					if ((mode & op->nfso_mode) == mode) {
-						done = 1;
+						done = true;
 						break;
 					}
 				}
 			}
-			if (!done)
-				owp = LIST_NEXT(owp, nfsow_list);
+			if (done)
+				break;
 		}
 		if (!done) {
 			NFSCL_DEBUG(2, "openmode top=%p\n", top);
@@ -655,7 +653,7 @@ nfscl_getopen(struct nfsclownerhead *ohp, u_int8_t *nfhp, int fhlen,
 	struct nfsclowner *owp;
 	struct nfsclopen *op, *rop, *rop2;
 	struct nfscllockowner *lp;
-	int keep_looping;
+	bool keep_looping;
 
 	if (lpp != NULL)
 		*lpp = NULL;
@@ -671,13 +669,11 @@ nfscl_getopen(struct nfsclownerhead *ohp, u_int8_t *nfhp, int fhlen,
 	 */
 	rop = NULL;
 	rop2 = NULL;
-	keep_looping = 1;
+	keep_looping = true;
 	/* Search the client list */
-	owp = LIST_FIRST(ohp);
-	while (owp != NULL && keep_looping != 0) {
+	LIST_FOREACH(owp, ohp, nfsow_list) {
 		/* and look for the correct open */
-		op = LIST_FIRST(&owp->nfsow_open);
-		while (op != NULL && keep_looping != 0) {
+		LIST_FOREACH(op, &owp->nfsow_open, nfso_list) {
 			if (op->nfso_fhlen == fhlen &&
 			    !NFSBCMP(op->nfso_fh, nfhp, fhlen)
 			    && (op->nfso_mode & mode) == mode) {
@@ -690,7 +686,7 @@ nfscl_getopen(struct nfsclownerhead *ohp, u_int8_t *nfhp, int fhlen,
 						    NFSV4CL_LOCKNAMELEN)) {
 							*lpp = lp;
 							rop = op;
-							keep_looping = 0;
+							keep_looping = false;
 							break;
 						}
 					}
@@ -699,14 +695,16 @@ nfscl_getopen(struct nfsclownerhead *ohp, u_int8_t *nfhp, int fhlen,
 				    openown, NFSV4CL_LOCKNAMELEN)) {
 					rop = op;
 					if (lpp == NULL)
-						keep_looping = 0;
+						keep_looping = false;
 				}
 				if (rop2 == NULL)
 					rop2 = op;
 			}
-			op = LIST_NEXT(op, nfso_list);
+			if (!keep_looping)
+				break;
 		}
-		owp = LIST_NEXT(owp, nfsow_list);
+		if (!keep_looping)
+			break;
 	}
 	if (rop == NULL)
 		rop = rop2;
