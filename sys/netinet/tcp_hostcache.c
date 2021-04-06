@@ -769,7 +769,7 @@ tcp_hc_purge_internal(int all)
 			KASSERT(V_tcp_hostcache.hashbase[i].hch_length > 0 &&
 				V_tcp_hostcache.hashbase[i].hch_length <=
 				V_tcp_hostcache.bucket_limit,
-				("tcp_hostcache: bucket langth out of range at %u: %u",
+				("tcp_hostcache: bucket length out of range at %u: %u",
 				i, V_tcp_hostcache.hashbase[i].hch_length));
 			if (all || hc_entry->rmx_expire <= 0) {
 				TAILQ_REMOVE(&V_tcp_hostcache.hashbase[i].hch_bucket,
