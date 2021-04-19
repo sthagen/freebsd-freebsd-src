@@ -11,6 +11,10 @@
 # In case of a complete directory hierarchy the sorting is in depth first
 # order.
 #
+# Files that are installed or removed depending on some build option
+# are to be listed in /usr/src/tools/build/mk/OptionalObsoleteFiles.inc
+# instead of in this file.
+#
 # Before you commit changes to this file please check if any entries in
 # tools/build/mk/OptionalObsoleteFiles.inc can be removed. The following
 # command tells which files are listed more than once regardless of some
@@ -35,6 +39,19 @@
 #   -V OLD_FILES -V OLD_LIBS -V OLD_DIRS check-old | \
 #   xargs -n1 | sort | uniq -d;
 # done
+
+# 20210413: Remove pfctlinput2
+OLD_FILES+=usr/share/man/man9/pfctlinput2.9.gz
+
+# 20210412: Remove kernel asymmetric crypto
+OLD_FILES+=usr/share/man/man9/crypto_asym.9
+OLD_FILES+=usr/share/man/man9/crypto_kdispatch.9
+OLD_FILES+=usr/share/man/man9/crypto_kdone.9
+OLD_FILES+=usr/share/man/man9/crypto_kregister.9
+OLD_FILES+=usr/share/man/man9/CRYPTODEV_KPROCESS.9
+
+# 20210410: remove unused libexec/rc.d/archdep
+OLD_FILES+=etc/rc.d/archdep
 
 # 20210408: remove tcp_hostcache.h
 OLD_FILES+=usr/include/netinet/tcp_hostcache.h

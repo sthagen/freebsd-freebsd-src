@@ -2072,6 +2072,8 @@ have_mbuf:
 			rxq->rxcsum++;
 		} else {
 			MPASS(tnl_type == RX_PKT_TNL_TYPE_VXLAN);
+
+			M_HASHTYPE_SETINNER(m0);
 			if (__predict_false(cpl->ip_frag)) {
 				/*
 				 * csum_data is for the inner frame (which is an
@@ -4507,8 +4509,16 @@ alloc_ofld_txq(struct vi_info *vi, struct sge_ofld_txq *ofld_txq, int idx,
 	if (rc != 0)
 		return (rc);
 
+	ofld_txq->tx_iscsi_pdus = counter_u64_alloc(M_WAITOK);
+	ofld_txq->tx_iscsi_octets = counter_u64_alloc(M_WAITOK);
 	ofld_txq->tx_toe_tls_records = counter_u64_alloc(M_WAITOK);
 	ofld_txq->tx_toe_tls_octets = counter_u64_alloc(M_WAITOK);
+	SYSCTL_ADD_COUNTER_U64(&vi->ctx, children, OID_AUTO,
+	    "tx_iscsi_pdus", CTLFLAG_RD, &ofld_txq->tx_iscsi_pdus,
+	    "# of iSCSI PDUs transmitted");
+	SYSCTL_ADD_COUNTER_U64(&vi->ctx, children, OID_AUTO,
+	    "tx_iscsi_octets", CTLFLAG_RD, &ofld_txq->tx_iscsi_octets,
+	    "# of payload octets in transmitted iSCSI PDUs");
 	SYSCTL_ADD_COUNTER_U64(&vi->ctx, children, OID_AUTO,
 	    "tx_toe_tls_records", CTLFLAG_RD, &ofld_txq->tx_toe_tls_records,
 	    "# of TOE TLS records transmitted");
@@ -4529,6 +4539,8 @@ free_ofld_txq(struct vi_info *vi, struct sge_ofld_txq *ofld_txq)
 	if (rc != 0)
 		return (rc);
 
+	counter_u64_free(ofld_txq->tx_iscsi_pdus);
+	counter_u64_free(ofld_txq->tx_iscsi_octets);
 	counter_u64_free(ofld_txq->tx_toe_tls_records);
 	counter_u64_free(ofld_txq->tx_toe_tls_octets);
 

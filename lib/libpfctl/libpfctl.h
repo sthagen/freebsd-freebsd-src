@@ -38,6 +38,17 @@
 
 struct pfctl_anchor;
 
+struct pfctl_pool {
+	struct pf_palist	 list;
+	struct pf_pooladdr	*cur;
+	struct pf_poolhashkey	 key;
+	struct pf_addr		 counter;
+	struct pf_mape_portset	 mape;
+	int			 tblidx;
+	u_int16_t		 proxy_port[2];
+	u_int8_t		 opts;
+};
+
 struct pfctl_rule {
 	struct pf_rule_addr	 src;
 	struct pf_rule_addr	 dst;
@@ -52,7 +63,7 @@ struct pfctl_rule {
 	char			 overload_tblname[PF_TABLE_NAME_SIZE];
 
 	TAILQ_ENTRY(pfctl_rule)	 entries;
-	struct pf_pool		 rpool;
+	struct pfctl_pool	 rpool;
 
 	u_int64_t		 evaluations;
 	u_int64_t		 packets[2];
@@ -171,8 +182,12 @@ RB_PROTOTYPE(pfctl_anchor_node, pfctl_anchor, entry_node,
 int	pfctl_get_rule(int dev, u_int32_t nr, u_int32_t ticket,
 	    const char *anchor, u_int32_t ruleset, struct pfctl_rule *rule,
 	    char *anchor_call);
+int	pfctl_get_clear_rule(int dev, u_int32_t nr, u_int32_t ticket,
+	    const char *anchor, u_int32_t ruleset, struct pfctl_rule *rule,
+	    char *anchor_call, bool clear);
 int	pfctl_add_rule(int dev, const struct pfctl_rule *r,
 	    const char *anchor, const char *anchor_call, u_int32_t ticket,
 	    u_int32_t pool_ticket);
+int	pfctl_set_keepcounters(int dev, bool keep);
 
 #endif

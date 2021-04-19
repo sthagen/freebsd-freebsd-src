@@ -317,6 +317,12 @@ struct pf_poolhashkey {
 #define key32	pfk.key32
 };
 
+struct pf_mape_portset {
+	u_int8_t		offset;
+	u_int8_t		psidlen;
+	u_int16_t		psid;
+};
+
 struct pf_pool {
 	struct pf_palist	 list;
 	struct pf_pooladdr	*cur;
@@ -555,7 +561,10 @@ struct pf_rule {
 #define	PFRULE_NOSYNC		0x0010
 #define PFRULE_SRCTRACK		0x0020  /* track source states */
 #define PFRULE_RULESRCTRACK	0x0040  /* per rule */
+
+#ifdef _KERNEL
 #define	PFRULE_REFS		0x0080	/* rule has references */
+#endif
 
 /* scrub flags */
 #define	PFRULE_NODF		0x0100

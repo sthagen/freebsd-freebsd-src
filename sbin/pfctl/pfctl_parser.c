@@ -412,7 +412,7 @@ print_fromto(struct pf_rule_addr *src, pf_osfp_t osfp, struct pf_rule_addr *dst,
 }
 
 void
-print_pool(struct pf_pool *pool, u_int16_t p1, u_int16_t p2,
+print_pool(struct pfctl_pool *pool, u_int16_t p1, u_int16_t p2,
     sa_family_t af, int id)
 {
 	struct pf_pooladdr	*pooladdr;
@@ -486,6 +486,9 @@ print_pool(struct pf_pool *pool, u_int16_t p1, u_int16_t p2,
 		printf(" sticky-address");
 	if (id == PF_NAT && p1 == 0 && p2 == 0)
 		printf(" static-port");
+	if (pool->mape.offset > 0)
+		printf(" map-e-portset %u/%u/%u",
+		    pool->mape.offset, pool->mape.psidlen, pool->mape.psid);
 }
 
 const char	* const pf_reasons[PFRES_MAX+1] = PFRES_NAMES;
