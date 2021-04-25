@@ -239,7 +239,9 @@ SYSCTL_INT(_net_route_algo, OID_AUTO, debug_level, CTLFLAG_RW | CTLFLAG_RWTUN,
 #endif
 
 #define	_PASS_MSG(_l)	(flm_debug_level >= (_l))
-#define	ALGO_PRINTF(_fmt, ...)	printf("[fib_algo] %s: " _fmt "\n", __func__, ##__VA_ARGS__)
+#define	ALGO_PRINTF(_l, _fmt, ...)	if (_PASS_MSG(_l)) {		\
+	printf("[fib_algo] %s: " _fmt "\n", __func__, ##__VA_ARGS__);	\
+}
 #define	_ALGO_PRINTF(_fib, _fam, _aname, _gen, _func, _fmt, ...) \
     printf("[fib_algo] %s.%u (%s#%u) %s: " _fmt "\n",\
     print_family(_fam), _fib, _aname, _gen, _func, ## __VA_ARGS__)
@@ -365,7 +367,7 @@ fib_error_clear_flm(struct fib_lookup_module *flm)
  * Clears all errors in current VNET.
  */
 static void
-fib_error_clear()
+fib_error_clear(void)
 {
 	struct fib_error *fe, *fe_tmp;
 
@@ -525,6 +527,13 @@ schedule_fd_rebuild(struct fib_data *fd, const char *reason)
 	}
 }
 
+static void
+sync_rib_gen(struct fib_data *fd)
+{
+	FD_PRINTF(LOG_DEBUG, fd, "Sync gen %u -> %u", fd->fd_rh->rnh_gen, fd->fd_rh->rnh_gen_rib);
+	fd->fd_rh->rnh_gen = fd->fd_rh->rnh_gen_rib;
+}
+
 static int64_t
 get_tv_diff_ms(const struct timeval *old_tv, const struct timeval *new_tv)
 {
@@ -680,6 +689,7 @@ apply_rtable_changes(struct fib_data *fd)
 	result = fd->fd_flm->flm_change_rib_items_cb(fd->fd_rh, q, fd->fd_algo_data);
 
 	if (result == FLM_SUCCESS) {
+		sync_rib_gen(fd);
 		for (int i = 0; i < q->count; i++)
 			if (q->entries[i].nh_old)
 				fib_unref_nhop(fd, q->entries[i].nh_old);
@@ -696,12 +706,16 @@ fill_change_entry(struct fib_data *fd, struct fib_change_entry *ce, struct rib_c
 	int plen = 0;
 
 	switch (fd->fd_family) {
+#ifdef INET
 	case AF_INET:
 		rt_get_inet_prefix_plen(rc->rc_rt, &ce->addr4, &plen, &ce->scopeid);
 		break;
+#endif
+#ifdef INET6
 	case AF_INET6:
 		rt_get_inet6_prefix_plen(rc->rc_rt, &ce->addr6, &plen, &ce->scopeid);
 		break;
+#endif
 	}
 
 	ce->plen = plen;
@@ -811,6 +825,7 @@ handle_rtable_change_cb(struct rib_head *rnh, struct rib_cmd_info *rc,
 
 	switch (result) {
 	case FLM_SUCCESS:
+		sync_rib_gen(fd);
 		/* Unref old nexthop on success */
 		if (rc->rc_nh_old != NULL)
 			fib_unref_nhop(fd, rc->rc_nh_old);
@@ -1236,7 +1251,9 @@ setup_fd_instance(struct fib_lookup_module *flm, struct rib_head *rh,
 		result = try_setup_fd_instance(flm, rh, prev_fd, &new_fd);
 
 		if ((result == FLM_SUCCESS) && attach) {
-			if (!fib_set_datapath_ptr(new_fd, &new_fd->fd_dp))
+			if (fib_set_datapath_ptr(new_fd, &new_fd->fd_dp))
+				sync_rib_gen(new_fd);
+			else
 				result = FLM_REBUILD;
 		}
 
@@ -1960,7 +1977,7 @@ fib_module_register(struct fib_lookup_module *flm)
 {
 
 	FIB_MOD_LOCK();
-	ALGO_PRINTF("attaching %s to %s", flm->flm_name,
+	ALGO_PRINTF(LOG_INFO, "attaching %s to %s", flm->flm_name,
 	    print_family(flm->flm_family));
 	TAILQ_INSERT_TAIL(&all_algo_list, flm, entries);
 	FIB_MOD_UNLOCK();
@@ -1984,7 +2001,7 @@ fib_module_unregister(struct fib_lookup_module *flm)
 		return (EBUSY);
 	}
 	fib_error_clear_flm(flm);
-	ALGO_PRINTF("detaching %s from %s", flm->flm_name,
+	ALGO_PRINTF(LOG_INFO, "detaching %s from %s", flm->flm_name,
 	    print_family(flm->flm_family));
 	TAILQ_REMOVE(&all_algo_list, flm, entries);
 	FIB_MOD_UNLOCK();
