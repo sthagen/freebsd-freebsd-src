@@ -108,19 +108,19 @@ SYSCTL_NODE(_net_route, OID_AUTO, algo, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
 /* Algorithm sync policy */
 
 /* Time interval to bucket updates */
-VNET_DEFINE(unsigned int, bucket_time_ms) = 50;
-#define	V_bucket_time_ms	VNET(bucket_time_ms)
+VNET_DEFINE_STATIC(unsigned int, update_bucket_time_ms) = 50;
+#define	V_update_bucket_time_ms	VNET(update_bucket_time_ms)
 SYSCTL_UINT(_net_route_algo, OID_AUTO, bucket_time_ms, CTLFLAG_RW | CTLFLAG_VNET,
-    &VNET_NAME(bucket_time_ms), 0, "Time interval to calculate update rate");
+    &VNET_NAME(update_bucket_time_ms), 0, "Time interval to calculate update rate");
 
 /* Minimum update rate to delay sync */
-VNET_DEFINE(unsigned int, bucket_change_threshold_rate) = 500;
+VNET_DEFINE_STATIC(unsigned int, bucket_change_threshold_rate) = 500;
 #define	V_bucket_change_threshold_rate	VNET(bucket_change_threshold_rate)
 SYSCTL_UINT(_net_route_algo, OID_AUTO, bucket_change_threshold_rate, CTLFLAG_RW | CTLFLAG_VNET,
     &VNET_NAME(bucket_change_threshold_rate), 0, "Minimum update rate to delay sync");
 
 /* Max allowed delay to sync */
-VNET_DEFINE(unsigned int, fib_max_sync_delay_ms) = 1000;
+VNET_DEFINE_STATIC(unsigned int, fib_max_sync_delay_ms) = 1000;
 #define	V_fib_max_sync_delay_ms	VNET(fib_max_sync_delay_ms)
 SYSCTL_UINT(_net_route_algo, OID_AUTO, fib_max_sync_delay_ms, CTLFLAG_RW | CTLFLAG_VNET,
     &VNET_NAME(fib_max_sync_delay_ms), 0, "Maximum time to delay sync (ms)");
@@ -589,7 +589,7 @@ update_rebuild_delay(struct fib_data *fd, enum fib_callout_action action)
 	struct timeval tv;
 
 	/* Fetch all variables at once to ensure consistent reads */
-	uint32_t bucket_time_ms = V_bucket_time_ms;
+	uint32_t bucket_time_ms = V_update_bucket_time_ms;
 	uint32_t threshold_rate = V_bucket_change_threshold_rate;
 	uint32_t max_delay_ms = V_fib_max_sync_delay_ms;
 
@@ -667,13 +667,21 @@ need_immediate_sync(struct fib_data *fd, struct rib_cmd_info *rc)
 	switch (rc->rc_cmd) {
 	case RTM_ADD:
 		nh = rc->rc_nh_new;
-		if (!NH_IS_NHGRP(nh) && (!(nh->nh_flags & NHF_GATEWAY)))
-			return (true);
+		if (!NH_IS_NHGRP(nh)) {
+			if (!(nh->nh_flags & NHF_GATEWAY))
+				return (true);
+			if (nhop_get_rtflags(nh) & RTF_STATIC)
+				return (true);
+		}
 		break;
 	case RTM_DELETE:
 		nh = rc->rc_nh_old;
-		if (!NH_IS_NHGRP(nh) && (!(nh->nh_flags & NHF_GATEWAY)))
-			return (true);
+		if (!NH_IS_NHGRP(nh)) {
+			if (!(nh->nh_flags & NHF_GATEWAY))
+				return (true);
+			if (nhop_get_rtflags(nh) & RTF_STATIC)
+				return (true);
+		}
 		break;
 	}
 
@@ -1161,18 +1169,18 @@ try_setup_fd_instance(struct fib_lookup_module *flm, struct rib_head *rh,
 	estimate_nhop_scale(old_fd, fd);
 
 	fd->fd_rh = rh;
-	fd->fd_gen = ++fib_gen;
 	fd->fd_family = rh->rib_family;
 	fd->fd_fibnum = rh->rib_fibnum;
 	callout_init_rm(&fd->fd_callout, &rh->rib_lock, 0);
 	fd->fd_vnet = curvnet;
 	fd->fd_flm = flm;
 
-	FD_PRINTF(LOG_DEBUG, fd, "allocated fd %p", fd);
-
 	FIB_MOD_LOCK();
 	flm->flm_refcount++;
+	fd->fd_gen = ++fib_gen;
 	FIB_MOD_UNLOCK();
+
+	FD_PRINTF(LOG_DEBUG, fd, "allocated fd %p", fd);
 
 	/* Allocate nhidx -> nhop_ptr table */
 	size = fd->number_nhops * sizeof(void *);
@@ -1530,6 +1538,12 @@ SYSCTL_PROC(_net_route_algo_inet6, OID_AUTO, algo,
     set_algo_inet6_sysctl_handler, "A", "Set IPv6 lookup algo");
 #endif
 
+static struct nhop_object *
+dummy_lookup(void *algo_data, const struct flm_lookup_key key, uint32_t scopeid)
+{
+	return (NULL);
+}
+
 static void
 destroy_fdh_epoch(epoch_context_t ctx)
 {
@@ -1548,8 +1562,15 @@ alloc_fib_dp_array(uint32_t num_tables, bool waitok)
 	sz = sizeof(struct fib_dp_header);
 	sz += sizeof(struct fib_dp) * num_tables;
 	fdh = malloc(sz, M_RTABLE, (waitok ? M_WAITOK : M_NOWAIT) | M_ZERO);
-	if (fdh != NULL)
+	if (fdh != NULL) {
 		fdh->fdh_num_tables = num_tables;
+		/*
+		 * Set dummy lookup function ptr always returning NULL, so
+		 * we can delay algo init.
+		 */
+		for (uint32_t i = 0; i < num_tables; i++)
+			fdh->fdh_idx[i].f = dummy_lookup;
+	}
 	return (fdh);
 }
 
@@ -1618,10 +1639,14 @@ static struct fib_dp **
 get_family_dp_ptr(int family)
 {
 	switch (family) {
+#ifdef INET
 	case AF_INET:
 		return (&V_inet_dp);
+#endif
+#ifdef INET6
 	case AF_INET6:
 		return (&V_inet6_dp);
+#endif
 	}
 	return (NULL);
 }
@@ -1921,19 +1946,18 @@ fib_check_best_algo(struct rib_head *rh, struct fib_lookup_module *orig_flm)
  * Called when new route table is created.
  * Selects, allocates and attaches fib algo for the table.
  */
-int
-fib_select_algo_initial(struct rib_head *rh)
+static bool
+fib_select_algo_initial(struct rib_head *rh, struct fib_dp *dp)
 {
 	struct fib_lookup_module *flm;
 	struct fib_data *fd = NULL;
 	enum flm_op_result result;
 	struct epoch_tracker et;
-	int error = 0;
 
 	flm = fib_check_best_algo(rh, NULL);
 	if (flm == NULL) {
 		RH_PRINTF(LOG_CRIT, rh, "no algo selected");
-		return (ENOENT);
+		return (false);
 	}
 	RH_PRINTF(LOG_INFO, rh, "selected algo %s", flm->flm_name);
 
@@ -1944,29 +1968,58 @@ fib_select_algo_initial(struct rib_head *rh)
 	NET_EPOCH_EXIT(et);
 
 	RH_PRINTF(LOG_DEBUG, rh, "result=%d fd=%p", result, fd);
-	if (result == FLM_SUCCESS) {
-
-		/*
-		 * Attach datapath directly to avoid multiple reallocations
-		 * during fib growth
-		 */
-		struct fib_dp_header *fdp;
-		struct fib_dp **pdp;
-
-		pdp = get_family_dp_ptr(rh->rib_family);
-		if (pdp != NULL) {
-			fdp = get_fib_dp_header(*pdp);
-			fdp->fdh_idx[fd->fd_fibnum] = fd->fd_dp;
-			FD_PRINTF(LOG_INFO, fd, "datapath attached");
-		}
-	} else {
-		error = EINVAL;
+	if (result == FLM_SUCCESS)
+		*dp = fd->fd_dp;
+	else
 		RH_PRINTF(LOG_CRIT, rh, "unable to setup algo %s", flm->flm_name);
-	}
 
 	fib_unref_algo(flm);
 
-	return (error);
+	return (result == FLM_SUCCESS);
+}
+
+/*
+ * Sets up fib algo instances for the non-initialized RIBs in the @family.
+ * Allocates temporary datapath index to amortize datapaint index updates
+ * with large @num_tables.
+ */
+void
+fib_setup_family(int family, uint32_t num_tables)
+{
+	struct fib_dp_header *new_fdh = alloc_fib_dp_array(num_tables, false);
+	if (new_fdh == NULL) {
+		ALGO_PRINTF(LOG_CRIT, "Unable to setup framework for %s", print_family(family));
+		return;
+	}
+
+	for (int i = 0; i < num_tables; i++) {
+		struct rib_head *rh = rt_tables_get_rnh(i, family);
+		if (rh->rib_algo_init)
+			continue;
+		if (!fib_select_algo_initial(rh, &new_fdh->fdh_idx[i]))
+			continue;
+
+		rh->rib_algo_init = true;
+	}
+
+	FIB_MOD_LOCK();
+	struct fib_dp **pdp = get_family_dp_ptr(family);
+	struct fib_dp_header *old_fdh = get_fib_dp_header(*pdp);
+
+	/* Update the items not touched by the new init, from the old data pointer */
+	for (int i = 0; i < num_tables; i++) {
+		if (new_fdh->fdh_idx[i].f == dummy_lookup)
+			new_fdh->fdh_idx[i] = old_fdh->fdh_idx[i];
+	}
+
+	/* Ensure all index writes have completed */
+	atomic_thread_fence_rel();
+	/* Set new datapath pointer */
+	*pdp = &new_fdh->fdh_idx[0];
+
+	FIB_MOD_UNLOCK();
+
+	fib_epoch_call(destroy_fdh_epoch, &old_fdh->fdh_epoch_ctx);
 }
 
 /*
