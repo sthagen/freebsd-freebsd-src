@@ -6,7 +6,7 @@ COMMON ITEMS: section later in the file.  These instructions assume that you
 basically know what you are doing.  If not, then please consult the FreeBSD
 handbook:
 
-    https://www.freebsd.org/doc/en_US.ISO8859-1/books/handbook/makeworld.html
+    https://docs.freebsd.org/en/books/handbook/cutting-edge/#makeworld
 
 Items affecting the ports and packages system can be found in
 /usr/ports/UPDATING.  Please read that file before updating system packages
@@ -26,6 +26,15 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 14.x IS SLOW:
 	debugging, define WITH_MALLOC_PRODUCTION in /etc/src.conf and rebuild
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
+
+20210513:
+	Commit ca179c4d74f2 changed the package in which the OpenSSL
+	libraries and utilities are packaged.
+	It is recommended for pkgbase user to do:
+	pkg install -f FreeBSD-openssl
+	before pkg upgrade otherwise some dependencies might not be met
+	and pkg will stop working as libssl will not be present anymore
+	on the system.
 
 20210426:
 	Commit 875977314881 changed the internal KAPI between
