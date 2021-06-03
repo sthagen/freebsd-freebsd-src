@@ -79,6 +79,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/syslog.h>
 #include <sys/unistd.h>
 #include <sys/user.h>
+#include <sys/ktrace.h>
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
@@ -1122,11 +1123,12 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 		ioflag |= IO_NDELAY;
 	if (fp->f_flag & O_DIRECT)
 		ioflag |= IO_DIRECT;
-	if (fp->f_flag & O_FSYNC) {
-		mp = atomic_load_ptr(&vp->v_mount);
-		if (mp != NULL && mp->mnt_flag & MNT_SYNCHRONOUS)
-			ioflag |= IO_SYNC;
-	}
+
+	mp = atomic_load_ptr(&vp->v_mount);
+	if ((fp->f_flag & O_FSYNC) ||
+	    (mp != NULL && (mp->mnt_flag & MNT_SYNCHRONOUS)))
+		ioflag |= IO_SYNC;
+
 	/*
 	 * For O_DSYNC we set both IO_SYNC and IO_DATASYNC, so that VOP_WRITE()
 	 * implementations that don't understand IO_DATASYNC fall back to full
@@ -2359,17 +2361,36 @@ int
 vn_rlimit_fsize(const struct vnode *vp, const struct uio *uio,
     struct thread *td)
 {
+	off_t lim;
+	bool ktr_write;
 
-	if (vp->v_type != VREG || td == NULL)
+	if (td == NULL)
 		return (0);
-	if ((uoff_t)uio->uio_offset + uio->uio_resid >
-	    lim_cur(td, RLIMIT_FSIZE)) {
+
+	/*
+	 * There are conditions where the limit is to be ignored.
+	 * However, since it is almost never reached, check it first.
+	 */
+	ktr_write = (td->td_pflags & TDP_INKTRACE) != 0;
+	lim = lim_cur(td, RLIMIT_FSIZE);
+	if (__predict_false(ktr_write))
+		lim = td->td_ktr_io_lim;
+	if (__predict_true((uoff_t)uio->uio_offset + uio->uio_resid <= lim))
+		return (0);
+
+	/*
+	 * The limit is reached.
+	 */
+	if (vp->v_type != VREG ||
+	    (td->td_pflags2 & TDP2_ACCT) != 0)
+		return (0);
+
+	if (!ktr_write || ktr_filesize_limit_signal) {
 		PROC_LOCK(td->td_proc);
 		kern_psignal(td->td_proc, SIGXFSZ);
 		PROC_UNLOCK(td->td_proc);
-		return (EFBIG);
 	}
-	return (0);
+	return (EFBIG);
 }
 
 int

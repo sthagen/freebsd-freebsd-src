@@ -838,6 +838,8 @@ static int set_offload_policy(struct adapter *, struct t4_offload_policy *);
 static int read_card_mem(struct adapter *, int, struct t4_mem_range *);
 static int read_i2c(struct adapter *, struct t4_i2c_data *);
 static int clear_stats(struct adapter *, u_int);
+static int hold_clip_addr(struct adapter *, struct t4_clip_addr *);
+static int release_clip_addr(struct adapter *, struct t4_clip_addr *);
 #ifdef TCP_OFFLOAD
 static int toe_capability(struct vi_info *, bool);
 static void t4_async_event(void *, int);
@@ -5219,6 +5221,14 @@ get_params__post_init(struct adapter *sc)
 		sc->params.fr_nsmr_tpte_wr_support = val[0] != 0;
 	else
 		sc->params.fr_nsmr_tpte_wr_support = false;
+
+	/* Support for 512 SGL entries per FR MR. */
+	param[0] = FW_PARAM_DEV(DEV_512SGL_MR);
+	rc = -t4_query_params(sc, sc->mbox, sc->pf, 0, 1, param, val);
+	if (rc == 0)
+		sc->params.dev_512sgl_mr = val[0] != 0;
+	else
+		sc->params.dev_512sgl_mr = false;
 
 	param[0] = FW_PARAM_PFVF(MAX_PKTS_PER_ETH_TX_PKTS_WR);
 	rc = -t4_query_params(sc, sc->mbox, sc->pf, 0, 1, param, val);
@@ -11910,6 +11920,35 @@ clear_stats(struct adapter *sc, u_int port_id)
 	return (0);
 }
 
+static int
+hold_clip_addr(struct adapter *sc, struct t4_clip_addr *ca)
+{
+#ifdef INET6
+	struct in6_addr in6;
+
+	bcopy(&ca->addr[0], &in6.s6_addr[0], sizeof(in6.s6_addr));
+	if (t4_get_clip_entry(sc, &in6, true) != NULL)
+		return (0);
+	else
+		return (EIO);
+#else
+	return (ENOTSUP);
+#endif
+}
+
+static int
+release_clip_addr(struct adapter *sc, struct t4_clip_addr *ca)
+{
+#ifdef INET6
+	struct in6_addr in6;
+
+	bcopy(&ca->addr[0], &in6.s6_addr[0], sizeof(in6.s6_addr));
+	return (t4_release_clip_addr(sc, &in6));
+#else
+	return (ENOTSUP);
+#endif
+}
+
 int
 t4_os_find_pci_capability(struct adapter *sc, int cap)
 {
@@ -12180,6 +12219,12 @@ t4_ioctl(struct cdev *dev, unsigned long cmd, caddr_t data, int fflag,
 		break;
 	case CHELSIO_T4_SET_OFLD_POLICY:
 		rc = set_offload_policy(sc, (struct t4_offload_policy *)data);
+		break;
+	case CHELSIO_T4_HOLD_CLIP_ADDR:
+		rc = hold_clip_addr(sc, (struct t4_clip_addr *)data);
+		break;
+	case CHELSIO_T4_RELEASE_CLIP_ADDR:
+		rc = release_clip_addr(sc, (struct t4_clip_addr *)data);
 		break;
 	default:
 		rc = ENOTTY;

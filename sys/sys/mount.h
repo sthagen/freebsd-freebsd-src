@@ -38,6 +38,7 @@
 #include <sys/ucred.h>
 #include <sys/queue.h>
 #ifdef _KERNEL
+#include <sys/types.h>
 #include <sys/lock.h>
 #include <sys/lockmgr.h>
 #include <sys/tslog.h>
@@ -224,7 +225,6 @@ struct mount {
 	int		mnt_writeopcount;	/* (i) write syscalls pending */
 	struct vfsoptlist *mnt_opt;		/* current mount options */
 	struct vfsoptlist *mnt_optnew;		/* new options passed to fs */
-	uint64_t	mnt_maxsymlinklen;	/* max size of short symlink */
 	struct statfs	mnt_stat;		/* cache of filesystem stats */
 	struct ucred	*mnt_cred;		/* credentials of mounter */
 	void *		mnt_data;		/* private data */
@@ -760,7 +760,8 @@ struct mntarg;
 typedef int vfs_cmount_t(struct mntarg *ma, void *data, uint64_t flags);
 typedef int vfs_unmount_t(struct mount *mp, int mntflags);
 typedef int vfs_root_t(struct mount *mp, int flags, struct vnode **vpp);
-typedef	int vfs_quotactl_t(struct mount *mp, int cmds, uid_t uid, void *arg);
+typedef	int vfs_quotactl_t(struct mount *mp, int cmds, uid_t uid, void *arg,
+		    bool *mp_busy);
 typedef	int vfs_statfs_t(struct mount *mp, struct statfs *sbp);
 typedef	int vfs_sync_t(struct mount *mp, int waitfor);
 typedef	int vfs_vget_t(struct mount *mp, ino_t ino, int flags,
@@ -833,10 +834,10 @@ vfs_statfs_t	__vfs_statfs;
 	_rc = (*(MP)->mnt_op->vfs_cachedroot)(MP, FLAGS, VPP);		\
 	_rc; })
 
-#define	VFS_QUOTACTL(MP, C, U, A) ({					\
+#define	VFS_QUOTACTL(MP, C, U, A, MP_BUSY) ({				\
 	int _rc;							\
 									\
-	_rc = (*(MP)->mnt_op->vfs_quotactl)(MP, C, U, A);		\
+	_rc = (*(MP)->mnt_op->vfs_quotactl)(MP, C, U, A, MP_BUSY);	\
 	_rc; })
 
 #define	VFS_STATFS(MP, SBP) ({						\

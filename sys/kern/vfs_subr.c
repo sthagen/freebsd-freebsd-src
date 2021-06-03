@@ -1349,33 +1349,6 @@ vnlru_free_vfsops(int count, struct vfsops *mnt_op, struct vnode *mvp)
 	mtx_unlock(&vnode_list_mtx);
 }
 
-/*
- * Temporary binary compat, don't use. Call vnlru_free_vfsops instead.
- */
-void
-vnlru_free(int count, struct vfsops *mnt_op)
-{
-	struct vnode *mvp;
-
-	if (count == 0)
-		return;
-	mtx_lock(&vnode_list_mtx);
-	mvp = vnode_list_free_marker;
-	if (vnlru_free_impl(count, mnt_op, mvp) == 0) {
-		/*
-		 * It is possible the marker was moved over eligible vnodes by
-		 * callers which filtered by different ops. If so, start from
-		 * scratch.
-		 */
-		if (vnlru_read_freevnodes() > 0) {
-			TAILQ_REMOVE(&vnode_list, mvp, v_vnodelist);
-			TAILQ_INSERT_HEAD(&vnode_list, mvp, v_vnodelist);
-		}
-		vnlru_free_impl(count, mnt_op, mvp);
-	}
-	mtx_unlock(&vnode_list_mtx);
-}
-
 struct vnode *
 vnlru_alloc_marker(void)
 {
@@ -2059,13 +2032,11 @@ bufobj_invalbuf(struct bufobj *bo, int flags, int slpflag, int slptimeo)
 			} while (error == ERELOOKUP);
 			if (error != 0)
 				return (error);
-			/*
-			 * XXX We could save a lock/unlock if this was only
-			 * enabled under INVARIANTS
-			 */
 			BO_LOCK(bo);
-			if (bo->bo_numoutput > 0 || bo->bo_dirty.bv_cnt > 0)
-				panic("vinvalbuf: dirty bufs");
+			if (bo->bo_numoutput > 0 || bo->bo_dirty.bv_cnt > 0) {
+				BO_UNLOCK(bo);
+				return (EBUSY);
+			}
 		}
 	}
 	/*
@@ -4464,8 +4435,6 @@ DB_SHOW_COMMAND(mount, db_show_mount)
 	    mp->mnt_lazyvnodelistsize);
 	db_printf("    mnt_writeopcount = %d (with %d in the struct)\n",
 	    vfs_mount_fetch_counter(mp, MNT_COUNT_WRITEOPCOUNT), mp->mnt_writeopcount);
-	db_printf("    mnt_maxsymlinklen = %jd\n",
-	    (uintmax_t)mp->mnt_maxsymlinklen);
 	db_printf("    mnt_iosize_max = %d\n", mp->mnt_iosize_max);
 	db_printf("    mnt_hashseed = %u\n", mp->mnt_hashseed);
 	db_printf("    mnt_lockref = %d (with %d in the struct)\n",
@@ -5184,14 +5153,10 @@ int
 vn_need_pageq_flush(struct vnode *vp)
 {
 	struct vm_object *obj;
-	int need;
 
-	MPASS(mtx_owned(VI_MTX(vp)));
-	need = 0;
-	if ((obj = vp->v_object) != NULL && (vp->v_vflag & VV_NOSYNC) == 0 &&
-	    vm_object_mightbedirty(obj))
-		need = 1;
-	return (need);
+	obj = vp->v_object;
+	return (obj != NULL && (vp->v_vflag & VV_NOSYNC) == 0 &&
+	    vm_object_mightbedirty(obj));
 }
 
 /*
@@ -6894,23 +6859,15 @@ vn_dir_check_exec(struct vnode *vp, struct componentname *cnp)
  * to prevent the vnode from getting freed.
  */
 void
-vn_seqc_write_begin_unheld_locked(struct vnode *vp)
-{
-
-	ASSERT_VI_LOCKED(vp, __func__);
-	VNPASS(vp->v_seqc_users >= 0, vp);
-	vp->v_seqc_users++;
-	if (vp->v_seqc_users == 1)
-		seqc_sleepable_write_begin(&vp->v_seqc);
-}
-
-void
 vn_seqc_write_begin_locked(struct vnode *vp)
 {
 
 	ASSERT_VI_LOCKED(vp, __func__);
 	VNPASS(vp->v_holdcnt > 0, vp);
-	vn_seqc_write_begin_unheld_locked(vp);
+	VNPASS(vp->v_seqc_users >= 0, vp);
+	vp->v_seqc_users++;
+	if (vp->v_seqc_users == 1)
+		seqc_sleepable_write_begin(&vp->v_seqc);
 }
 
 void
@@ -6919,15 +6876,6 @@ vn_seqc_write_begin(struct vnode *vp)
 
 	VI_LOCK(vp);
 	vn_seqc_write_begin_locked(vp);
-	VI_UNLOCK(vp);
-}
-
-void
-vn_seqc_write_begin_unheld(struct vnode *vp)
-{
-
-	VI_LOCK(vp);
-	vn_seqc_write_begin_unheld_locked(vp);
 	VI_UNLOCK(vp);
 }
 
