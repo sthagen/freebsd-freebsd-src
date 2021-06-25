@@ -2447,6 +2447,7 @@ product HP HN210E		0x811c	Ethernet HN210E
 product HP2 C500		0x6002	PhotoSmart C500
 product HP EV2200		0x1b1d  ev2200 HSDPA (aka MC5720)
 product HP HS2300		0x1e1d  hs2300 HSDPA (aka MC8775)
+product HP LT4132		0xa31d  lt4132 LTEHSPA+ (aka ME906s)
 
 /* HTC products */
 product HTC WINMOBILE		0x00ce	HTC USB Sync
@@ -3635,6 +3636,8 @@ product PANASONIC KXLRW32AN	0x0d09	CD-R Drive KXL-RW32AN
 product PANASONIC KXLCB20AN	0x0d0a	CD-R Drive KXL-CB20AN
 product PANASONIC KXLCB35AN	0x0d0e	DVD-ROM & CD-R/RW
 product PANASONIC SDCAAE	0x1b00	MultiMediaCard
+product PANASONIC CFF9_3G_QDL	0x250e	ToughBook CF-F9 GOBI 3G Modem Loader
+product PANASONIC CFF9_3G	0x250f	ToughBook CF-F9 GOBI 3G Modem
 product PANASONIC TYTP50P6S	0x3900	TY-TP50P6-S 50in Touch Panel
 
 /* Papouch products */

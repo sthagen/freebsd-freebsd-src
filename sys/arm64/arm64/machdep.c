@@ -650,7 +650,7 @@ get_fpcontext(struct thread *td, mcontext_t *mcp)
 		KASSERT((curpcb->pcb_fpflags & ~PCB_FP_USERMASK) == 0,
 		    ("Non-userspace FPU flags set in get_fpcontext"));
 		memcpy(mcp->mc_fpregs.fp_q, curpcb->pcb_fpustate.vfp_regs,
-		    sizeof(mcp->mc_fpregs));
+		    sizeof(mcp->mc_fpregs.fp_q));
 		mcp->mc_fpregs.fp_cr = curpcb->pcb_fpustate.vfp_fpcr;
 		mcp->mc_fpregs.fp_sr = curpcb->pcb_fpustate.vfp_fpsr;
 		mcp->mc_fpregs.fp_flags = curpcb->pcb_fpflags;
@@ -681,7 +681,7 @@ set_fpcontext(struct thread *td, mcontext_t *mcp)
 		KASSERT(curpcb->pcb_fpusaved == &curpcb->pcb_fpustate,
 		    ("Called set_fpcontext while the kernel is using the VFP"));
 		memcpy(curpcb->pcb_fpustate.vfp_regs, mcp->mc_fpregs.fp_q,
-		    sizeof(mcp->mc_fpregs));
+		    sizeof(mcp->mc_fpregs.fp_q));
 		curpcb->pcb_fpustate.vfp_fpcr = mcp->mc_fpregs.fp_cr;
 		curpcb->pcb_fpustate.vfp_fpsr = mcp->mc_fpregs.fp_sr;
 		curpcb->pcb_fpflags = mcp->mc_fpregs.fp_flags & PCB_FP_USERMASK;
@@ -1101,7 +1101,9 @@ try_load_dtb(caddr_t kmdp)
 #endif
 
 	if (dtbp == (vm_offset_t)NULL) {
+#ifndef TSLOG
 		printf("ERROR loading DTB\n");
+#endif
 		return;
 	}
 
@@ -1251,6 +1253,8 @@ initarm(struct arm64_bootparams *abp)
 	caddr_t kmdp;
 	bool valid;
 
+	TSRAW(&thread0, TS_ENTER, __func__, NULL);
+
 	boot_el = abp->boot_el;
 
 	/* Parse loader or FDT boot parametes. Determine last used address. */
@@ -1381,6 +1385,8 @@ initarm(struct arm64_bootparams *abp)
 	}
 
 	early_boot = 0;
+
+	TSEXIT();
 }
 
 void

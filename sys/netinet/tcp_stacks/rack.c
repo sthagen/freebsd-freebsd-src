@@ -589,8 +589,6 @@ rack_set_cc_pacing(struct tcp_rack *rack)
 	rack->rc_pacing_cc_set = 1;
 	if (strcmp(tp->cc_algo->name, CCALGONAME_NEWRENO) != 0) {
 		/* Not new-reno we can't play games with beta! */
-		printf("cc_algo:%s is not NEWRENO:%s\n",
-		       tp->cc_algo->name, CCALGONAME_NEWRENO);
 		goto out;
 	}
 	ptr = ((struct newreno *)tp->ccv->cc_data);
@@ -12493,6 +12491,9 @@ rack_fini(struct tcpcb *tp, int32_t tcb_is_purged)
 static void
 rack_set_state(struct tcpcb *tp, struct tcp_rack *rack)
 {
+	if ((rack->r_state == TCPS_CLOSED) && (tp->t_state != TCPS_CLOSED)) {
+		rack->r_is_v6 = (tp->t_inpcb->inp_vflag & INP_IPV6) != 0;
+	}
 	switch (tp->t_state) {
 	case TCPS_SYN_SENT:
 		rack->r_state = TCPS_SYN_SENT;
@@ -13454,6 +13455,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 #ifdef TCP_ACCOUNTING
 	int ack_val_set = 0xf;
 #endif
+	int nsegs;
 	uint32_t us_cts;
 	/*
 	 * tv passed from common code is from either M_TSTMP_LRO or
@@ -13465,6 +13467,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if (m->m_flags & M_ACKCMP) {
 		panic("Impossible reach m has ackcmp? m:%p tp:%p", m, tp);
 	}
+	nsegs = m->m_pkthdr.lro_nsegs;
 	counter_u64_add(rack_proc_non_comp_ack, 1);
 	thflags = th->th_flags;
 #ifdef TCP_ACCOUNTING
@@ -13607,6 +13610,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if ((thflags & TH_SYN) && (thflags & TH_FIN) && V_drop_synfin) {
 		way_out = 4;
 		retval = 0;
+		m_freem(m);
 		goto done_with_input;
 	}
 	/*
@@ -13641,6 +13645,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    ((thflags & TH_RST) == 0) && (V_tcp_tolerate_missing_ts == 0)) {
 		way_out = 5;
 		retval = 0;
+		m_freem(m);
 		goto done_with_input;
 	}
 
@@ -13944,7 +13949,7 @@ do_output_now:
 			way_out = 2;
 		}
 	done_with_input:
-		rack_log_doseg_done(rack, cts, nxt_pkt, did_out, way_out, max(1, m->m_pkthdr.lro_nsegs));
+		rack_log_doseg_done(rack, cts, nxt_pkt, did_out, way_out, max(1, nsegs));
 		if (did_out)
 			rack->r_wanted_output = 0;
 #ifdef INVARIANTS
@@ -16213,7 +16218,7 @@ rack_output(struct tcpcb *tp)
 		}
 		idle = 0;
 	}
-	if (rack_use_fsb && (rack->r_fsb_inited == 0))
+	if (rack_use_fsb && (rack->r_fsb_inited == 0) && (rack->r_state != TCPS_CLOSED))
 		rack_init_fsb_block(tp, rack);
 again:
 	/*
@@ -17677,9 +17682,11 @@ send:
 		th = rack->r_ctl.fsb.th;
 		udp = rack->r_ctl.fsb.udp;
 		if (udp) {
+#ifdef INET6
 			if (isipv6)
 				ulen = hdrlen + len - sizeof(struct ip6_hdr);
 			else
+#endif				/* INET6 */
 				ulen = hdrlen + len - sizeof(struct ip);
 			udp->uh_ulen = htons(ulen);
 		}
