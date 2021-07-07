@@ -121,7 +121,7 @@ struct pfi_dynaddr {
 #define	PF_STATE_LOCK_ASSERT(s)		do {} while (0)
 #endif /* INVARIANTS */
 
-extern struct mtx pf_unlnkdrules_mtx;
+extern struct mtx_padalign pf_unlnkdrules_mtx;
 #define	PF_UNLNKDRULES_LOCK()	mtx_lock(&pf_unlnkdrules_mtx)
 #define	PF_UNLNKDRULES_UNLOCK()	mtx_unlock(&pf_unlnkdrules_mtx)
 
@@ -131,9 +131,16 @@ extern struct rmlock pf_rules_lock;
 #define	PF_RULES_RUNLOCK()	rm_runlock(&pf_rules_lock, &_pf_rules_tracker)
 #define	PF_RULES_WLOCK()	rm_wlock(&pf_rules_lock)
 #define	PF_RULES_WUNLOCK()	rm_wunlock(&pf_rules_lock)
+#define	PF_RULES_WOWNED()	rm_wowned(&pf_rules_lock)
 #define	PF_RULES_ASSERT()	rm_assert(&pf_rules_lock, RA_LOCKED)
 #define	PF_RULES_RASSERT()	rm_assert(&pf_rules_lock, RA_RLOCKED)
 #define	PF_RULES_WASSERT()	rm_assert(&pf_rules_lock, RA_WLOCKED)
+
+extern struct mtx_padalign pf_table_stats_lock;
+#define	PF_TABLE_STATS_LOCK()	mtx_lock(&pf_table_stats_lock)
+#define	PF_TABLE_STATS_UNLOCK()	mtx_unlock(&pf_table_stats_lock)
+#define	PF_TABLE_STATS_OWNED()	mtx_owned(&pf_table_stats_lock)
+#define	PF_TABLE_STATS_ASSERT()	mtx_assert(&pf_rules_lock, MA_OWNED)
 
 extern struct sx pf_end_lock;
 
@@ -536,8 +543,8 @@ struct pf_state {
 	struct pfi_kkif		*rt_kif;
 	struct pf_ksrc_node	*src_node;
 	struct pf_ksrc_node	*nat_src_node;
-	counter_u64_t		 packets[2];
-	counter_u64_t		 bytes[2];
+	u_int64_t		 packets[2];
+	u_int64_t		 bytes[2];
 	u_int32_t		 creation;
 	u_int32_t	 	 expire;
 	u_int32_t		 pfsync_time;
@@ -551,6 +558,11 @@ struct pf_state {
 	u_int8_t		 sync_updates;
 	u_int8_t		_tail[3];
 };
+
+/*
+ * Size <= fits 13 objects per page on LP64. Try to not grow the struct beyond that.
+ */
+_Static_assert(sizeof(struct pf_state) <= 312, "pf_state size crosses 312 bytes");
 #endif
 
 /*
@@ -812,16 +824,70 @@ struct pfr_tstats {
 	int		 pfrts_refcnt[PFR_REFCNT_MAX];
 };
 
+#ifdef _KERNEL
+
+struct pfr_kstate_counter {
+	counter_u64_t	pkc_pcpu;
+	u_int64_t	pkc_zero;
+};
+
+static inline int
+pfr_kstate_counter_init(struct pfr_kstate_counter *pfrc, int flags)
+{
+
+	pfrc->pkc_zero = 0;
+	pfrc->pkc_pcpu = counter_u64_alloc(flags);
+	if (pfrc->pkc_pcpu == NULL)
+		return (ENOMEM);
+	return (0);
+}
+
+static inline void
+pfr_kstate_counter_deinit(struct pfr_kstate_counter *pfrc)
+{
+
+	counter_u64_free(pfrc->pkc_pcpu);
+}
+
+static inline u_int64_t
+pfr_kstate_counter_fetch(struct pfr_kstate_counter *pfrc)
+{
+	u_int64_t c;
+
+	c = counter_u64_fetch(pfrc->pkc_pcpu);
+	c -= pfrc->pkc_zero;
+	return (c);
+}
+
+static inline void
+pfr_kstate_counter_zero(struct pfr_kstate_counter *pfrc)
+{
+	u_int64_t c;
+
+	c = counter_u64_fetch(pfrc->pkc_pcpu);
+	pfrc->pkc_zero = c;
+}
+
+static inline void
+pfr_kstate_counter_add(struct pfr_kstate_counter *pfrc, int64_t n)
+{
+
+	counter_u64_add(pfrc->pkc_pcpu, n);
+}
+
 struct pfr_ktstats {
 	struct pfr_table pfrts_t;
-	counter_u64_t	 pfrkts_packets[PFR_DIR_MAX][PFR_OP_TABLE_MAX];
-	counter_u64_t	 pfrkts_bytes[PFR_DIR_MAX][PFR_OP_TABLE_MAX];
-	counter_u64_t	 pfrkts_match;
-	counter_u64_t	 pfrkts_nomatch;
+	struct pfr_kstate_counter	 pfrkts_packets[PFR_DIR_MAX][PFR_OP_TABLE_MAX];
+	struct pfr_kstate_counter	 pfrkts_bytes[PFR_DIR_MAX][PFR_OP_TABLE_MAX];
+	struct pfr_kstate_counter	 pfrkts_match;
+	struct pfr_kstate_counter	 pfrkts_nomatch;
 	long		 pfrkts_tzero;
 	int		 pfrkts_cnt;
 	int		 pfrkts_refcnt[PFR_REFCNT_MAX];
 };
+
+#endif /* _KERNEL */
+
 #define	pfrts_name	pfrts_t.pfrt_name
 #define pfrts_flags	pfrts_t.pfrt_flags
 
@@ -1490,6 +1556,7 @@ extern int			 pf_state_insert(struct pfi_kkif *,
 				    struct pf_state_key *,
 				    struct pf_state_key *,
 				    struct pf_state *);
+extern struct pf_state		*pf_alloc_state(int);
 extern void			 pf_free_state(struct pf_state *);
 
 static __inline void
@@ -1504,6 +1571,17 @@ pf_release_state(struct pf_state *s)
 {
 
 	if (refcount_release(&s->refs)) {
+		pf_free_state(s);
+		return (1);
+	} else
+		return (0);
+}
+
+static __inline int
+pf_release_staten(struct pf_state *s, u_int n)
+{
+
+	if (refcount_releasen(&s->refs, n)) {
 		pf_free_state(s);
 		return (1);
 	} else

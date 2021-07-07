@@ -39,8 +39,10 @@
 #include <netinet/tcp_fsm.h>
 
 #ifdef _KERNEL
+#include "opt_kern_tls.h"
 #include <net/vnet.h>
 #include <sys/mbuf.h>
+#include <sys/ktls.h>
 #endif
 
 #define TCP_END_BYTE_INFO 8	/* Bytes that makeup the "end information array" */
@@ -367,6 +369,7 @@ struct tcp_function_block {
 	int	(*tfb_tcp_handoff_ok)(struct tcpcb *);
 	void	(*tfb_tcp_mtu_chg)(struct tcpcb *);
 	int	(*tfb_pru_options)(struct tcpcb *, int);
+	void	(*tfb_hwtls_change)(struct tcpcb *, int);
 	volatile uint32_t tfb_refcnt;
 	uint32_t  tfb_flags;
 	uint8_t	tfb_id;
@@ -1137,8 +1140,11 @@ tcp_fields_to_net(struct tcphdr *th)
 }
 
 static inline void
-tcp_account_for_send(struct tcpcb *tp, uint32_t len, uint8_t is_rxt, uint8_t is_tlp)
+tcp_account_for_send(struct tcpcb *tp, uint32_t len, uint8_t is_rxt,
+    uint8_t is_tlp, int hw_tls)
 {
+	uint64_t rexmit_percent;
+
 	if (is_tlp) {
 		tp->t_sndtlppack++;
 		tp->t_sndtlpbyte += len;
@@ -1149,8 +1155,13 @@ tcp_account_for_send(struct tcpcb *tp, uint32_t len, uint8_t is_rxt, uint8_t is_
 	else
 		tp->t_sndbytes += len;
 
-}
+	if (hw_tls && is_rxt) {
+		rexmit_percent = (1000ULL * tp->t_snd_rxt_bytes) / (10ULL * (tp->t_snd_rxt_bytes + tp->t_sndbytes));
+		if (rexmit_percent > ktls_ifnet_max_rexmit_pct)
+			ktls_disable_ifnet(tp);
+	}
 
+}
 #endif /* _KERNEL */
 
 #endif /* _NETINET_TCP_VAR_H_ */

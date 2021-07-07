@@ -90,6 +90,10 @@ __FBSDID("$FreeBSD$");
 
 MODULE_VERSION(linux, 1);
 
+#define	LINUX32_MAXUSER		((1ul << 32) - PAGE_SIZE)
+#define	LINUX32_SHAREDPAGE	(LINUX32_MAXUSER - PAGE_SIZE)
+#define	LINUX32_USRSTACK	LINUX32_SHAREDPAGE
+
 static int linux_szsigcode;
 static vm_object_t linux_shared_page_obj;
 static char *linux_shared_page_mapping;
@@ -158,6 +162,8 @@ struct linux32_ps_strings {
 	u_int32_t ps_envstr;	/* first of 0 or more environment strings */
 	u_int ps_nenvstr;	/* the number of environment strings */
 };
+#define	LINUX32_PS_STRINGS	(LINUX32_USRSTACK - \
+				    sizeof(struct linux32_ps_strings))
 
 LINUX_VDSO_SYM_INTPTR(linux32_sigcode);
 LINUX_VDSO_SYM_INTPTR(linux32_rt_sigcode);
@@ -906,6 +912,9 @@ struct sysentvec elf_linux_sysvec = {
 	.sv_szsigcode	= &linux_szsigcode,
 	.sv_name	= "Linux ELF32",
 	.sv_coredump	= elf32_coredump,
+	.sv_elf_core_osabi = ELFOSABI_NONE,
+	.sv_elf_core_abi_vendor = LINUX_ABI_VENDOR,
+	.sv_elf_core_prepare_notes = linux32_prepare_notes,
 	.sv_imgact_try	= linux_exec_imgact_try,
 	.sv_minsigstksz	= LINUX_MINSIGSTKSZ,
 	.sv_minuser	= VM_MIN_ADDRESS,
