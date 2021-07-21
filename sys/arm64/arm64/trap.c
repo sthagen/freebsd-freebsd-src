@@ -130,6 +130,7 @@ cpu_fetch_syscall_args(struct thread *td)
 	dst_ap = &sa->args[0];
 
 	sa->code = td->td_frame->tf_x[8];
+	sa->original_code = sa->code;
 
 	if (__predict_false(sa->code == SYS_syscall || sa->code == SYS___syscall)) {
 		sa->code = *ap++;
@@ -261,8 +262,14 @@ data_abort(struct thread *td, struct trapframe *frame, uint64_t esr,
 	else {
 		intr_enable();
 
+		/* We received a TBI/PAC/etc. fault from the kernel */
+		if (!ADDR_IS_CANONICAL(far)) {
+			error = KERN_INVALID_ADDRESS;
+			goto bad_far;
+		}
+
 		/* The top bit tells us which range to use */
-		if (far >= VM_MAXUSER_ADDRESS) {
+		if (ADDR_IS_KERNEL(far)) {
 			map = kernel_map;
 		} else {
 			map = &p->p_vmspace->vm_map;
@@ -306,6 +313,7 @@ data_abort(struct thread *td, struct trapframe *frame, uint64_t esr,
 	/* Fault in the page. */
 	error = vm_fault_trap(map, far, ftype, VM_FAULT_NORMAL, &sig, &ucode);
 	if (error != KERN_SUCCESS) {
+bad_far:
 		if (lower) {
 			call_trapsignal(td, sig, ucode, (void *)far,
 			    ESR_ELx_EXCEPTION(esr));
