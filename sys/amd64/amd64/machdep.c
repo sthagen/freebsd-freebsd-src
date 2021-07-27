@@ -222,6 +222,8 @@ struct mtx dt_lock;	/* lock for GDT and LDT */
 
 void (*vmm_resume_p)(void);
 
+bool efi_boot;
+
 static void
 cpu_startup(dummy)
 	void *dummy;
@@ -1277,7 +1279,7 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 	 * in real mode mode (e.g. SMP bare metal).
 	 */
 #ifdef SMP
-	mp_bootaddress(physmap, &physmap_idx);
+	alloc_ap_trampoline(physmap, &physmap_idx);
 #endif
 
 	/* call pmap initialization to make new kernel address space */
@@ -1604,7 +1606,6 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	struct region_descriptor r_gdt;
 	size_t kstack0_sz;
 	int late_console;
-	bool efi_boot;
 
 	TSRAW(&thread0, TS_ENTER, __func__, NULL);
 
