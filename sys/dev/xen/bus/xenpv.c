@@ -55,13 +55,17 @@ __FBSDID("$FreeBSD$");
  *
  * Since this is not possible on i386 just use any available memory
  * chunk above 1MB and hope we don't clash with anything else.
+ *
+ * Other architectures better document MMIO regions and drivers more
+ * reliably reserve them.  As such, allow using any unpopulated memory
+ * region.
  */
 #ifdef __amd64__
 #define LOW_MEM_LIMIT	0x100000000ul
 #elif defined(__i386__)
 #define LOW_MEM_LIMIT	0x100000ul
 #else
-#error "Unsupported architecture"
+#define LOW_MEM_LIMIT	0
 #endif
 
 static devclass_t xenpv_devclass;
@@ -125,7 +129,7 @@ xenpv_alloc_physmem(device_t dev, device_t child, int *res_id, size_t size)
 
 	phys_addr = rman_get_start(res);
 	error = vm_phys_fictitious_reg_range(phys_addr, phys_addr + size,
-	    VM_MEMATTR_DEFAULT);
+	    VM_MEMATTR_XEN);
 	if (error) {
 		bus_release_resource(child, SYS_RES_MEMORY, *res_id, res);
 		return (NULL);

@@ -190,6 +190,7 @@ struct cpu_implementers {
  */
 /* ARM Ltd. */
 static const struct cpu_parts cpu_parts_arm[] = {
+	{ CPU_PART_AEM_V8, "AEMv8" },
 	{ CPU_PART_FOUNDATION, "Foundation-Model" },
 	{ CPU_PART_CORTEX_A35, "Cortex-A35" },
 	{ CPU_PART_CORTEX_A53, "Cortex-A53" },
@@ -1170,74 +1171,32 @@ struct mrs_user_reg {
 	struct mrs_field *fields;
 };
 
+#define	USER_REG(name, field_name)					\
+	{								\
+		.reg = name,						\
+		.CRm = name##_CRm,					\
+		.Op2 = name##_op2,					\
+		.offset = __offsetof(struct cpu_desc, field_name),	\
+		.fields = field_name##_fields,				\
+	}
 static struct mrs_user_reg user_regs[] = {
-	{	/* id_aa64isar0_el1 */
-		.reg = ID_AA64ISAR0_EL1,
-		.CRm = 6,
-		.Op2 = 0,
-		.offset = __offsetof(struct cpu_desc, id_aa64isar0),
-		.fields = id_aa64isar0_fields,
-	},
-	{	/* id_aa64isar1_el1 */
-		.reg = ID_AA64ISAR1_EL1,
-		.CRm = 6,
-		.Op2 = 1,
-		.offset = __offsetof(struct cpu_desc, id_aa64isar1),
-		.fields = id_aa64isar1_fields,
-	},
-	{	/* id_aa64pfr0_el1 */
-		.reg = ID_AA64PFR0_EL1,
-		.CRm = 4,
-		.Op2 = 0,
-		.offset = __offsetof(struct cpu_desc, id_aa64pfr0),
-		.fields = id_aa64pfr0_fields,
-	},
-	{	/* id_aa64pfr0_el1 */
-		.reg = ID_AA64PFR1_EL1,
-		.CRm = 4,
-		.Op2 = 1,
-		.offset = __offsetof(struct cpu_desc, id_aa64pfr1),
-		.fields = id_aa64pfr1_fields,
-	},
-	{	/* id_aa64dfr0_el1 */
-		.reg = ID_AA64DFR0_EL1,
-		.CRm = 5,
-		.Op2 = 0,
-		.offset = __offsetof(struct cpu_desc, id_aa64dfr0),
-		.fields = id_aa64dfr0_fields,
-	},
-	{	/* id_aa64mmfr0_el1 */
-		.reg = ID_AA64MMFR0_EL1,
-		.CRm = 7,
-		.Op2 = 0,
-		.offset = __offsetof(struct cpu_desc, id_aa64mmfr0),
-		.fields = id_aa64mmfr0_fields,
-	},
+	USER_REG(ID_AA64DFR0_EL1, id_aa64dfr0),
+
+	USER_REG(ID_AA64ISAR0_EL1, id_aa64isar0),
+	USER_REG(ID_AA64ISAR1_EL1, id_aa64isar1),
+
+	USER_REG(ID_AA64MMFR0_EL1, id_aa64mmfr0),
+	USER_REG(ID_AA64MMFR1_EL1, id_aa64mmfr1),
+	USER_REG(ID_AA64MMFR2_EL1, id_aa64mmfr2),
+
+	USER_REG(ID_AA64PFR0_EL1, id_aa64pfr0),
+	USER_REG(ID_AA64PFR1_EL1, id_aa64pfr1),
+
 #ifdef COMPAT_FREEBSD32
-	{
-		/* id_isar5_el1 */
-		.reg = ID_ISAR5_EL1,
-		.CRm = 2,
-		.Op2 = 5,
-		.offset = __offsetof(struct cpu_desc, id_isar5),
-		.fields = id_isar5_fields,
-	},
-	{
-		/* mvfr0 */
-		.reg = MVFR0_EL1,
-		.CRm = 3,
-		.Op2 = 0,
-		.offset = __offsetof(struct cpu_desc, mvfr0),
-		.fields = mvfr0_fields,
-	},
-	{
-		/* mvfr1 */
-		.reg = MVFR1_EL1,
-		.CRm = 3,
-		.Op2 = 1,
-		.offset = __offsetof(struct cpu_desc, mvfr1),
-		.fields = mvfr1_fields,
-	},
+	USER_REG(ID_ISAR5_EL1, id_isar5),
+
+	USER_REG(MVFR0_EL1, mvfr0),
+	USER_REG(MVFR1_EL1, mvfr1),
 #endif /* COMPAT_FREEBSD32 */
 };
 

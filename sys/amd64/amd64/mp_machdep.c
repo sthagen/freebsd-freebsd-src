@@ -103,6 +103,7 @@ static char *doublefault_stack;
 static char *mce_stack;
 static char *nmi_stack;
 static char *dbg_stack;
+void *bootpcpu;
 
 extern u_int mptramp_la57;
 extern u_int mptramp_nx;
@@ -197,10 +198,8 @@ init_secondary(void)
 	/* Update microcode before doing anything else. */
 	ucode_load_ap(cpu);
 
-	/* Get per-cpu data and save  */
-	pc = &__pcpu[cpu];
-
-	/* prime data page for it to use */
+	/* Initialize the PCPU area. */
+	pc = bootpcpu;
 	pcpu_init(pc, cpu, sizeof(struct pcpu));
 	dpcpu_init(dpcpu, cpu);
 	pc->pc_apic_id = cpu_apic_ids[cpu];
@@ -262,8 +261,8 @@ init_secondary(void)
 	lgdt(&ap_gdt);			/* does magic intra-segment return */
 
 	wrmsr(MSR_FSBASE, 0);		/* User value */
-	wrmsr(MSR_GSBASE, (u_int64_t)pc);
-	wrmsr(MSR_KGSBASE, (u_int64_t)pc);	/* XXX User value while we're in the kernel */
+	wrmsr(MSR_GSBASE, (uint64_t)pc);
+	wrmsr(MSR_KGSBASE, 0);		/* User value */
 	fix_cpuid();
 
 	lidt(&r_idt);
@@ -431,6 +430,7 @@ start_all_aps(void)
 		dpcpu = (void *)kmem_malloc_domainset(DOMAINSET_PREF(domain),
 		    DPCPU_SIZE, M_WAITOK | M_ZERO);
 
+		bootpcpu = &__pcpu[cpu];
 		bootSTK = (char *)bootstacks[cpu] +
 		    kstack_pages * PAGE_SIZE - 8;
 		bootAP = cpu;

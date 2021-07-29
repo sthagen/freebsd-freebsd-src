@@ -37,10 +37,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/imgact_aout.h>
 #include <sys/imgact_elf.h>
 #include <sys/kernel.h>
-#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
-#include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/stddef.h>
 #include <sys/signalvar.h>
@@ -1128,8 +1126,6 @@ linux_elf_modevent(module_t mod, int type, void *data)
 		if (error == 0) {
 			SET_FOREACH(lihp, linux_ioctl_handler_set)
 				linux_ioctl_register_handler(*lihp);
-			LIST_INIT(&futex_list);
-			mtx_init(&futex_mtx, "ftllk", NULL, MTX_DEF);
 			linux_dev_shm_create();
 			linux_osd_jail_register();
 			stclohz = (stathz ? stathz : hz);
@@ -1152,7 +1148,6 @@ linux_elf_modevent(module_t mod, int type, void *data)
 		if (error == 0) {
 			SET_FOREACH(lihp, linux_ioctl_handler_set)
 				linux_ioctl_unregister_handler(*lihp);
-			mtx_destroy(&futex_mtx);
 			linux_dev_shm_destroy();
 			linux_osd_jail_deregister();
 			if (bootverbose)
@@ -1174,8 +1169,3 @@ static moduledata_t linux_elf_mod = {
 
 DECLARE_MODULE_TIED(linuxelf, linux_elf_mod, SI_SUB_EXEC, SI_ORDER_ANY);
 FEATURE(linux, "Linux 32bit support");
-
-/*
- * linux_vdso_install() and linux_exec_sysvec_init() must be called
- * after exec_sysvec_init() which is SI_SUB_EXEC (SI_ORDER_ANY).
- */
