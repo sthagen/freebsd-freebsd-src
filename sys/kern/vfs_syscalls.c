@@ -3173,15 +3173,19 @@ setutimes(struct thread *td, struct vnode *vp, const struct timespec *ts,
 {
 	struct mount *mp;
 	struct vattr vattr;
-	int error, setbirthtime;
+	int error;
+	bool setbirthtime;
+
+	setbirthtime = false;
+	vattr.va_birthtime.tv_sec = VNOVAL;
+	vattr.va_birthtime.tv_nsec = 0;
 
 	if ((error = vn_start_write(vp, &mp, V_WAIT | PCATCH)) != 0)
 		return (error);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-	setbirthtime = 0;
-	if (numtimes < 3 && !VOP_GETATTR(vp, &vattr, td->td_ucred) &&
+	if (numtimes < 3 && VOP_GETATTR(vp, &vattr, td->td_ucred) == 0 &&
 	    timespeccmp(&ts[1], &vattr.va_birthtime, < ))
-		setbirthtime = 1;
+		setbirthtime = true;
 	VATTR_NULL(&vattr);
 	vattr.va_atime = ts[0];
 	vattr.va_mtime = ts[1];
@@ -3517,7 +3521,7 @@ kern_fsync(struct thread *td, int fd, bool fullsync)
 	struct vnode *vp;
 	struct mount *mp;
 	struct file *fp;
-	int error, lock_flags;
+	int error;
 
 	AUDIT_ARG_FD(fd);
 	error = getvnode(td, fd, &cap_fsync_rights, &fp);
@@ -3532,13 +3536,7 @@ retry:
 	error = vn_start_write(vp, &mp, V_WAIT | PCATCH);
 	if (error != 0)
 		goto drop;
-	if (MNT_SHARED_WRITES(mp) ||
-	    ((mp == NULL) && MNT_SHARED_WRITES(vp->v_mount))) {
-		lock_flags = LK_SHARED;
-	} else {
-		lock_flags = LK_EXCLUSIVE;
-	}
-	vn_lock(vp, lock_flags | LK_RETRY);
+	vn_lock(vp, vn_lktype_write(mp, vp) | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
 	if (vp->v_object != NULL) {
 		VM_OBJECT_WLOCK(vp->v_object);

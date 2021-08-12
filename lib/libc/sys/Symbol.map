@@ -417,6 +417,11 @@ FBSD_1.6 {
 	shm_rename;
 };
 
+FBSD_1.7 {
+	 _Fork;
+	fspacectl;
+};
+
 FBSDprivate_1.0 {
 	___acl_aclcheck_fd;
 	__sys___acl_aclcheck_fd;

@@ -225,11 +225,11 @@ nd6_init(void)
 	nd6_defrouter_init();
 
 	/* Start timers. */
-	callout_init(&V_nd6_slowtimo_ch, 0);
+	callout_init(&V_nd6_slowtimo_ch, 1);
 	callout_reset(&V_nd6_slowtimo_ch, ND6_SLOWTIMER_INTERVAL * hz,
 	    nd6_slowtimo, curvnet);
 
-	callout_init(&V_nd6_timer_ch, 0);
+	callout_init(&V_nd6_timer_ch, 1);
 	callout_reset(&V_nd6_timer_ch, hz, nd6_timer, curvnet);
 
 	nd6_dad_init();
@@ -617,7 +617,7 @@ nd6_llinfo_get_holdsrc(struct llentry *ln, struct in6_addr *src)
 static int
 nd6_is_stale(struct llentry *lle, long *pdelay, int *do_switch)
 {
-	int nd_delay, nd_gctimer, r_skip_req;
+	int nd_delay, nd_gctimer;
 	time_t lle_hittime;
 	long delay;
 
@@ -625,17 +625,13 @@ nd6_is_stale(struct llentry *lle, long *pdelay, int *do_switch)
 	nd_gctimer = V_nd6_gctimer;
 	nd_delay = V_nd6_delay;
 
-	LLE_REQ_LOCK(lle);
-	r_skip_req = lle->r_skip_req;
-	lle_hittime = lle->lle_hittime;
-	LLE_REQ_UNLOCK(lle);
+	lle_hittime = llentry_get_hittime(lle);
 
-	if (r_skip_req > 0) {
+	if (lle_hittime == 0) {
 		/*
-		 * Nonzero r_skip_req value was set upon entering
-		 * STALE state. Since value was not changed, no
-		 * packets were passed using this lle. Ask for
-		 * timer reschedule and keep STALE state.
+		 * Datapath feedback has been requested upon entering
+		 * STALE state. No packets has been passed using this lle.
+		 * Ask for the timer reschedule and keep STALE state.
 		 */
 		delay = (long)(MIN(nd_gctimer, nd_delay));
 		delay *= hz;
@@ -705,13 +701,7 @@ nd6_llinfo_setstate(struct llentry *lle, int newstate)
 		break;
 	case ND6_LLINFO_STALE:
 
-		/*
-		 * Notify fast path that we want to know if any packet
-		 * is transmitted by setting r_skip_req.
-		 */
-		LLE_REQ_LOCK(lle);
-		lle->r_skip_req = 1;
-		LLE_REQ_UNLOCK(lle);
+		llentry_request_feedback(lle);
 		nd_delay = V_nd6_delay;
 		nd_gctimer = V_nd6_gctimer;
 
@@ -1393,6 +1383,35 @@ nd6_is_addr_neighbor(const struct sockaddr_in6 *addr, struct ifnet *ifp)
 }
 
 /*
+ * Tries to update @lle address/prepend data with new @lladdr.
+ *
+ * Returns true on success.
+ * In any case, @lle is returned wlocked.
+ */
+bool
+nd6_try_set_entry_addr(struct ifnet *ifp, struct llentry *lle, char *lladdr)
+{
+	u_char linkhdr[LLE_MAX_LINKHDR];
+	size_t linkhdrsize;
+	int lladdr_off;
+
+	LLE_WLOCK_ASSERT(lle);
+
+	linkhdrsize = sizeof(linkhdr);
+	if (lltable_calc_llheader(ifp, AF_INET6, lladdr,
+	    linkhdr, &linkhdrsize, &lladdr_off) != 0) {
+		return (false);
+	}
+
+	if (!lltable_acquire_wlock(ifp, lle))
+		return (false);
+	lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize, lladdr_off);
+	IF_AFDATA_WUNLOCK(ifp);
+
+	return (true);
+}
+
+/*
  * Free an nd6 llinfo entry.
  * Since the function would cause significant changes in the kernel, DO NOT
  * make it global, unless you have a strong reason for the change, and are sure
@@ -1933,7 +1952,6 @@ nd6_cache_lladdr(struct ifnet *ifp, struct in6_addr *from, char *lladdr,
 	int llchange;
 	int flags;
 	uint16_t router = 0;
-	struct sockaddr_in6 sin6;
 	struct mbuf *chain = NULL;
 	u_char linkhdr[LLE_MAX_LINKHDR];
 	size_t linkhdrsize;
@@ -2038,14 +2056,9 @@ nd6_cache_lladdr(struct ifnet *ifp, struct in6_addr *from, char *lladdr,
 		 * Record source link-layer address
 		 * XXX is it dependent to ifp->if_type?
 		 */
-		linkhdrsize = sizeof(linkhdr);
-		if (lltable_calc_llheader(ifp, AF_INET6, lladdr,
-		    linkhdr, &linkhdrsize, &lladdr_off) != 0)
-			return;
-
-		if (lltable_try_set_entry_addr(ifp, ln, linkhdr, linkhdrsize,
-		    lladdr_off) == 0) {
+		if (!nd6_try_set_entry_addr(ifp, ln, lladdr)) {
 			/* Entry was deleted */
+			LLE_WUNLOCK(ln);
 			return;
 		}
 
@@ -2054,7 +2067,7 @@ nd6_cache_lladdr(struct ifnet *ifp, struct in6_addr *from, char *lladdr,
 		EVENTHANDLER_INVOKE(lle_event, ln, LLENTRY_RESOLVED);
 
 		if (ln->la_hold != NULL)
-			nd6_grab_holdchain(ln, &chain, &sin6);
+			chain = nd6_grab_holdchain(ln);
 	}
 
 	/* Calculates new router status */
@@ -2072,7 +2085,7 @@ nd6_cache_lladdr(struct ifnet *ifp, struct in6_addr *from, char *lladdr,
 		LLE_RUNLOCK(ln);
 
 	if (chain != NULL)
-		nd6_flush_holdchain(ifp, chain, &sin6);
+		nd6_flush_holdchain(ifp, ln, chain);
 
 	/*
 	 * When the link-layer address of a router changes, select the
@@ -2129,16 +2142,15 @@ nd6_slowtimo(void *arg)
 	CURVNET_RESTORE();
 }
 
-void
-nd6_grab_holdchain(struct llentry *ln, struct mbuf **chain,
-    struct sockaddr_in6 *sin6)
+struct mbuf *
+nd6_grab_holdchain(struct llentry *ln)
 {
+	struct mbuf *chain;
 
 	LLE_WLOCK_ASSERT(ln);
 
-	*chain = ln->la_hold;
+	chain = ln->la_hold;
 	ln->la_hold = NULL;
-	lltable_fill_sa_entry(ln, (struct sockaddr *)sin6);
 
 	if (ln->ln_state == ND6_LLINFO_STALE) {
 		/*
@@ -2152,6 +2164,8 @@ nd6_grab_holdchain(struct llentry *ln, struct mbuf **chain,
 		 */
 		nd6_llinfo_setstate(ln, ND6_LLINFO_DELAY);
 	}
+
+	return (chain);
 }
 
 int
@@ -2254,13 +2268,7 @@ nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 		bcopy(ln->r_linkdata, desten, ln->r_hdrlen);
 		if (pflags != NULL)
 			*pflags = LLE_VALID | (ln->r_flags & RLLE_IFADDR);
-		/* Check if we have feedback request from nd6 timer */
-		if (ln->r_skip_req != 0) {
-			LLE_REQ_LOCK(ln);
-			ln->r_skip_req = 0; /* Notify that entry was used */
-			ln->lle_hittime = time_uptime;
-			LLE_REQ_UNLOCK(ln);
-		}
+		llentry_provide_feedback(ln);
 		if (plle) {
 			LLE_ADDREF(ln);
 			*plle = ln;
@@ -2271,6 +2279,39 @@ nd6_resolve(struct ifnet *ifp, int is_gw, struct mbuf *m,
 		LLE_WUNLOCK(ln);
 
 	return (nd6_resolve_slow(ifp, 0, m, dst6, desten, pflags, plle));
+}
+
+/*
+ * Finds or creates a new llentry for @addr.
+ * Returns wlocked llentry or NULL.
+ */
+static __noinline struct llentry *
+nd6_get_llentry(struct ifnet *ifp, const struct in6_addr *addr)
+{
+	struct llentry *lle, *lle_tmp;
+
+	lle = nd6_alloc(addr, 0, ifp);
+	if (lle == NULL) {
+		char ip6buf[INET6_ADDRSTRLEN];
+		log(LOG_DEBUG,
+		    "nd6_get_llentry: can't allocate llinfo for %s "
+		    "(ln=%p)\n",
+		    ip6_sprintf(ip6buf, addr), lle);
+		return (NULL);
+	}
+
+	IF_AFDATA_WLOCK(ifp);
+	LLE_WLOCK(lle);
+	/* Prefer any existing entry over newly-created one */
+	lle_tmp = nd6_lookup(addr, LLE_EXCLUSIVE, ifp);
+	if (lle_tmp == NULL)
+		lltable_link_entry(LLTABLE6(ifp), lle);
+	IF_AFDATA_WUNLOCK(ifp);
+	if (lle_tmp != NULL) {
+		lltable_free_entry(LLTABLE6(ifp), lle);
+		return (lle_tmp);
+	} else
+		return (lle);
 }
 
 /*
@@ -2289,7 +2330,7 @@ nd6_resolve_slow(struct ifnet *ifp, int flags, struct mbuf *m,
     const struct sockaddr_in6 *dst, u_char *desten, uint32_t *pflags,
     struct llentry **plle)
 {
-	struct llentry *lle = NULL, *lle_tmp;
+	struct llentry *lle = NULL;
 	struct in6_addr *psrc, src;
 	int send_ns, ll_len;
 	char *lladdr;
@@ -2302,39 +2343,16 @@ nd6_resolve_slow(struct ifnet *ifp, int flags, struct mbuf *m,
 	 * At this point, the destination of the packet must be a unicast
 	 * or an anycast address(i.e. not a multicast).
 	 */
-	if (lle == NULL) {
-		lle = nd6_lookup(&dst->sin6_addr, LLE_EXCLUSIVE, ifp);
-		if ((lle == NULL) && nd6_is_addr_neighbor(dst, ifp))  {
-			/*
-			 * Since nd6_is_addr_neighbor() internally calls nd6_lookup(),
-			 * the condition below is not very efficient.  But we believe
-			 * it is tolerable, because this should be a rare case.
-			 */
-			lle = nd6_alloc(&dst->sin6_addr, 0, ifp);
-			if (lle == NULL) {
-				char ip6buf[INET6_ADDRSTRLEN];
-				log(LOG_DEBUG,
-				    "nd6_output: can't allocate llinfo for %s "
-				    "(ln=%p)\n",
-				    ip6_sprintf(ip6buf, &dst->sin6_addr), lle);
-				m_freem(m);
-				return (ENOBUFS);
-			}
+	lle = nd6_lookup(&dst->sin6_addr, LLE_EXCLUSIVE, ifp);
+	if ((lle == NULL) && nd6_is_addr_neighbor(dst, ifp))  {
+		/*
+		 * Since nd6_is_addr_neighbor() internally calls nd6_lookup(),
+		 * the condition below is not very efficient.  But we believe
+		 * it is tolerable, because this should be a rare case.
+		 */
+		lle = nd6_get_llentry(ifp, &dst->sin6_addr);
+	}
 
-			IF_AFDATA_WLOCK(ifp);
-			LLE_WLOCK(lle);
-			/* Prefer any existing entry over newly-created one */
-			lle_tmp = nd6_lookup(&dst->sin6_addr, LLE_EXCLUSIVE, ifp);
-			if (lle_tmp == NULL)
-				lltable_link_entry(LLTABLE6(ifp), lle);
-			IF_AFDATA_WUNLOCK(ifp);
-			if (lle_tmp != NULL) {
-				lltable_free_entry(LLTABLE6(ifp), lle);
-				lle = lle_tmp;
-				lle_tmp = NULL;
-			}
-		}
-	} 
 	if (lle == NULL) {
 		m_freem(m);
 		return (ENOBUFS);
@@ -2451,19 +2469,27 @@ nd6_resolve_addr(struct ifnet *ifp, int flags, const struct sockaddr *dst,
 }
 
 int
-nd6_flush_holdchain(struct ifnet *ifp, struct mbuf *chain,
-    struct sockaddr_in6 *dst)
+nd6_flush_holdchain(struct ifnet *ifp, struct llentry *lle, struct mbuf *chain)
 {
 	struct mbuf *m, *m_head;
+	struct sockaddr_in6 dst6;
 	int error = 0;
 
+	NET_EPOCH_ASSERT();
+
+	struct route_in6 ro = {
+		.ro_prepend = lle->r_linkdata,
+		.ro_plen = lle->r_hdrlen,
+	};
+
+	lltable_fill_sa_entry(lle, (struct sockaddr *)&dst6);
 	m_head = chain;
 
 	while (m_head) {
 		m = m_head;
 		m_head = m_head->m_nextpkt;
 		m->m_nextpkt = NULL;
-		error = nd6_output_ifp(ifp, ifp, m, dst, NULL);
+		error = nd6_output_ifp(ifp, ifp, m, &dst6, (struct route *)&ro);
 	}
 
 	/*

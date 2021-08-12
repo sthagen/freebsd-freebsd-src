@@ -318,6 +318,35 @@ lltable_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
 }
 
 /*
+ * Acquires lltable write lock.
+ *
+ * Returns true on success, with both lltable and lle lock held.
+ * On failure, false is returned and lle wlock is still held.
+ */
+bool
+lltable_acquire_wlock(struct ifnet *ifp, struct llentry *lle)
+{
+	NET_EPOCH_ASSERT();
+
+	/* Perform real LLE update */
+	/* use afdata WLOCK to update fields */
+	LLE_WUNLOCK(lle);
+	IF_AFDATA_WLOCK(ifp);
+	LLE_WLOCK(lle);
+
+	/*
+	 * Since we droppped LLE lock, other thread might have deleted
+	 * this lle. Check and return
+	 */
+	if ((lle->la_flags & LLE_DELETED) != 0) {
+		IF_AFDATA_WUNLOCK(ifp);
+		return (false);
+	}
+
+	return (true);
+}
+
+/*
  * Tries to update @lle link-level address.
  * Since update requires AFDATA WLOCK, function
  * drops @lle lock, acquires AFDATA lock and then acquires
@@ -330,30 +359,13 @@ lltable_try_set_entry_addr(struct ifnet *ifp, struct llentry *lle,
     const char *linkhdr, size_t linkhdrsize, int lladdr_off)
 {
 
-	/* Perform real LLE update */
-	/* use afdata WLOCK to update fields */
-	LLE_WLOCK_ASSERT(lle);
-	LLE_ADDREF(lle);
-	LLE_WUNLOCK(lle);
-	IF_AFDATA_WLOCK(ifp);
-	LLE_WLOCK(lle);
-
-	/*
-	 * Since we droppped LLE lock, other thread might have deleted
-	 * this lle. Check and return
-	 */
-	if ((lle->la_flags & LLE_DELETED) != 0) {
-		IF_AFDATA_WUNLOCK(ifp);
-		LLE_FREE_LOCKED(lle);
+	if (!lltable_acquire_wlock(ifp, lle))
 		return (0);
-	}
 
 	/* Update data */
 	lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize, lladdr_off);
 
 	IF_AFDATA_WUNLOCK(ifp);
-
-	LLE_REMREF(lle);
 
 	return (1);
 }
@@ -384,6 +396,52 @@ lltable_calc_llheader(struct ifnet *ifp, int family, char *lladdr,
 	}
 
 	return (error);
+}
+
+/*
+ * Requests feedback from the datapath.
+ * First packet using @lle should result in
+ * setting r_skip_req back to 0 and updating
+ * lle_hittime to the current time_uptime.
+ */
+void
+llentry_request_feedback(struct llentry *lle)
+{
+	LLE_REQ_LOCK(lle);
+	lle->r_skip_req = 1;
+	LLE_REQ_UNLOCK(lle);
+}
+
+/*
+ * Updates the lle state to mark it has been used
+ * and record the time.
+ * Used by the llentry_provide_feedback() wrapper.
+ */
+void
+llentry_mark_used(struct llentry *lle)
+{
+	LLE_REQ_LOCK(lle);
+	lle->r_skip_req = 0;
+	lle->lle_hittime = time_uptime;
+	LLE_REQ_UNLOCK(lle);
+}
+
+/*
+ * Fetches the time when lle was used.
+ * Return 0 if the entry was not used, relevant time_uptime
+ *  otherwise.
+ */
+time_t
+llentry_get_hittime(struct llentry *lle)
+{
+	time_t lle_hittime = 0;
+
+	LLE_REQ_LOCK(lle);
+	if ((lle->r_skip_req == 0) && (lle_hittime < lle->lle_hittime))
+		lle_hittime = lle->lle_hittime;
+	LLE_REQ_UNLOCK(lle);
+
+	return (lle_hittime);
 }
 
 /*

@@ -238,6 +238,8 @@ void lltable_fill_sa_entry(const struct llentry *lle, struct sockaddr *sa);
 struct ifnet *lltable_get_ifp(const struct lltable *llt);
 int lltable_get_af(const struct lltable *llt);
 
+bool lltable_acquire_wlock(struct ifnet *ifp, struct llentry *lle);
+
 int lltable_foreach_lle(struct lltable *llt, llt_foreach_cb_t *f,
     void *farg);
 /*
@@ -250,17 +252,20 @@ lla_lookup(struct lltable *llt, u_int flags, const struct sockaddr *l3addr)
 	return (llt->llt_lookup(llt, flags, l3addr));
 }
 
+void llentry_request_feedback(struct llentry *lle);
+void llentry_mark_used(struct llentry *lle);
+time_t llentry_get_hittime(struct llentry *lle);
+
 /*
  * Notify the LLE code that the entry was used by datapath.
  */
 static __inline void
-llentry_mark_used(struct llentry *lle)
+llentry_provide_feedback(struct llentry *lle)
 {
 
-	if (lle->r_skip_req == 0)
+	if (__predict_true(lle->r_skip_req == 0))
 		return;
-	if ((lle->r_flags & RLLE_VALID) != 0)
-		lle->lle_tbl->llt_mark_used(lle);
+	llentry_mark_used(lle);
 }
 
 int		lla_rt_output(struct rt_msghdr *, struct rt_addrinfo *);

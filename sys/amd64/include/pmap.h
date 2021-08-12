@@ -202,6 +202,13 @@
 #define	NKASANPML4E	((NKPML4E + 7) / 8)
 
 /*
+ * Number of PML4 slots for the KMSAN shadow and origin maps.  These are
+ * one-to-one with the kernel map.
+ */
+#define	NKMSANSHADPML4E	NKPML4E
+#define	NKMSANORIGPML4E	NKPML4E
+
+/*
  * We use the same numbering of the page table pages for 5-level and
  * 4-level paging structures.
  */
@@ -250,6 +257,9 @@
 #define	KPDPI		(NPDPEPG-2)	/* kernbase at -2GB */
 
 #define	KASANPML4I	(DMPML4I - NKASANPML4E) /* Below the direct map */
+
+#define	KMSANSHADPML4I	(KPML4BASE - NKMSANSHADPML4E)
+#define	KMSANORIGPML4I	(DMPML4I - NKMSANORIGPML4E)
 
 /* Large map: index of the first and max last pml4 entry */
 #define	LMSPML4I	(PML4PML4I + 1)
@@ -456,6 +466,12 @@ extern int invpcid_works;
 #define	pmap_page_is_write_mapped(m)	(((m)->a.flags & PGA_WRITEABLE) != 0)
 #define	pmap_unmapbios(va, sz)		pmap_unmapdev((va), (sz))
 
+#define	pmap_vm_page_alloc_check(m)					\
+	KASSERT(m->phys_addr < kernphys ||				\
+	    m->phys_addr >= kernphys + (vm_offset_t)&_end - KERNSTART,	\
+	    ("allocating kernel page %p pa %#lx kernphys %#lx end %p", \
+	    m, m->phys_addr, kernphys, &_end));
+
 struct thread;
 
 void	pmap_activate_boot(pmap_t pmap);
@@ -513,6 +529,9 @@ vm_page_t pmap_page_alloc_below_4g(bool zeroed);
 
 #ifdef KASAN
 void	pmap_kasan_enter(vm_offset_t);
+#endif
+#ifdef KMSAN
+void	pmap_kmsan_enter(vm_offset_t);
 #endif
 
 #endif /* _KERNEL */

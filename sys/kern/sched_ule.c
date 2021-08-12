@@ -300,6 +300,8 @@ static struct tdq	tdq_cpu;
 #define	TDQ_LOCK_ASSERT(t, type)	mtx_assert(TDQ_LOCKPTR((t)), (type))
 #define	TDQ_LOCK(t)		mtx_lock_spin(TDQ_LOCKPTR((t)))
 #define	TDQ_LOCK_FLAGS(t, f)	mtx_lock_spin_flags(TDQ_LOCKPTR((t)), (f))
+#define	TDQ_TRYLOCK(t)		mtx_trylock_spin(TDQ_LOCKPTR((t)))
+#define	TDQ_TRYLOCK_FLAGS(t, f)	mtx_trylock_spin_flags(TDQ_LOCKPTR((t)), (f))
 #define	TDQ_UNLOCK(t)		mtx_unlock_spin(TDQ_LOCKPTR((t)))
 #define	TDQ_LOCKPTR(t)		((struct mtx *)(&(t)->tdq_lock))
 
@@ -737,7 +739,7 @@ cpu_search_highest(const struct cpu_group *cg, const struct cpu_search *s,
 		if (l < s->cs_limit || !tdq->tdq_transferable ||
 		    !CPU_ISSET(c, s->cs_mask))
 			continue;
-		load -= sched_random() % 128;
+		load -= sched_random() % 256;
 		if (load > bload) {
 			bload = load;
 			r->cs_cpu = c;
@@ -933,10 +935,10 @@ tdq_move(struct tdq *from, struct tdq *to)
 static int
 tdq_idled(struct tdq *tdq)
 {
-	struct cpu_group *cg;
+	struct cpu_group *cg, *parent;
 	struct tdq *steal;
 	cpuset_t mask;
-	int cpu, switchcnt;
+	int cpu, switchcnt, goup;
 
 	if (smp_started == 0 || steal_idle == 0 || tdq->tdq_cg == NULL)
 		return (1);
@@ -944,7 +946,7 @@ tdq_idled(struct tdq *tdq)
 	CPU_CLR(PCPU_GET(cpuid), &mask);
     restart:
 	switchcnt = tdq->tdq_switchcnt + tdq->tdq_oldswitchcnt;
-	for (cg = tdq->tdq_cg; ; ) {
+	for (cg = tdq->tdq_cg, goup = 0; ; ) {
 		cpu = sched_highest(cg, &mask, steal_thresh);
 		/*
 		 * We were assigned a thread but not preempted.  Returning
@@ -952,10 +954,29 @@ tdq_idled(struct tdq *tdq)
 		 */
 		if (tdq->tdq_load)
 			return (0);
+
+		/*
+		 * We found no CPU to steal from in this group.  Escalate to
+		 * the parent and repeat.  But if parent has only two children
+		 * groups we can avoid searching this group again by searching
+		 * the other one specifically and then escalating two levels.
+		 */
 		if (cpu == -1) {
-			cg = cg->cg_parent;
-			if (cg == NULL)
+			if (goup) {
+				cg = cg->cg_parent;
+				goup = 0;
+			}
+			parent = cg->cg_parent;
+			if (parent == NULL)
 				return (1);
+			if (parent->cg_children == 2) {
+				if (cg == &parent->cg_child[0])
+					cg = &parent->cg_child[1];
+				else
+					cg = &parent->cg_child[0];
+				goup = 1;
+			} else
+				cg = parent;
 			continue;
 		}
 		steal = TDQ_CPU(cpu);
@@ -970,13 +991,22 @@ tdq_idled(struct tdq *tdq)
 		if (steal->tdq_load < steal_thresh ||
 		    steal->tdq_transferable == 0)
 			goto restart;
-		tdq_lock_pair(tdq, steal);
 		/*
-		 * We were assigned a thread while waiting for the locks.
-		 * Switch to it now instead of stealing a thread.
+		 * Try to lock both queues. If we are assigned a thread while
+		 * waited for the lock, switch to it now instead of stealing.
+		 * If we can't get the lock, then somebody likely got there
+		 * first so continue searching.
 		 */
-		if (tdq->tdq_load)
-			break;
+		TDQ_LOCK(tdq);
+		if (tdq->tdq_load > 0) {
+			mi_switch(SW_VOL | SWT_IDLE);
+			return (0);
+		}
+		if (TDQ_TRYLOCK_FLAGS(steal, MTX_DUPOK) == 0) {
+			TDQ_UNLOCK(tdq);
+			CPU_CLR(cpu, &mask);
+			continue;
+		}
 		/*
 		 * The data returned by sched_highest() is stale and
 		 * the chosen CPU no longer has an eligible thread, or
@@ -1386,6 +1416,7 @@ sched_setup_smp(void)
 		tdq->tdq_cg = smp_topo_find(cpu_top, i);
 		if (tdq->tdq_cg == NULL)
 			panic("Can't find cpu group for %d\n", i);
+		DPCPU_ID_SET(i, randomval, i * 69069 + 5);
 	}
 	PCPU_SET(sched, DPCPU_PTR(tdq));
 	balance_tdq = TDQ_SELF();
@@ -1868,10 +1899,10 @@ lend:
 static void
 tdq_trysteal(struct tdq *tdq)
 {
-	struct cpu_group *cg;
+	struct cpu_group *cg, *parent;
 	struct tdq *steal;
 	cpuset_t mask;
-	int cpu, i;
+	int cpu, i, goup;
 
 	if (smp_started == 0 || trysteal_limit == 0 || tdq->tdq_cg == NULL)
 		return;
@@ -1880,7 +1911,7 @@ tdq_trysteal(struct tdq *tdq)
 	/* We don't want to be preempted while we're iterating. */
 	spinlock_enter();
 	TDQ_UNLOCK(tdq);
-	for (i = 1, cg = tdq->tdq_cg; ; ) {
+	for (i = 1, cg = tdq->tdq_cg, goup = 0; ; ) {
 		cpu = sched_highest(cg, &mask, steal_thresh);
 		/*
 		 * If a thread was added while interrupts were disabled don't
@@ -1890,13 +1921,35 @@ tdq_trysteal(struct tdq *tdq)
 			TDQ_LOCK(tdq);
 			break;
 		}
+
+		/*
+		 * We found no CPU to steal from in this group.  Escalate to
+		 * the parent and repeat.  But if parent has only two children
+		 * groups we can avoid searching this group again by searching
+		 * the other one specifically and then escalating two levels.
+		 */
 		if (cpu == -1) {
-			i++;
-			cg = cg->cg_parent;
-			if (cg == NULL || i > trysteal_limit) {
+			if (goup) {
+				cg = cg->cg_parent;
+				goup = 0;
+			}
+			if (++i > trysteal_limit) {
 				TDQ_LOCK(tdq);
 				break;
 			}
+			parent = cg->cg_parent;
+			if (parent == NULL) {
+				TDQ_LOCK(tdq);
+				break;
+			}
+			if (parent->cg_children == 2) {
+				if (cg == &parent->cg_child[0])
+					cg = &parent->cg_child[1];
+				else
+					cg = &parent->cg_child[0];
+				goup = 1;
+			} else
+				cg = parent;
 			continue;
 		}
 		steal = TDQ_CPU(cpu);
@@ -1907,18 +1960,18 @@ tdq_trysteal(struct tdq *tdq)
 		if (steal->tdq_load < steal_thresh ||
 		    steal->tdq_transferable == 0)
 			continue;
-		tdq_lock_pair(tdq, steal);
 		/*
-		 * If we get to this point, unconditonally exit the loop
-		 * to bound the time spent in the critcal section.
-		 *
-		 * If a thread was added while interrupts were disabled don't
-		 * steal one here.
+		 * Try to lock both queues. If we are assigned a thread while
+		 * waited for the lock, switch to it now instead of stealing.
+		 * If we can't get the lock, then somebody likely got there
+		 * first.  At this point unconditonally exit the loop to
+		 * bound the time spent in the critcal section.
 		 */
-		if (tdq->tdq_load > 0) {
-			TDQ_UNLOCK(steal);
+		TDQ_LOCK(tdq);
+		if (tdq->tdq_load > 0)
 			break;
-		}
+		if (TDQ_TRYLOCK_FLAGS(steal, MTX_DUPOK) == 0)
+			break;
 		/*
 		 * The data returned by sched_highest() is stale and
                  * the chosen CPU no longer has an eligible thread.

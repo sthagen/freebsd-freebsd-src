@@ -158,8 +158,10 @@ static driver_t enetc_driver = {
 };
 
 static devclass_t enetc_devclass;
-DRIVER_MODULE(enetc, pci, enetc_driver, enetc_devclass, NULL, NULL);
 DRIVER_MODULE(miibus, enetc, miibus_driver, miibus_devclass, NULL, NULL);
+/* Make sure miibus gets procesed first. */
+DRIVER_MODULE_ORDERED(enetc, pci, enetc_driver, enetc_devclass, NULL, NULL,
+    SI_ORDER_ANY);
 MODULE_VERSION(enetc, 1);
 
 IFLIB_PNP_INFO(pci, enetc, enetc_vendor_info_array);
@@ -365,6 +367,10 @@ enetc_attach_pre(if_ctx_t ctx)
 	sc->dev = iflib_get_dev(ctx);
 	sc->shared = scctx;
 	ifp = iflib_get_ifp(ctx);
+
+	pci_save_state(sc->dev);
+	pcie_flr(sc->dev, 1000, false);
+	pci_restore_state(sc->dev);
 
 	rid = PCIR_BAR(ENETC_BAR_REGS);
 	sc->regs = bus_alloc_resource_any(sc->dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
