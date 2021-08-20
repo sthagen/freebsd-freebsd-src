@@ -783,6 +783,7 @@ icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
 	struct tcpcb *tp;
 	struct toepcb *toep;
 	cap_rights_t rights;
+	u_int max_rx_pdu_len, max_tx_pdu_len;
 	int error, max_iso_pdus;
 
 	MPASS(icc->icc_signature == CXGBEI_CONN_SIGNATURE);
@@ -828,6 +829,17 @@ icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
 	icc->sc = fa.sc;
 	ci = icc->sc->iscsi_ulp_softc;
 
+	max_rx_pdu_len = ISCSI_BHS_SIZE + ic->ic_max_recv_data_segment_length;
+	max_tx_pdu_len = ISCSI_BHS_SIZE + ic->ic_max_send_data_segment_length;
+	if (ic->ic_header_crc32c) {
+		max_rx_pdu_len += ISCSI_HEADER_DIGEST_SIZE;
+		max_tx_pdu_len += ISCSI_HEADER_DIGEST_SIZE;
+	}
+	if (ic->ic_data_crc32c) {
+		max_rx_pdu_len += ISCSI_DATA_DIGEST_SIZE;
+		max_tx_pdu_len += ISCSI_DATA_DIGEST_SIZE;
+	}
+
 	inp = sotoinpcb(so);
 	INP_WLOCK(inp);
 	tp = intotcpcb(inp);
@@ -853,7 +865,7 @@ icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
 
 		if (icc->sc->tt.iso && chip_id(icc->sc) >= CHELSIO_T5) {
 			max_iso_pdus = CXGBEI_MAX_ISO_PAYLOAD /
-			    ci->max_tx_pdu_len;
+			    max_tx_pdu_len;
 			ic->ic_hw_isomax = max_iso_pdus *
 			    ic->ic_max_send_data_segment_length;
 		} else
@@ -864,15 +876,15 @@ icl_cxgbei_conn_handoff(struct icl_conn *ic, int fd)
 		toep->ulpcb = icc;
 
 		send_iscsi_flowc_wr(icc->sc, toep,
-		    roundup(max_iso_pdus * ci->max_tx_pdu_len, tp->t_maxseg));
+		    roundup(max_iso_pdus * max_tx_pdu_len, tp->t_maxseg));
 		set_ulp_mode_iscsi(icc->sc, toep, icc->ulp_submode);
 		error = 0;
 	}
 	INP_WUNLOCK(inp);
 
 	if (error == 0) {
-		error = icl_cxgbei_setsockopt(ic, so, ci->max_tx_pdu_len,
-		    ci->max_rx_pdu_len);
+		error = icl_cxgbei_setsockopt(ic, so, max_tx_pdu_len,
+		    max_rx_pdu_len);
 	}
 
 	return (error);
@@ -947,6 +959,18 @@ icl_cxgbei_conn_close(struct icl_conn *ic)
 			icl_cxgbei_pdu_done(ip, ENOTCONN);
 		}
 		SOCKBUF_UNLOCK(sb);
+
+		/*
+		 * Grab a reference to use when waiting for the final
+		 * CPL to be received.  If toep->inp is NULL, then
+		 * final_cpl_received() has already been called (e.g.
+		 * due to the peer sending a RST).
+		 */
+		if (toep->inp != NULL) {
+			toep = hold_toepcb(toep);
+			toep->flags |= TPF_WAITING_FOR_FINAL;
+		} else
+			toep = NULL;
 	}
 	INP_WUNLOCK(inp);
 
@@ -959,7 +983,6 @@ icl_cxgbei_conn_close(struct icl_conn *ic)
 	 * queues were purged instead of delivered reliably but soabort isn't
 	 * really general purpose and wouldn't do the right thing here.
 	 */
-	soref(so);
 	soclose(so);
 
 	/*
@@ -969,12 +992,15 @@ icl_cxgbei_conn_close(struct icl_conn *ic)
 	 * Callers assume that it is safe to free buffers for tasks
 	 * and transfers after this function returns.
 	 */
-	SOCK_LOCK(so);
-	while ((so->so_state & SS_ISDISCONNECTED) == 0)
-		mtx_sleep(&so->so_timeo, SOCK_MTX(so), PSOCK, "conclo2", 0);
-	CURVNET_SET(so->so_vnet);
-	sorele(so);
-	CURVNET_RESTORE();
+	if (toep != NULL) {
+		struct mtx *lock = mtx_pool_find(mtxpool_sleep, toep);
+
+		mtx_lock(lock);
+		while ((toep->flags & TPF_WAITING_FOR_FINAL) != 0)
+			mtx_sleep(toep, lock, PSOCK, "conclo2", 0);
+		mtx_unlock(lock);
+		free_toepcb(toep);
+	}
 }
 
 static void
@@ -1320,7 +1346,6 @@ no_ddp:
 	prsv->prsv_tag &= ~pr->pr_alias_mask;
 	prsv->prsv_tag |= alias << pr->pr_alias_shift & pr->pr_alias_mask;
 
-	ddp->cmp.next_datasn = 0;
 	ddp->cmp.last_datasn = -1;
 	cxgbei_insert_cmp(icc, &ddp->cmp, prsv->prsv_tag);
 	*tttp = htobe32(prsv->prsv_tag);
@@ -1364,18 +1389,12 @@ cxgbei_limits(struct adapter *sc, void *arg)
 		ci = sc->iscsi_ulp_softc;
 		MPASS(ci != NULL);
 
-		/*
-		 * AHS is not supported by the kernel so we'll not account for
-		 * it either in our PDU len -> data segment len conversions.
-		 */
 
-		max_dsl = ci->max_rx_pdu_len - ISCSI_BHS_SIZE -
-		    ISCSI_HEADER_DIGEST_SIZE - ISCSI_DATA_DIGEST_SIZE;
+		max_dsl = ci->max_rx_data_len;
 		if (idl->idl_max_recv_data_segment_length > max_dsl)
 			idl->idl_max_recv_data_segment_length = max_dsl;
 
-		max_dsl = ci->max_tx_pdu_len - ISCSI_BHS_SIZE -
-		    ISCSI_HEADER_DIGEST_SIZE - ISCSI_DATA_DIGEST_SIZE;
+		max_dsl = ci->max_tx_data_len;
 		if (idl->idl_max_send_data_segment_length > max_dsl)
 			idl->idl_max_send_data_segment_length = max_dsl;
 	}

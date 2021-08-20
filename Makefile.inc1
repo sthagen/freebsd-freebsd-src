@@ -1046,11 +1046,11 @@ _worldtmp: .PHONY
 	@touch ${WORLDTMP}/${.TARGET}
 # We can't use mtree to create the worldtmp directories since it may not be
 # available on the target system (this happens e.g. when building on non-FreeBSD)
-	cd ${.CURDIR}/tools/build; \
+	${_+_}cd ${.CURDIR}/tools/build; \
 	    ${MAKE} DIRPRFX=tools/build/ DESTDIR=${WORLDTMP}/legacy installdirs
 # In order to build without inheriting $PATH we need to add symlinks to the host
 # tools in $WORLDTMP for the tools that we don't build during bootstrap-tools
-	cd ${.CURDIR}/tools/build; \
+	${_+_}cd ${.CURDIR}/tools/build; \
 	    ${MAKE} DIRPRFX=tools/build/ DESTDIR=${WORLDTMP}/legacy host-symlinks
 
 _legacy:
@@ -2353,14 +2353,15 @@ ${_bt}-usr.bin/clang/llvm-tblgen: ${_bt}-lib/clang/libllvmminimal
 ${_bt}-usr.bin/clang/lldb-tblgen: ${_bt}-lib/clang/libllvmminimal
 .endif
 
-.if ${MK_LOCALES} != "no"
+# C.UTF-8 is always built in share/ctypes and we need localedef for that.
 _localedef=	usr.bin/localedef
 ${_bt}-usr.bin/localedef: ${_bt}-usr.bin/yacc ${_bt_lex_depend}
-.endif
 
 .if ${MK_ICONV} != "no"
 _mkesdb=	usr.bin/mkesdb
 _mkcsmapper=	usr.bin/mkcsmapper
+${_bt}-usr.bin/mkesdb: ${_bt}-usr.bin/yacc ${_bt_lex_depend}
+${_bt}-usr.bin/mkcsmapper: ${_bt}-usr.bin/yacc ${_bt_lex_depend}
 .endif
 
 .if ${MK_KERBEROS} != "no"
@@ -2473,7 +2474,7 @@ _bootstrap_tools_links+=${_links:S/,/ /g}
 ${_bt}-links: .PHONY
 
 .for _tool in ${_bootstrap_tools_links}
-${_bt}-link-${_tool}: .PHONY .MAKE
+${_bt}-link-${_tool}: .PHONY
 	@rm -f "${WORLDTMP}/legacy/bin/${_tool}"; \
 	source_path=`which ${_tool}`; \
 	if [ ! -e "$${source_path}" ] ; then \
