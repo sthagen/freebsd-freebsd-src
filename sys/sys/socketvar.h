@@ -91,13 +91,13 @@ struct socket {
 	volatile u_int	so_count;	/* (b / refcount) */
 	struct selinfo	so_rdsel;	/* (b/cr) for so_rcv/so_comp */
 	struct selinfo	so_wrsel;	/* (b/cs) for so_snd */
-	short	so_type;		/* (a) generic type, see socket.h */
 	int	so_options;		/* (b) from socket call, see socket.h */
-	short	so_linger;		/* time to linger close(2) */
+	short	so_type;		/* (a) generic type, see socket.h */
 	short	so_state;		/* (b) internal state flags SS_* */
 	void	*so_pcb;		/* protocol control block */
 	struct	vnet *so_vnet;		/* (a) network stack instance */
 	struct	protosw *so_proto;	/* (a) protocol handle */
+	short	so_linger;		/* time to linger close(2) */
 	short	so_timeo;		/* (g) connection timeout */
 	u_short	so_error;		/* (f) error affecting connection */
 	u_short so_rerror;		/* (f) error affecting connection */
@@ -121,6 +121,17 @@ struct socket {
 
 	int so_ts_clock;	/* type of the clock used for timestamps */
 	uint32_t so_max_pacing_rate;	/* (f) TX rate limit in bytes/s */
+
+	/*
+	 * Mutexes to prevent interleaving of socket I/O.  These have to be
+	 * outside of the socket buffers in order to interlock with listen(2).
+	 */
+	struct sx so_snd_sx __aligned(CACHE_LINE_SIZE);
+	struct mtx so_snd_mtx;
+
+	struct sx so_rcv_sx __aligned(CACHE_LINE_SIZE);
+	struct mtx so_rcv_mtx;
+
 	union {
 		/* Regular (data flow) socket. */
 		struct {
@@ -249,11 +260,20 @@ struct socket {
  */
 
 /*
- * Flags to sblock().
+ * Flags to soiolock().
  */
 #define	SBL_WAIT	0x00000001	/* Wait if not immediately available. */
 #define	SBL_NOINTR	0x00000002	/* Force non-interruptible sleep. */
 #define	SBL_VALID	(SBL_WAIT | SBL_NOINTR)
+
+#define	SOCK_IO_SEND_LOCK(so, flags)					\
+	soiolock((so), &(so)->so_snd_sx, (flags))
+#define	SOCK_IO_SEND_UNLOCK(so)						\
+	soiounlock(&(so)->so_snd_sx)
+#define	SOCK_IO_RECV_LOCK(so, flags)					\
+	soiolock((so), &(so)->so_rcv_sx, (flags))
+#define	SOCK_IO_RECV_UNLOCK(so)						\
+	soiounlock(&(so)->so_rcv_sx)
 
 /*
  * Do we need to notify the other side when I/O is possible?
@@ -433,6 +453,7 @@ void	sofree(struct socket *so);
 void	sohasoutofband(struct socket *so);
 int	solisten(struct socket *so, int backlog, struct thread *td);
 void	solisten_proto(struct socket *so, int backlog);
+void	solisten_proto_abort(struct socket *so);
 int	solisten_proto_check(struct socket *so);
 int	solisten_dequeue(struct socket *, struct socket **, int);
 struct socket *
@@ -484,6 +505,8 @@ void	socantsendmore(struct socket *so);
 void	socantsendmore_locked(struct socket *so);
 void	soroverflow(struct socket *so);
 void	soroverflow_locked(struct socket *so);
+int	soiolock(struct socket *so, struct sx *sx, int flags);
+void	soiounlock(struct sx *sx);
 
 /*
  * Accept filter functions (duh).

@@ -2444,10 +2444,10 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		if ((uint32_t)diff.tv_sec > UINT32_MAX / 1000000) {
 			staleness = UINT32_MAX;
 		} else {
-			staleness = diff.tv_sec * 1000000;
+			staleness = (uint32_t)diff.tv_sec * 1000000;
 		}
 		if (UINT32_MAX - staleness >= (uint32_t)diff.tv_usec) {
-			staleness += diff.tv_usec;
+			staleness += (uint32_t)diff.tv_usec;
 		} else {
 			staleness = UINT32_MAX;
 		}
@@ -2667,7 +2667,6 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 			inp->sctp_context = (*inp_p)->sctp_context;
 			inp->local_strreset_support = (*inp_p)->local_strreset_support;
 			inp->fibnum = (*inp_p)->fibnum;
-			inp->inp_starting_point_for_iterator = NULL;
 			/*
 			 * copy in the authentication parameters from the
 			 * original endpoint
@@ -4895,6 +4894,11 @@ process_control_chunks:
 				struct sctp_inpcb *linp;
 				struct sctp_tmit_chunk *chk;
 
+				if (inp->sctp_flags & (SCTP_PCB_FLAGS_SOCKET_GONE |
+				    SCTP_PCB_FLAGS_SOCKET_ALLGONE)) {
+					goto abend;
+				}
+
 				if (stcb) {
 					linp = NULL;
 				} else {
@@ -4903,11 +4907,6 @@ process_control_chunks:
 
 				if (linp != NULL) {
 					SCTP_ASOC_CREATE_LOCK(linp);
-					if ((inp->sctp_flags & SCTP_PCB_FLAGS_SOCKET_GONE) ||
-					    (inp->sctp_flags & SCTP_PCB_FLAGS_SOCKET_ALLGONE)) {
-						SCTP_ASOC_CREATE_UNLOCK(linp);
-						goto abend;
-					}
 				}
 
 				if (netp != NULL) {

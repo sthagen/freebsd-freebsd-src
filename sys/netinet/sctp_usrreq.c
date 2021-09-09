@@ -416,24 +416,23 @@ sctp_abort(struct socket *so)
 {
 	struct epoch_tracker et;
 	struct sctp_inpcb *inp;
-	uint32_t flags;
 
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if (inp == NULL) {
 		return;
 	}
 
+	SCTP_INP_WLOCK(inp);
 	NET_EPOCH_ENTER(et);
-sctp_must_try_again:
-	flags = inp->sctp_flags;
 #ifdef SCTP_LOG_CLOSING
 	sctp_log_closing(inp, NULL, 17);
 #endif
-	if (((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) &&
-	    (atomic_cmpset_int(&inp->sctp_flags, flags, (flags | SCTP_PCB_FLAGS_SOCKET_GONE | SCTP_PCB_FLAGS_CLOSE_IP)))) {
+	if (((inp->sctp_flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0)) {
+		inp->sctp_flags |= SCTP_PCB_FLAGS_SOCKET_GONE | SCTP_PCB_FLAGS_CLOSE_IP;
 #ifdef SCTP_LOG_CLOSING
 		sctp_log_closing(inp, NULL, 16);
 #endif
+		SCTP_INP_WUNLOCK(inp);
 		sctp_inpcb_free(inp, SCTP_FREE_SHOULD_USE_ABORT,
 		    SCTP_CALLED_AFTER_CMPSET_OFCLOSE);
 		SOCK_LOCK(so);
@@ -448,13 +447,9 @@ sctp_must_try_again:
 		so->so_pcb = NULL;
 		SOCK_UNLOCK(so);
 	} else {
-		flags = inp->sctp_flags;
-		if ((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) {
-			goto sctp_must_try_again;
-		}
+		SCTP_INP_WUNLOCK(inp);
 	}
 	NET_EPOCH_EXIT(et);
-	return;
 }
 
 static int
@@ -516,7 +511,6 @@ sctp_close(struct socket *so)
 {
 	struct epoch_tracker et;
 	struct sctp_inpcb *inp;
-	uint32_t flags;
 
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if (inp == NULL)
@@ -525,25 +519,26 @@ sctp_close(struct socket *so)
 	/*
 	 * Inform all the lower layer assoc that we are done.
 	 */
+	SCTP_INP_WLOCK(inp);
 	NET_EPOCH_ENTER(et);
-sctp_must_try_again:
-	flags = inp->sctp_flags;
 #ifdef SCTP_LOG_CLOSING
 	sctp_log_closing(inp, NULL, 17);
 #endif
-	if (((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) &&
-	    (atomic_cmpset_int(&inp->sctp_flags, flags, (flags | SCTP_PCB_FLAGS_SOCKET_GONE | SCTP_PCB_FLAGS_CLOSE_IP)))) {
+	if ((inp->sctp_flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) {
+		inp->sctp_flags |= SCTP_PCB_FLAGS_SOCKET_GONE | SCTP_PCB_FLAGS_CLOSE_IP;
 		if (((so->so_options & SO_LINGER) && (so->so_linger == 0)) ||
 		    (so->so_rcv.sb_cc > 0)) {
 #ifdef SCTP_LOG_CLOSING
 			sctp_log_closing(inp, NULL, 13);
 #endif
+			SCTP_INP_WUNLOCK(inp);
 			sctp_inpcb_free(inp, SCTP_FREE_SHOULD_USE_ABORT,
 			    SCTP_CALLED_AFTER_CMPSET_OFCLOSE);
 		} else {
 #ifdef SCTP_LOG_CLOSING
 			sctp_log_closing(inp, NULL, 14);
 #endif
+			SCTP_INP_WUNLOCK(inp);
 			sctp_inpcb_free(inp, SCTP_FREE_SHOULD_USE_GRACEFUL_CLOSE,
 			    SCTP_CALLED_AFTER_CMPSET_OFCLOSE);
 		}
@@ -563,13 +558,9 @@ sctp_must_try_again:
 		so->so_pcb = NULL;
 		SOCK_UNLOCK(so);
 	} else {
-		flags = inp->sctp_flags;
-		if ((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) {
-			goto sctp_must_try_again;
-		}
+		SCTP_INP_WUNLOCK(inp);
 	}
 	NET_EPOCH_EXIT(et);
-	return;
 }
 
 int
@@ -2747,7 +2738,7 @@ flags_out:
 					sasoc->sasoc_asocmaxrxt = inp->sctp_ep.max_send_times;
 					sasoc->sasoc_number_peer_destinations = 0;
 					sasoc->sasoc_peer_rwnd = 0;
-					sasoc->sasoc_local_rwnd = sbspace(&inp->sctp_socket->so_rcv);
+					sasoc->sasoc_local_rwnd = (uint32_t)sbspace(&inp->sctp_socket->so_rcv);
 					SCTP_INP_RUNLOCK(inp);
 				} else {
 					SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, EINVAL);
@@ -2848,7 +2839,7 @@ flags_out:
 		{
 			struct sctp_hmacalgo *shmac;
 			sctp_hmaclist_t *hmaclist;
-			uint32_t size;
+			size_t size;
 			int i;
 
 			SCTP_CHECK_AND_CAST(shmac, optval, struct sctp_hmacalgo, *optsize);
@@ -2864,7 +2855,7 @@ flags_out:
 			/* is there room for all of the hmac ids? */
 			size = sizeof(*shmac) + (hmaclist->num_algo *
 			    sizeof(shmac->shmac_idents[0]));
-			if ((size_t)(*optsize) < size) {
+			if (*optsize < size) {
 				SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, EINVAL);
 				error = EINVAL;
 				SCTP_INP_RUNLOCK(inp);
@@ -7210,19 +7201,13 @@ sctp_listen(struct socket *so, int backlog, struct thread *p)
 			}
 		}
 	}
-	SCTP_INP_RLOCK(inp);
+	SCTP_INP_INFO_WLOCK();
+	SCTP_INP_WLOCK(inp);
 #ifdef SCTP_LOCK_LOGGING
 	if (SCTP_BASE_SYSCTL(sctp_logging_level) & SCTP_LOCK_LOGGING_ENABLE) {
 		sctp_log_lock(inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_SOCK);
 	}
 #endif
-	SOCK_LOCK(so);
-	error = solisten_proto_check(so);
-	SOCK_UNLOCK(so);
-	if (error) {
-		SCTP_INP_RUNLOCK(inp);
-		return (error);
-	}
 	if ((sctp_is_feature_on(inp, SCTP_PCB_FLAGS_PORTREUSE)) &&
 	    (inp->sctp_flags & SCTP_PCB_FLAGS_IN_TCPPOOL)) {
 		/*
@@ -7232,39 +7217,49 @@ sctp_listen(struct socket *so, int backlog, struct thread *p)
 		 * move the guy that was listener to the TCP Pool.
 		 */
 		if (sctp_swap_inpcb_for_listen(inp)) {
-			SCTP_INP_RUNLOCK(inp);
-			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, EADDRINUSE);
-			return (EADDRINUSE);
+			error = EADDRINUSE;
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, error);
+			goto out;
 		}
 	}
-
+	SOCK_LOCK(so);
+	error = solisten_proto_check(so);
+	if (error) {
+		SOCK_UNLOCK(so);
+		goto out;
+	}
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) &&
 	    (inp->sctp_flags & SCTP_PCB_FLAGS_CONNECTED)) {
-		/* We are already connected AND the TCP model */
-		SCTP_INP_RUNLOCK(inp);
-		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, EADDRINUSE);
-		return (EADDRINUSE);
+		SOCK_UNLOCK(so);
+		solisten_proto_abort(so);
+		error = EADDRINUSE;
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, error);
+		goto out;
 	}
-	SCTP_INP_RUNLOCK(inp);
 	if (inp->sctp_flags & SCTP_PCB_FLAGS_UNBOUND) {
-		/* We must do a bind. */
-		if ((error = sctp_inpcb_bind(so, NULL, NULL, p))) {
+		if ((error = sctp_inpcb_bind_locked(inp, NULL, NULL, p))) {
+			SOCK_UNLOCK(so);
+			solisten_proto_abort(so);
 			/* bind error, probably perm */
-			return (error);
+			goto out;
 		}
 	}
-	SCTP_INP_WLOCK(inp);
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_UDPTYPE) == 0) {
-		SOCK_LOCK(so);
 		solisten_proto(so, backlog);
 		SOCK_UNLOCK(so);
-	}
-	if (backlog > 0) {
 		inp->sctp_flags |= SCTP_PCB_FLAGS_ACCEPTING;
 	} else {
-		inp->sctp_flags &= ~SCTP_PCB_FLAGS_ACCEPTING;
+		solisten_proto_abort(so);
+		SOCK_UNLOCK(so);
+		if (backlog > 0) {
+			inp->sctp_flags |= SCTP_PCB_FLAGS_ACCEPTING;
+		} else {
+			inp->sctp_flags &= ~SCTP_PCB_FLAGS_ACCEPTING;
+		}
 	}
+out:
 	SCTP_INP_WUNLOCK(inp);
+	SCTP_INP_INFO_WUNLOCK();
 	return (error);
 }
 
