@@ -3358,6 +3358,7 @@ sctp_inpcb_free(struct sctp_inpcb *inp, int immediate, int from)
 		LIST_FOREACH_SAFE(asoc, &inp->sctp_asoc_list, sctp_tcblist, nasoc) {
 			SCTP_TCB_LOCK(asoc);
 			if (asoc->asoc.state & SCTP_STATE_ABOUT_TO_BE_FREED) {
+				asoc->sctp_socket = NULL;
 				/* Skip guys being freed */
 				cnt_in_sd++;
 				if (asoc->asoc.state & SCTP_STATE_IN_ACCEPT_QUEUE) {
@@ -4541,7 +4542,7 @@ sctp_add_vtag_to_timewait(uint32_t tag, uint16_t lport, uint16_t rport)
 
 	SCTP_INP_INFO_WLOCK_ASSERT();
 	(void)SCTP_GETTIME_TIMEVAL(&now);
-	time = now.tv_sec + SCTP_BASE_SYSCTL(sctp_vtag_time_wait);
+	time = (uint32_t)now.tv_sec + SCTP_BASE_SYSCTL(sctp_vtag_time_wait);
 	chain = &SCTP_BASE_INFO(vtag_timewait)[(tag % SCTP_STACK_VTAG_HASH_SIZE)];
 	set = false;
 	LIST_FOREACH(twait_block, chain, sctp_nxt_tagblock) {
