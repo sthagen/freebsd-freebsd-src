@@ -915,7 +915,14 @@ dxr2_try_squeeze:
 
 	for (i = da->updates_low >> dxr_x; i <= da->updates_high >> dxr_x;
 	    i++) {
-		trie_unref(da, i);
+		if (!trie_rebuild) {
+			m = 0;
+			for (int j = 0; j < (1 << dxr_x); j += 32)
+				m |= da->updates_mask[((i << dxr_x) + j) >> 5];
+			if (m == 0)
+				continue;
+			trie_unref(da, i);
+		}
 		ti = trie_ref(da, i);
 		if (ti < 0)
 			return;
@@ -975,7 +982,9 @@ dxr2_try_squeeze:
 	FIB_PRINTF(LOG_INFO, da->fd, "D%dR, %d prefixes, %d nhops (max)",
 	    DXR_D, rinfo.num_prefixes, rinfo.num_nhops);
 #endif
-	i = dxr_tot_size * 100 / rinfo.num_prefixes;
+	i = dxr_tot_size * 100;
+	if (rinfo.num_prefixes)
+		i /= rinfo.num_prefixes;
 	FIB_PRINTF(LOG_INFO, da->fd, "%d.%02d KBytes, %d.%02d Bytes/prefix",
 	    dxr_tot_size / 1024, dxr_tot_size * 100 / 1024 % 100,
 	    i / 100, i % 100);
@@ -1150,7 +1159,10 @@ dxr_change_rib_batch(struct rib_head *rnh, struct fib_change_queue *q,
 #endif
 		plen = q->entries[ui].plen;
 		ip = ntohl(q->entries[ui].addr4.s_addr);
-		hmask = 0xffffffffU >> plen;
+		if (plen < 32)
+			hmask = 0xffffffffU >> plen;
+		else
+			hmask = 0;
 		start = (ip & ~hmask) >> DXR_RANGE_SHIFT;
 		end = (ip | hmask) >> DXR_RANGE_SHIFT;
 
