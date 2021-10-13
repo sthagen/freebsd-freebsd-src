@@ -214,7 +214,6 @@ SYSCTL_INT(_kern, OID_AUTO, coredump_devctl, CTLFLAG_RW, &coredump_devctl,
 #define	SIGPROP_TTYSTOP		0x08	/* ditto, from tty */
 #define	SIGPROP_IGNORE		0x10	/* ignore by default */
 #define	SIGPROP_CONT		0x20	/* continue if suspended */
-#define	SIGPROP_CANTMASK	0x40	/* non-maskable, catchable */
 
 static int sigproptbl[NSIG] = {
 	[SIGHUP] =	SIGPROP_KILL,
@@ -3295,6 +3294,29 @@ sig_intr(void)
 		ret = sig_ast_needsigchk(td);
 	PROC_UNLOCK(p);
 	return (ret);
+}
+
+bool
+curproc_sigkilled(void)
+{
+	struct thread *td;
+	struct proc *p;
+	struct sigacts *ps;
+	bool res;
+
+	td = curthread;
+	if ((td->td_flags & TDF_NEEDSIGCHK) == 0)
+		return (false);
+
+	p = td->td_proc;
+	PROC_LOCK(p);
+	ps = p->p_sigacts;
+	mtx_lock(&ps->ps_mtx);
+	res = SIGISMEMBER(td->td_sigqueue.sq_signals, SIGKILL) ||
+	    SIGISMEMBER(p->p_sigqueue.sq_signals, SIGKILL);
+	mtx_unlock(&ps->ps_mtx);
+	PROC_UNLOCK(p);
+	return (res);
 }
 
 void

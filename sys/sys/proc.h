@@ -524,7 +524,7 @@ do {									\
 #define	TDP_RESETSPUR	0x04000000 /* Reset spurious page fault history. */
 #define	TDP_NERRNO	0x08000000 /* Last errno is already in td_errno */
 #define	TDP_UIOHELD	0x10000000 /* Current uio has pages held in td_ma */
-#define	TDP_FORKING	0x20000000 /* Thread is being created through fork() */
+#define	TDP_UNUSED0	0x20000000 /* UNUSED */
 #define	TDP_EXECVMSPC	0x40000000 /* Execve destroyed old vmspace */
 #define	TDP_SIGFASTPENDING 0x80000000 /* Pending signal due to sigfastblock */
 
@@ -1161,7 +1161,7 @@ int	cpu_idle_wakeup(int);
 extern	void (*cpu_idle_hook)(sbintime_t);	/* Hook to machdep CPU idler. */
 void	cpu_switch(struct thread *, struct thread *, struct mtx *);
 void	cpu_throw(struct thread *, struct thread *) __dead2;
-void	unsleep(struct thread *);
+bool	curproc_sigkilled(void);
 void	userret(struct thread *, struct trapframe *);
 
 void	cpu_exit(struct thread *);

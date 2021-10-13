@@ -6172,6 +6172,9 @@ vfs_kqfilter(struct vop_kqfilter_args *ap)
 	struct knote *kn = ap->a_kn;
 	struct knlist *knl;
 
+	KASSERT(vp->v_type != VFIFO || (kn->kn_filter != EVFILT_READ &&
+	    kn->kn_filter != EVFILT_WRITE),
+	    ("READ/WRITE filter on a FIFO leaked through"));
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
 		kn->kn_fop = &vfsread_filtops;
@@ -6821,7 +6824,7 @@ vn_dir_check_exec(struct vnode *vp, struct componentname *cnp)
 		return (0);
 	}
 
-	return (VOP_ACCESS(vp, VEXEC, cnp->cn_cred, cnp->cn_thread));
+	return (VOP_ACCESS(vp, VEXEC, cnp->cn_cred, curthread));
 }
 
 /*
