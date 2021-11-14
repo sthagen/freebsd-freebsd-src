@@ -347,7 +347,8 @@ ffs_mount(struct mount *mp)
 	struct thread *td;
 	struct ufsmount *ump = NULL;
 	struct fs *fs;
-	int error, error1, flags;
+	int error, flags;
+	int error1 __diagused;
 	uint64_t mntorflags, saved_mnt_flag;
 	accmode_t accmode;
 	struct nameidata ndp;
@@ -927,6 +928,7 @@ ffs_mountfs(odevvp, mp, td)
 
 	devvp = mntfs_allocvp(mp, odevvp);
 	VOP_UNLOCK(odevvp);
+	vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY);
 	KASSERT(devvp->v_type == VCHR, ("reclaimed devvp"));
 	dev = devvp->v_rdev;
 	KASSERT(dev->si_snapdata == NULL, ("non-NULL snapshot data"));
@@ -948,6 +950,7 @@ ffs_mountfs(odevvp, mp, td)
 	BO_LOCK(&odevvp->v_bufobj);
 	odevvp->v_bufobj.bo_flag |= BO_NOBUFS;
 	BO_UNLOCK(&odevvp->v_bufobj);
+	VOP_UNLOCK(devvp);
 	if (dev->si_iosize_max != 0)
 		mp->mnt_iosize_max = dev->si_iosize_max;
 	if (mp->mnt_iosize_max > maxphys)
@@ -1232,6 +1235,7 @@ out:
 	odevvp->v_bufobj.bo_flag &= ~BO_NOBUFS;
 	BO_UNLOCK(&odevvp->v_bufobj);
 	atomic_store_rel_ptr((uintptr_t *)&dev->si_mountpt, 0);
+	vn_lock(devvp, LK_EXCLUSIVE | LK_RETRY);
 	mntfs_freevp(devvp);
 	dev_rel(dev);
 	return (error);
@@ -1434,6 +1438,7 @@ ffs_unmount(mp, mntflags)
 	ump->um_odevvp->v_bufobj.bo_flag &= ~BO_NOBUFS;
 	BO_UNLOCK(&ump->um_odevvp->v_bufobj);
 	atomic_store_rel_ptr((uintptr_t *)&ump->um_dev->si_mountpt, 0);
+	vn_lock(ump->um_devvp, LK_EXCLUSIVE | LK_RETRY);
 	mntfs_freevp(ump->um_devvp);
 	vrele(ump->um_odevvp);
 	dev_rel(ump->um_dev);
@@ -1510,7 +1515,7 @@ ffs_flushfiles(mp, flags, td)
 		 */
 	}
 #endif
-	ASSERT_VOP_LOCKED(ump->um_devvp, "ffs_flushfiles");
+	/* devvp is not locked there */
 	if (ump->um_devvp->v_vflag & VV_COPYONWRITE) {
 		if ((error = vflush(mp, 0, SKIPSYSTEM | flags, td)) != 0)
 			return (error);
@@ -1613,11 +1618,9 @@ ffs_sync_lazy(mp)
 {
 	struct vnode *mvp, *vp;
 	struct inode *ip;
-	struct thread *td;
 	int allerror, error;
 
 	allerror = 0;
-	td = curthread;
 	if ((mp->mnt_flag & MNT_NOATIME) != 0) {
 #ifdef QUOTA
 		qsync(mp);

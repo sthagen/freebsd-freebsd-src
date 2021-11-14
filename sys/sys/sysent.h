@@ -119,7 +119,7 @@ struct sysentvec {
 	void		(*sv_elf_core_prepare_notes)(struct thread *,
 			    struct note_info_list *, size_t *);
 	int		(*sv_imgact_try)(struct image_params *);
-	void		(*sv_stackgap)(struct image_params *, uintptr_t *);
+	vm_size_t	(*sv_stackgap)(struct image_params *, uintptr_t *);
 	int		(*sv_copyout_auxargs)(struct image_params *,
 			    uintptr_t);
 	int		sv_minsigstksz;	/* minimum signal stack size */
@@ -324,6 +324,7 @@ void exec_sysvec_init_secondary(struct sysentvec *sv, struct sysentvec *sv2);
 void exec_inittk(void);
 
 void exit_onexit(struct proc *p);
+void exec_free_abi_mappings(struct proc *p);
 void exec_onexec_old(struct thread *td);
 
 #define INIT_SYSENTVEC(name, sv)					\

@@ -110,7 +110,6 @@ SUBDIR=	\
 	${_em} \
 	${_ena} \
 	${_enetc} \
-	${_enetc_mdio} \
 	esp \
 	${_et} \
 	evdev \
@@ -353,7 +352,6 @@ SUBDIR=	\
 	${_speaker} \
 	spi \
 	${_splash} \
-	${_sppp} \
 	ste \
 	stge \
 	${_sume} \
@@ -488,7 +486,6 @@ _dpdk_lpm6=	dpdk_lpm6
 .if ${MK_ISCSI} != "no" || defined(ALL_MODULES)
 SUBDIR+=	cfiscsi
 SUBDIR+=	iscsi
-SUBDIR+=	iscsi_initiator
 .endif
 
 .if !empty(OPT_FDT)
@@ -617,7 +614,6 @@ _armv8crypto=	armv8crypto
 _dwwdt=		dwwdt
 _em=		em
 _enetc=		enetc
-_enetc_mdio=	enetc_mdio
 _felix=		felix
 _rockchip=	rockchip
 .endif
@@ -665,7 +661,6 @@ _rdma=		rdma
 _safe=		safe
 _speaker=	speaker
 _splash=	splash
-_sppp=		sppp
 _p2sb=		p2sb
 _wbwd=		wbwd
 

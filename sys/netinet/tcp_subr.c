@@ -473,6 +473,37 @@ find_and_ref_tcp_fb(struct tcp_function_block *blk)
 	return(rblk);
 }
 
+/* Find a matching alias for the given tcp_function_block. */
+int
+find_tcp_function_alias(struct tcp_function_block *blk,
+    struct tcp_function_set *fs)
+{
+	struct tcp_function *f;
+	int found;
+
+	found = 0;
+	rw_rlock(&tcp_function_lock);
+	TAILQ_FOREACH(f, &t_functions, tf_next) {
+		if ((f->tf_fb == blk) &&
+		    (strncmp(f->tf_name, blk->tfb_tcp_block_name,
+		        TCP_FUNCTION_NAME_LEN_MAX) != 0)) {
+			/* Matching function block with different name. */
+			strncpy(fs->function_set_name, f->tf_name,
+			    TCP_FUNCTION_NAME_LEN_MAX);
+			found = 1;
+			break;
+		}
+	}
+	/* Null terminate the string appropriately. */
+	if (found) {
+		fs->function_set_name[TCP_FUNCTION_NAME_LEN_MAX - 1] = '\0';
+	} else {
+		fs->function_set_name[0] = '\0';
+	}
+	rw_runlock(&tcp_function_lock);
+	return (found);
+}
+
 static struct tcp_function_block *
 find_and_ref_tcp_default_fb(void)
 {
@@ -743,7 +774,7 @@ tcp_over_udp_stop(void)
 {
 	/*
 	 * This function assumes sysctl caller holds inp_rinfo_lock()
-	 * for writting!
+	 * for writing!
 	 */
 #ifdef INET
 	if (V_udp4_tun_socket != NULL) {
@@ -772,7 +803,7 @@ tcp_over_udp_start(void)
 #endif
 	/*
 	 * This function assumes sysctl caller holds inp_info_rlock()
-	 * for writting!
+	 * for writing!
 	 */
 	port = V_tcp_udp_tunneling_port;
 	if (ntohs(port) == 0) {
@@ -1717,6 +1748,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 	struct mbuf *optm;
 	struct udphdr *uh = NULL;
 	struct tcphdr *nth;
+	struct tcp_log_buffer *lgb;
 	u_char *optp;
 #ifdef INET6
 	struct ip6_hdr *ip6;
@@ -1725,6 +1757,7 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 	int optlen, tlen, win, ulen;
 	bool incl_opts;
 	uint16_t port;
+	int output_ret;
 
 	KASSERT(tp != NULL || m != NULL, ("tcp_respond: tp and m both NULL"));
 	NET_EPOCH_ASSERT();
@@ -2055,11 +2088,26 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 	TCP_PROBE3(debug__output, tp, th, m);
 	if (flags & TH_RST)
 		TCP_PROBE5(accept__refused, NULL, NULL, m, tp, nth);
+	if ((tp != NULL) && (tp->t_logstate != TCP_LOG_STATE_OFF)) {
+		union tcp_log_stackspecific log;
+		struct timeval tv;
+
+		memset(&log.u_bbr, 0, sizeof(log.u_bbr));
+		log.u_bbr.inhpts = tp->t_inpcb->inp_in_hpts;
+		log.u_bbr.ininput = tp->t_inpcb->inp_in_input;
+		log.u_bbr.flex8 = 4;
+		log.u_bbr.pkts_out = tp->t_maxseg;
+		log.u_bbr.timeStamp = tcp_get_usecs(&tv);
+		log.u_bbr.delivered = 0;
+		lgb = tcp_log_event_(tp, nth, NULL, NULL, TCP_LOG_OUT, ERRNO_UNK,
+				     0, &log, false, NULL, NULL, 0, &tv);
+	} else
+		lgb = NULL;
 
 #ifdef INET6
 	if (isipv6) {
 		TCP_PROBE5(send, NULL, tp, ip6, tp, nth);
-		(void)ip6_output(m, NULL, NULL, 0, NULL, NULL, inp);
+		output_ret = ip6_output(m, NULL, NULL, 0, NULL, NULL, inp);
 	}
 #endif /* INET6 */
 #if defined(INET) && defined(INET6)
@@ -2068,9 +2116,13 @@ tcp_respond(struct tcpcb *tp, void *ipgen, struct tcphdr *th, struct mbuf *m,
 #ifdef INET
 	{
 		TCP_PROBE5(send, NULL, tp, ip, tp, nth);
-		(void)ip_output(m, NULL, NULL, 0, NULL, inp);
+		output_ret = ip_output(m, NULL, NULL, 0, NULL, inp);
 	}
 #endif
+	if (lgb) {
+		lgb->tlb_errno = output_ret;
+		lgb = NULL;
+	}
 }
 
 /*
@@ -2106,8 +2158,9 @@ tcp_newtcpcb(struct inpcb *inp)
 	 */
 	CC_LIST_RLOCK();
 	KASSERT(!STAILQ_EMPTY(&cc_list), ("cc_list is empty!"));
-	CC_ALGO(tp) = CC_DEFAULT();
+	CC_ALGO(tp) = CC_DEFAULT_ALGO();
 	CC_LIST_RUNLOCK();
+
 	/*
 	 * The tcpcb will hold a reference on its inpcb until tcp_discardcb()
 	 * is called.
@@ -2116,7 +2169,7 @@ tcp_newtcpcb(struct inpcb *inp)
 	tp->t_inpcb = inp;
 
 	if (CC_ALGO(tp)->cb_init != NULL)
-		if (CC_ALGO(tp)->cb_init(tp->ccv) > 0) {
+		if (CC_ALGO(tp)->cb_init(tp->ccv, NULL) > 0) {
 			if (tp->t_fb->tfb_tcp_fb_fini)
 				(*tp->t_fb->tfb_tcp_fb_fini)(tp, 1);
 			in_pcbrele_wlocked(inp);
@@ -2209,25 +2262,23 @@ tcp_newtcpcb(struct inpcb *inp)
 }
 
 /*
- * Switch the congestion control algorithm back to NewReno for any active
- * control blocks using an algorithm which is about to go away.
- * This ensures the CC framework can allow the unload to proceed without leaving
- * any dangling pointers which would trigger a panic.
- * Returning non-zero would inform the CC framework that something went wrong
- * and it would be unsafe to allow the unload to proceed. However, there is no
- * way for this to occur with this implementation so we always return zero.
+ * Switch the congestion control algorithm back to Vnet default for any active
+ * control blocks using an algorithm which is about to go away. If the algorithm
+ * has a cb_init function and it fails (no memory) then the operation fails and
+ * the unload will not succeed.
+ *
  */
 int
 tcp_ccalgounload(struct cc_algo *unload_algo)
 {
-	struct cc_algo *tmpalgo;
+	struct cc_algo *oldalgo, *newalgo;
 	struct inpcb *inp;
 	struct tcpcb *tp;
 	VNET_ITERATOR_DECL(vnet_iter);
 
 	/*
 	 * Check all active control blocks across all network stacks and change
-	 * any that are using "unload_algo" back to NewReno. If "unload_algo"
+	 * any that are using "unload_algo" back to its default. If "unload_algo"
 	 * requires cleanup code to be run, call it.
 	 */
 	VNET_LIST_RLOCK();
@@ -2241,6 +2292,7 @@ tcp_ccalgounload(struct cc_algo *unload_algo)
 		 * therefore don't enter the loop below until the connection
 		 * list has stabilised.
 		 */
+		newalgo = CC_DEFAULT_ALGO();
 		CK_LIST_FOREACH(inp, &V_tcb, inp_list) {
 			INP_WLOCK(inp);
 			/* Important to skip tcptw structs. */
@@ -2249,24 +2301,48 @@ tcp_ccalgounload(struct cc_algo *unload_algo)
 				/*
 				 * By holding INP_WLOCK here, we are assured
 				 * that the connection is not currently
-				 * executing inside the CC module's functions
-				 * i.e. it is safe to make the switch back to
-				 * NewReno.
+				 * executing inside the CC module's functions.
+				 * We attempt to switch to the Vnets default,
+				 * if the init fails then we fail the whole
+				 * operation and the module unload will fail.
 				 */
 				if (CC_ALGO(tp) == unload_algo) {
-					tmpalgo = CC_ALGO(tp);
-					if (tmpalgo->cb_destroy != NULL)
-						tmpalgo->cb_destroy(tp->ccv);
-					CC_DATA(tp) = NULL;
-					/*
-					 * NewReno may allocate memory on
-					 * demand for certain stateful
-					 * configuration as needed, but is
-					 * coded to never fail on memory
-					 * allocation failure so it is a safe
-					 * fallback.
-					 */
-					CC_ALGO(tp) = &newreno_cc_algo;
+					struct cc_var cc_mem;
+					int err;
+
+					oldalgo = CC_ALGO(tp);
+					memset(&cc_mem, 0, sizeof(cc_mem));
+					cc_mem.ccvc.tcp = tp;
+					if (newalgo->cb_init == NULL) {
+						/*
+						 * No init we can skip the
+						 * dance around a possible failure.
+						 */
+						CC_DATA(tp) = NULL;
+						goto proceed;
+					}
+					err = (newalgo->cb_init)(&cc_mem, NULL);
+					if (err) {
+						/*
+						 * Presumably no memory the caller will
+						 * need to try again.
+						 */
+						INP_WUNLOCK(inp);
+						INP_INFO_WUNLOCK(&V_tcbinfo);
+						CURVNET_RESTORE();
+						VNET_LIST_RUNLOCK();
+						return (err);
+					}
+proceed:
+					if (oldalgo->cb_destroy != NULL)
+						oldalgo->cb_destroy(tp->ccv);
+					CC_ALGO(tp) = newalgo;
+					memcpy(tp->ccv, &cc_mem, sizeof(struct cc_var));
+					if (TCPS_HAVEESTABLISHED(tp->t_state) &&
+					    (CC_ALGO(tp)->conn_init != NULL)) {
+						/* Yep run the connection init for the new CC */
+						CC_ALGO(tp)->conn_init(tp->ccv);
+					}
 				}
 			}
 			INP_WUNLOCK(inp);
@@ -2275,7 +2351,6 @@ tcp_ccalgounload(struct cc_algo *unload_algo)
 		CURVNET_RESTORE();
 	}
 	VNET_LIST_RUNLOCK();
-
 	return (0);
 }
 
@@ -3528,6 +3603,41 @@ tcp_maxmtu6(struct in_conninfo *inc, struct tcp_ifcap *cap)
 
 	return (maxmtu);
 }
+
+/*
+ * Handle setsockopt(IPV6_USE_MIN_MTU) by a TCP stack.
+ *
+ * XXXGL: we are updating inpcb here with INC_IPV6MINMTU flag.
+ * The right place to do that is ip6_setpktopt() that has just been
+ * executed.  By the way it just filled ip6po_minmtu for us.
+ */
+void
+tcp6_use_min_mtu(struct tcpcb *tp)
+{
+	struct inpcb *inp = tp->t_inpcb;
+
+	INP_WLOCK_ASSERT(inp);
+	/*
+	 * In case of the IPV6_USE_MIN_MTU socket
+	 * option, the INC_IPV6MINMTU flag to announce
+	 * a corresponding MSS during the initial
+	 * handshake.  If the TCP connection is not in
+	 * the front states, just reduce the MSS being
+	 * used.  This avoids the sending of TCP
+	 * segments which will be fragmented at the
+	 * IPv6 layer.
+	 */
+	inp->inp_inc.inc_flags |= INC_IPV6MINMTU;
+	if ((tp->t_state >= TCPS_SYN_SENT) &&
+	    (inp->inp_inc.inc_flags & INC_ISIPV6)) {
+		struct ip6_pktopts *opt;
+
+		opt = inp->in6p_outputopts;
+		if (opt != NULL && opt->ip6po_minmtu == IP6PO_MINMTU_ALL &&
+		    tp->t_maxseg > TCP6_MSS)
+			tp->t_maxseg = TCP6_MSS;
+	}
+}
 #endif /* INET6 */
 
 /*
@@ -3845,7 +3955,6 @@ sysctl_switch_tls(SYSCTL_HANDLER_ARGS)
 			error = ktls_set_tx_mode(so,
 			    arg2 == 0 ? TCP_TLS_MODE_SW : TCP_TLS_MODE_IFNET);
 			INP_WUNLOCK(inp);
-			SOCK_LOCK(so);
 			sorele(so);
 		}
 	} else

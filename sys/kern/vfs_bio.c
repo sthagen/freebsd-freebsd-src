@@ -3911,7 +3911,8 @@ getblkx(struct vnode *vp, daddr_t blkno, daddr_t dblkno, int size, int slpflag,
 	CTR3(KTR_BUF, "getblk(%p, %ld, %d)", vp, (long)blkno, size);
 	KASSERT((flags & (GB_UNMAPPED | GB_KVAALLOC)) != GB_KVAALLOC,
 	    ("GB_KVAALLOC only makes sense with GB_UNMAPPED"));
-	ASSERT_VOP_LOCKED(vp, "getblk");
+	if (vp->v_type != VCHR)
+		ASSERT_VOP_LOCKED(vp, "getblk");
 	if (size > maxbcachebuf)
 		panic("getblk: size(%d) > maxbcachebuf(%d)\n", size,
 		    maxbcachebuf);
@@ -4384,7 +4385,11 @@ biodone(struct bio *bp)
 		atomic_add_int(&inflight_transient_maps, -1);
 	}
 	done = bp->bio_done;
-	if (done == NULL) {
+	/*
+	 * The check for done == biodone is to allow biodone to be
+	 * used as a bio_done routine.
+	 */
+	if (done == NULL || done == biodone) {
 		mtxp = mtx_pool_find(mtxpool_sleep, bp);
 		mtx_lock(mtxp);
 		bp->bio_flags |= BIO_DONE;
@@ -4926,9 +4931,8 @@ vm_hold_load_pages(struct buf *bp, vm_offset_t from, vm_offset_t to)
 		 * could interfere with paging I/O, no matter which
 		 * process we are.
 		 */
-		p = vm_page_alloc(NULL, 0, VM_ALLOC_SYSTEM | VM_ALLOC_NOOBJ |
-		    VM_ALLOC_WIRED | VM_ALLOC_COUNT((to - pg) >> PAGE_SHIFT) |
-		    VM_ALLOC_WAITOK);
+		p = vm_page_alloc_noobj(VM_ALLOC_SYSTEM | VM_ALLOC_WIRED |
+		    VM_ALLOC_COUNT((to - pg) >> PAGE_SHIFT) | VM_ALLOC_WAITOK);
 		pmap_qenter(pg, &p, 1);
 		bp->b_pages[index] = p;
 	}

@@ -646,7 +646,26 @@ options 	HWPMC_HOOKS		# Other necessary kernel hooks
 #
 options 	INET			#Internet communications protocols
 options 	INET6			#IPv6 communications protocols
-
+#
+# Note if you include INET/INET6 or both options
+# You *must* define at least one of the congestion control
+# options or the compile will fail. Generic defines
+# options CC_NEWRENO. You also will need to specify
+# a default or the compile of your kernel will fail
+# as well. The string in default is the name of the
+# cc module as it would appear in the sysctl for
+# setting the default. Generic defines newreno
+# as shown below.
+#
+options 	CC_CDG
+options 	CC_CHD
+options 	CC_CUBIC
+options 	CC_DCTCP
+options 	CC_HD
+options 	CC_HTCP
+options 	CC_NEWRENO
+options 	CC_VEGAS
+options		CC_DEFAULT=\"newreno\"
 options		RATELIMIT		# TX rate limiting support
 
 options 	ROUTETABLES=2		# allocated fibs up to 65536. default is 1.
@@ -810,7 +829,6 @@ options 	NETGRAPH_PRED1
 options 	NETGRAPH_RFC1490
 options 	NETGRAPH_SOCKET
 options 	NETGRAPH_SPLIT
-options 	NETGRAPH_SPPP
 options 	NETGRAPH_TAG
 options 	NETGRAPH_TCPMSS
 options 	NETGRAPH_TEE
@@ -874,10 +892,6 @@ device		wlan_xauth
 #  The 'wlan_amrr' device provides AMRR transmit rate control algorithm
 device		wlan_acl
 device		wlan_amrr
-
-#  The `sppp' device serves a similar role for certain types
-#  of synchronous PPP links (like `cx', `ar').
-device		sppp
 
 #  The `bpf' device enables the Berkeley Packet Filter.  Be
 #  aware of the legal and administrative consequences of enabling this
@@ -1528,7 +1542,6 @@ device		aacraid
 device		ahc
 device		ahd
 device		esp
-device		iscsi_initiator
 device		isp
 envvar		hint.isp.0.disable="1"
 envvar		hint.isp.0.role="3"

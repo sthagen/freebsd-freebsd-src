@@ -50,6 +50,7 @@ MAN=	aac.4 \
 	${_aout.4} \
 	${_apic.4} \
 	arcmsr.4 \
+	arswitch.4 \
 	${_asmc.4} \
 	at45d.4 \
 	ata.4 \
@@ -291,6 +292,7 @@ MAN=	aac.4 \
 	mac_stub.4 \
 	mac_test.4 \
 	malo.4 \
+	max44009.4 \
 	md.4 \
 	mdio.4 \
 	me.4 \
@@ -378,7 +380,6 @@ MAN=	aac.4 \
 	ng_socket.4 \
 	ng_source.4 \
 	ng_split.4 \
-	ng_sppp.4 \
 	ng_sscfu.4 \
 	ng_sscop.4 \
 	ng_tag.4 \
@@ -417,9 +418,12 @@ MAN=	aac.4 \
 	owc.4 \
 	${_padlock.4} \
 	pass.4 \
+	pca954x.4 \
 	pccard.4 \
 	pccbb.4 \
 	pcf.4 \
+	pcf8574.4 \
+	pcf8591.4 \
 	${_pchtherm.4} \
 	pci.4 \
 	pcib.4 \
@@ -528,7 +532,6 @@ MAN=	aac.4 \
 	spigen.4 \
 	${_spkr.4} \
 	splash.4 \
-	sppp.4 \
 	ste.4 \
 	stf.4 \
 	stge.4 \
@@ -938,7 +941,6 @@ MLINKS+=	efidev.4 efirtc.4
 .if ${MK_ISCSI} != "no"
 MAN+=		cfiscsi.4
 MAN+=		iscsi.4
-MAN+=		iscsi_initiator.4
 MAN+=		iser.4
 .endif
 

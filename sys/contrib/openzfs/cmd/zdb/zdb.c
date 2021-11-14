@@ -118,6 +118,7 @@ extern int zfs_recover;
 extern unsigned long zfs_arc_meta_min, zfs_arc_meta_limit;
 extern int zfs_vdev_async_read_max_active;
 extern boolean_t spa_load_verify_dryrun;
+extern boolean_t spa_mode_readable_spacemaps;
 extern int zfs_reconstruct_indirect_combinations_max;
 extern int zfs_btree_verify_intensity;
 
@@ -4148,7 +4149,7 @@ cksum_record_compare(const void *x1, const void *x2)
 	const cksum_record_t *l = (cksum_record_t *)x1;
 	const cksum_record_t *r = (cksum_record_t *)x2;
 	int arraysize = ARRAY_SIZE(l->cksum.zc_word);
-	int difference;
+	int difference = 0;
 
 	for (int i = 0; i < arraysize; i++) {
 		difference = TREE_CMP(l->cksum.zc_word[i], r->cksum.zc_word[i]);
@@ -5469,9 +5470,9 @@ zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 		uint64_t now = gethrtime();
 		char buf[10];
 		uint64_t bytes = zcb->zcb_type[ZB_TOTAL][ZDB_OT_TOTAL].zb_asize;
-		int kb_per_sec =
+		uint64_t kb_per_sec =
 		    1 + bytes / (1 + ((now - zcb->zcb_start) / 1000 / 1000));
-		int sec_remaining =
+		uint64_t sec_remaining =
 		    (zcb->zcb_totalasize - bytes) / 1024 / kb_per_sec;
 
 		/* make sure nicenum has enough space */
@@ -5479,8 +5480,9 @@ zdb_blkptr_cb(spa_t *spa, zilog_t *zilog, const blkptr_t *bp,
 
 		zfs_nicebytes(bytes, buf, sizeof (buf));
 		(void) fprintf(stderr,
-		    "\r%5s completed (%4dMB/s) "
-		    "estimated time remaining: %uhr %02umin %02usec        ",
+		    "\r%5s completed (%4"PRIu64"MB/s) "
+		    "estimated time remaining: "
+		    "%"PRIu64"hr %02"PRIu64"min %02"PRIu64"sec        ",
 		    buf, kb_per_sec / 1024,
 		    sec_remaining / 60 / 60,
 		    sec_remaining / 60 % 60,
@@ -8522,6 +8524,11 @@ main(int argc, char **argv)
 	 * to load non-idle pools.
 	 */
 	spa_load_verify_dryrun = B_TRUE;
+
+	/*
+	 * ZDB should have ability to read spacemaps.
+	 */
+	spa_mode_readable_spacemaps = B_TRUE;
 
 	kernel_init(SPA_MODE_READ);
 

@@ -2,4 +2,4 @@
  * $FreeBSD$
  */
 
-#define ZFS_META_GITREV "zfs-2.1.99-453-g4a1195ca50"
+#define ZFS_META_GITREV "zfs-2.1.99-518-g6c8f03232"

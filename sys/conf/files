@@ -716,6 +716,7 @@ crypto/chacha20/chacha-sw.c	optional crypto | ipsec | ipsec_support
 crypto/des/des_ecb.c		optional netsmb
 crypto/des/des_setkey.c		optional netsmb
 crypto/openssl/ossl.c		optional ossl
+crypto/openssl/ossl_aes.c	optional ossl
 crypto/openssl/ossl_chacha20.c	optional ossl
 crypto/openssl/ossl_poly1305.c	optional ossl
 crypto/openssl/ossl_sha1.c	optional ossl
@@ -1848,13 +1849,17 @@ dev/iicbus/iicoc_fdt.c		optional iicoc ext_resources fdt
 dev/iicbus/iicoc_pci.c		optional iicoc pci
 dev/iicbus/isl12xx.c		optional isl12xx
 dev/iicbus/lm75.c		optional lm75
+dev/iicbus/max44009.c		optional max44009
 dev/iicbus/mux/pca9547.c	optional pca9547 iicmux fdt
 dev/iicbus/mux/iicmux.c		optional iicmux
 dev/iicbus/mux/iicmux_if.m	optional iicmux
 dev/iicbus/mux/iic_gpiomux.c	optional iic_gpiomux fdt
 dev/iicbus/mux/ltc430x.c	optional ltc430x
+dev/iicbus/mux/pca954x.c	optional pca954x
 dev/iicbus/nxprtc.c		optional nxprtc | pcf8563
 dev/iicbus/ofw_iicbus.c		optional fdt iicbus
+dev/iicbus/pcf8574.c		optional pcf8574
+dev/iicbus/pcf8591.c		optional pcf8591
 dev/iicbus/rtc8583.c		optional rtc8583
 dev/iicbus/rtc/rx8803.c		optional rx8803 iicbus fdt
 dev/iicbus/s35390a.c		optional s35390a
@@ -1929,12 +1934,6 @@ dev/iscsi/icl_conn_if.m		optional cfiscsi | iscsi
 dev/iscsi/icl_soft.c		optional iscsi
 dev/iscsi/icl_soft_proxy.c	optional iscsi
 dev/iscsi/iscsi.c		optional iscsi scbus
-dev/iscsi_initiator/iscsi.c	optional iscsi_initiator scbus
-dev/iscsi_initiator/iscsi_subr.c	optional iscsi_initiator scbus
-dev/iscsi_initiator/isc_cam.c	optional iscsi_initiator scbus
-dev/iscsi_initiator/isc_soc.c	optional iscsi_initiator scbus
-dev/iscsi_initiator/isc_sm.c	optional iscsi_initiator scbus
-dev/iscsi_initiator/isc_subr.c	optional iscsi_initiator scbus
 dev/ismt/ismt.c			optional ismt
 dev/isl/isl.c			optional isl iicbus
 dev/isp/isp.c			optional isp
@@ -4157,8 +4156,6 @@ net/if_llatbl.c			standard
 net/if_me.c			optional me inet
 net/if_media.c			standard
 net/if_mib.c			standard
-net/if_spppfr.c			optional sppp | netgraph_sppp
-net/if_spppsubr.c		optional sppp | netgraph_sppp
 net/if_stf.c			optional stf inet inet6
 net/if_tuntap.c			optional tuntap
 net/if_vlan.c			optional vlan
@@ -4192,8 +4189,7 @@ net/route/route_tables.c	standard
 net/route/route_temporal.c	standard
 net/rss_config.c		optional inet rss | inet6 rss
 net/rtsock.c			standard
-net/slcompress.c		optional netgraph_vjc | sppp | \
-					 netgraph_sppp
+net/slcompress.c		optional netgraph_vjc
 net/toeplitz.c			optional inet rss | inet6 rss | route_mpath
 net/vnet.c			optional vimage
 net80211/ieee80211.c		optional wlan
@@ -4316,7 +4312,6 @@ netgraph/ng_pred1.c		optional netgraph_pred1
 netgraph/ng_rfc1490.c		optional netgraph_rfc1490
 netgraph/ng_socket.c		optional netgraph_socket
 netgraph/ng_split.c		optional netgraph_split
-netgraph/ng_sppp.c		optional netgraph_sppp
 netgraph/ng_tag.c		optional netgraph_tag
 netgraph/ng_tcpmss.c		optional netgraph_tcpmss
 netgraph/ng_tee.c		optional netgraph_tee
@@ -4357,8 +4352,20 @@ netinet/ip_options.c		optional inet
 netinet/ip_output.c		optional inet
 netinet/ip_reass.c		optional inet
 netinet/raw_ip.c		optional inet | inet6
-netinet/cc/cc.c			optional inet | inet6
-netinet/cc/cc_newreno.c		optional inet | inet6
+netinet/cc/cc.c			optional cc_newreno inet | cc_vegas inet | \
+	cc_htcp inet | cc_hd inet | cc_dctcp inet | cc_cubic inet | \
+	cc_chd inet | cc_cdg inet | cc_newreno inet6 | cc_vegas inet6 | \
+	cc_htcp inet6 | cc_hd inet6 |cc_dctcp inet6 | cc_cubic inet6 | \
+	cc_chd inet6 | cc_cdg inet6
+netinet/cc/cc_cdg.c		optional inet cc_cdg tcp_hhook
+netinet/cc/cc_chd.c		optional inet cc_chd tcp_hhook
+netinet/cc/cc_cubic.c		optional inet cc_cubic | inet6 cc_cubic
+netinet/cc/cc_dctcp.c		optional inet cc_dctcp | inet6 cc_dctcp
+netinet/cc/cc_hd.c		optional inet cc_hd tcp_hhook
+netinet/cc/cc_htcp.c		optional inet cc_htcp | inet6 cc_htcp
+netinet/cc/cc_newreno.c		optional inet cc_newreno | inet6 cc_newreno
+netinet/cc/cc_vegas.c		optional inet cc_vegas tcp_hhook
+netinet/khelp/h_ertt.c		optional inet tcp_hhook
 netinet/sctp_asconf.c		optional inet sctp | inet6 sctp
 netinet/sctp_auth.c		optional inet sctp | inet6 sctp
 netinet/sctp_bsd_addr.c		optional inet sctp | inet6 sctp

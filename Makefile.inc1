@@ -43,7 +43,6 @@
 # installworld- install everything built by "buildworld"
 # checkworld  - run test suite on installed world
 # doxygen     - build API documentation of the kernel
-# update      - convenient way to update your source tree (eg: svn/svnup)
 #
 # Standard targets (not defined here) are documented in the makefiles in
 # /usr/share/mk.  These include:
@@ -1521,7 +1520,6 @@ _sysent_dirs=	sys/kern
 _sysent_dirs+=	sys/compat/freebsd32
 _sysent_dirs+=	sys/amd64/linux		\
 		sys/amd64/linux32	\
-		sys/arm/linux		\
 		sys/arm64/linux		\
 		sys/i386/linux
 
@@ -2500,7 +2498,6 @@ bootstrap-tools: ${_bt}-links .PHONY
     ${_cat} \
     ${_kbdcontrol} \
     ${_elftoolchain_libs} \
-    usr.bin/lorder \
     lib/libopenbsd \
     usr.bin/mandoc \
     usr.bin/rpcgen \
@@ -2732,7 +2729,6 @@ NXBDIRS+= \
     usr.bin/id \
     usr.bin/lex \
     usr.bin/limits \
-    usr.bin/lorder \
     usr.bin/mandoc \
     usr.bin/mktemp \
     usr.bin/mt \
@@ -2796,6 +2792,10 @@ NXBMAKEARGS+= \
 NXBMAKEENV+= \
 	MAKEOBJDIRPREFIX=
 
+# This should match all of the knobs in lib/Makefile that it takes to avoid
+# descending into lib/clang!
+NXBTNOTOOLS=	MK_CLANG=no MK_LLD=no MK_LLDB=no MK_LLVM_BINUTILS=no
+
 .if make(native-xtools*) && \
     (!defined(NXB_TARGET) || !defined(NXB_TARGET_ARCH))
 .error Missing NXB_TARGET / NXB_TARGET_ARCH
@@ -2835,11 +2835,11 @@ native-xtools: .PHONY
 	# Populate includes/libraries sysroot that produce native binaries.
 	# This is split out from 'toolchain' above mostly so that target LLVM
 	# libraries have a proper LLVM_DEFAULT_TARGET_TRIPLE without
-	# polluting the cross-compiler build.  The LLVM/GCC libs are skipped
+	# polluting the cross-compiler build.  The LLVM libs are skipped
 	# here to avoid the problem but are kept in 'toolchain' so that
 	# needed build tools are built.
-	${_+_}cd ${.CURDIR}; ${NXBTMAKE} _includes MK_CLANG=no
-	${_+_}cd ${.CURDIR}; ${NXBTMAKE} _libraries MK_CLANG=no
+	${_+_}cd ${.CURDIR}; ${NXBTMAKE} _includes ${NXBTNOTOOLS}
+	${_+_}cd ${.CURDIR}; ${NXBTMAKE} _libraries ${NXBTNOTOOLS}
 .if !defined(NO_OBJWALK)
 	${_+_}cd ${.CURDIR}; ${NXBMAKE} _obj
 .endif
