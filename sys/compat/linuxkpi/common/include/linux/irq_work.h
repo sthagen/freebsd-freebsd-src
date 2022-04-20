@@ -28,17 +28,19 @@
  * $FreeBSD$
  */
 
-#ifndef __LINUX_IRQ_WORK_H__
-#define	__LINUX_IRQ_WORK_H__
+#ifndef _LINUXKPI_LINUX_IRQ_WORK_H_
+#define	_LINUXKPI_LINUX_IRQ_WORK_H_
 
 #include <sys/param.h>
 #include <sys/taskqueue.h>
 
 struct irq_work;
+struct llist_node;
 typedef void (*irq_work_func_t)(struct irq_work *);
 
 struct irq_work {
 	struct task irq_task;
+	struct llist_node llnode;
 	irq_work_func_t func;
 };
 
@@ -58,10 +60,13 @@ init_irq_work(struct irq_work *irqw, irq_work_func_t func)
 	irqw->func = func;
 }
 
-static inline void
+static inline bool
 irq_work_queue(struct irq_work *irqw)
 {
-	taskqueue_enqueue(linux_irq_work_tq, &irqw->irq_task);
+	if(taskqueue_enqueue(linux_irq_work_tq, &irqw->irq_task) == 0)
+		return (true);
+
+	return (false);
 }
 
 static inline void
@@ -70,4 +75,4 @@ irq_work_sync(struct irq_work *irqw)
 	taskqueue_drain(linux_irq_work_tq, &irqw->irq_task);
 }
 
-#endif /* __LINUX_IRQ_WORK_H__ */
+#endif /* _LINUXKPI_LINUX_IRQ_WORK_H_ */

@@ -4,7 +4,7 @@
 __<${_this:T}>__:
 
 # Makefile for the compatibility libraries.
-# - 32-bit compat libraries on MIPS, PowerPC, and AMD64.
+# - 32-bit compat libraries on PowerPC, and AMD64.
 
 .include <bsd.compat.mk>
 
@@ -25,8 +25,8 @@ LIBCOMPATWMAKEFLAGS+= CC="${XCC} ${LIBCOMPATCFLAGS}" \
 		CPP="${XCPP} ${LIBCOMPATCFLAGS}" \
 		DESTDIR=${LIBCOMPATTMP} \
 		-DNO_CPU_CFLAGS \
+		MK_BOOT=no \
 		MK_CTF=no \
-		-DNO_LINT \
 		MK_TESTS=no
 LIBCOMPATWMAKE+=	${TIME_ENV} ${LIBCOMPATWMAKEENV} ${MAKE} ${LIBCOMPATWMAKEFLAGS} \
 			OBJTOP=${LIBCOMPAT_OBJTOP} \

@@ -213,6 +213,8 @@ open2nameif(int fmode, u_int vn_open_flags)
 		res |= AUDITVNODE1;
 	if ((vn_open_flags & VN_OPEN_NOCAPCHECK) != 0)
 		res |= NOCAPCHECK;
+	if ((vn_open_flags & VN_OPEN_WANTIOCTLCAPS) != 0)
+		res |= WANTIOCTLCAPS;
 	return (res);
 }
 
@@ -266,7 +268,7 @@ restart:
 			if (fmode & O_EXCL)
 				vap->va_vaflags |= VA_EXCLUSIVE;
 			if (vn_start_write(ndp->ni_dvp, &mp, V_NOWAIT) != 0) {
-				NDFREE(ndp, NDF_ONLY_PNBUF);
+				NDFREE_PNBUF(ndp);
 				vput(ndp->ni_dvp);
 				if ((error = vn_start_write(NULL, &mp,
 				    V_XSLEEP | PCATCH)) != 0)
@@ -295,7 +297,7 @@ restart:
 			    false);
 			vn_finished_write(mp);
 			if (error) {
-				NDFREE(ndp, NDF_ONLY_PNBUF);
+				NDFREE_PNBUF(ndp);
 				if (error == ERELOOKUP) {
 					NDREINIT(ndp);
 					goto restart;
@@ -343,7 +345,7 @@ restart:
 	*flagp = fmode;
 	return (0);
 bad:
-	NDFREE(ndp, NDF_ONLY_PNBUF);
+	NDFREE_PNBUF(ndp);
 	vput(vp);
 	*flagp = fmode;
 	ndp->ni_vp = NULL;
@@ -2429,6 +2431,10 @@ vn_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	return (setfown(td, active_cred, vp, uid, gid));
 }
 
+/*
+ * Remove pages in the range ["start", "end") from the vnode's VM object.  If
+ * "end" is 0, then the range extends to the end of the object.
+ */
 void
 vn_pages_remove(struct vnode *vp, vm_pindex_t start, vm_pindex_t end)
 {
@@ -2438,6 +2444,24 @@ vn_pages_remove(struct vnode *vp, vm_pindex_t start, vm_pindex_t end)
 		return;
 	VM_OBJECT_WLOCK(object);
 	vm_object_page_remove(object, start, end, 0);
+	VM_OBJECT_WUNLOCK(object);
+}
+
+/*
+ * Like vn_pages_remove(), but skips invalid pages, which by definition are not
+ * mapped into any process' address space.  Filesystems may use this in
+ * preference to vn_pages_remove() to avoid blocking on pages busied in
+ * preparation for a VOP_GETPAGES.
+ */
+void
+vn_pages_remove_valid(struct vnode *vp, vm_pindex_t start, vm_pindex_t end)
+{
+	vm_object_t object;
+
+	if ((object = vp->v_object) == NULL)
+		return;
+	VM_OBJECT_WLOCK(object);
+	vm_object_page_remove(object, start, end, OBJPR_VALIDONLY);
 	VM_OBJECT_WUNLOCK(object);
 }
 

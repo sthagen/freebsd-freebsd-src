@@ -449,17 +449,13 @@ _rm_rlock(struct rmlock *rm, struct rm_priotracker *tracker, int trylock)
 		THREAD_NO_SLEEPING();
 
 	td->td_critnest++;	/* critical_enter(); */
-
 	atomic_interrupt_fence();
 
-	pc = cpuid_to_pcpu[td->td_oncpu]; /* pcpu_find(td->td_oncpu); */
-
+	pc = cpuid_to_pcpu[td->td_oncpu];
 	rm_tracker_add(pc, tracker);
-
 	sched_pin();
 
 	atomic_interrupt_fence();
-
 	td->td_critnest--;
 
 	/*
@@ -517,8 +513,12 @@ _rm_runlock(struct rmlock *rm, struct rm_priotracker *tracker)
 		return;
 
 	td->td_critnest++;	/* critical_enter(); */
-	pc = cpuid_to_pcpu[td->td_oncpu]; /* pcpu_find(td->td_oncpu); */
+	atomic_interrupt_fence();
+
+	pc = cpuid_to_pcpu[td->td_oncpu];
 	rm_tracker_remove(pc, tracker);
+
+	atomic_interrupt_fence();
 	td->td_critnest--;
 	sched_unpin();
 
@@ -549,7 +549,7 @@ _rm_wlock(struct rmlock *rm)
 	if (CPU_CMP(&rm->rm_writecpus, &all_cpus)) {
 		/* Get all read tokens back */
 		readcpus = all_cpus;
-		CPU_ANDNOT(&readcpus, &rm->rm_writecpus);
+		CPU_ANDNOT(&readcpus, &readcpus, &rm->rm_writecpus);
 		rm->rm_writecpus = all_cpus;
 
 		/*

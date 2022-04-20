@@ -159,6 +159,8 @@ typedef int dumper_hdr_t(struct dumperinfo *di, struct kerneldumpheader *kdh);
 #define		GID_BIN		7
 #define		GID_GAMES	13
 #define		GID_VIDEO	44
+#define		GID_RT_PRIO	47
+#define		GID_ID_PRIO	48
 #define		GID_DIALER	68
 #define		GID_NOGROUP	65533
 #define		GID_NOBODY	65534
@@ -360,8 +362,12 @@ struct dumperinfo {
 
 extern int dumping;		/* system is dumping */
 
+void dump_savectx(void);
 int doadump(boolean_t);
 struct diocskerneldump_arg;
+int dumper_create(const struct dumperinfo *di_template, const char *devname,
+    const struct diocskerneldump_arg *kda, struct dumperinfo **dip);
+void dumper_destroy(struct dumperinfo *di);
 int dumper_insert(const struct dumperinfo *di_template, const char *devname,
     const struct diocskerneldump_arg *kda);
 int dumper_remove(const char *devname, const struct diocskerneldump_arg *kda);

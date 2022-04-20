@@ -292,9 +292,7 @@ ksiginfo_alloc(int wait)
 {
 	int flags;
 
-	flags = M_ZERO;
-	if (! wait)
-		flags |= M_NOWAIT;
+	flags = M_ZERO | (wait ? M_WAITOK : M_NOWAIT);
 	if (ksiginfo_zone != NULL)
 		return ((ksiginfo_t *)uma_zalloc(ksiginfo_zone, flags));
 	return (NULL);
@@ -2021,11 +2019,10 @@ trapsignal(struct thread *td, ksiginfo_t *ksi)
 	struct sigacts *ps;
 	struct proc *p;
 	sigset_t sigmask;
-	int code, sig;
+	int sig;
 
 	p = td->td_proc;
 	sig = ksi->ksi_signo;
-	code = ksi->ksi_code;
 	KASSERT(_SIG_VALID(sig), ("invalid signal"));
 
 	sigfastblock_fetch(td);
@@ -2040,7 +2037,7 @@ trapsignal(struct thread *td, ksiginfo_t *ksi)
 #ifdef KTRACE
 		if (KTRPOINT(curthread, KTR_PSIG))
 			ktrpsig(sig, ps->ps_sigact[_SIG_IDX(sig)],
-			    &td->td_sigmask, code);
+			    &td->td_sigmask, ksi->ksi_code);
 #endif
 		(*p->p_sysent->sv_sendsig)(ps->ps_sigact[_SIG_IDX(sig)],
 		    ksi, &td->td_sigmask);
@@ -2133,7 +2130,7 @@ pksignal(struct proc *p, int sig, ksiginfo_t *ksi)
 
 /* Utility function for finding a thread to send signal event to. */
 int
-sigev_findtd(struct proc *p ,struct sigevent *sigev, struct thread **ttd)
+sigev_findtd(struct proc *p, struct sigevent *sigev, struct thread **ttd)
 {
 	struct thread *td;
 
@@ -2992,8 +2989,10 @@ sigprocess(struct thread *td, int sig)
 		 * and p_sigact are consistent.
 		 */
 		if ((p->p_flag & P_TRACED) == 0) {
-			ksi.ksi_flags |= KSI_HEAD;
-			sigqueue_add(queue, sig, &ksi);
+			if ((ksi.ksi_flags & KSI_PTRACE) == 0) {
+				ksi.ksi_flags |= KSI_HEAD;
+				sigqueue_add(queue, sig, &ksi);
+			}
 			return (SIGSTATUS_HANDLED);
 		}
 	}
@@ -3560,7 +3559,7 @@ sysctl_debug_num_cores_check (SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 SYSCTL_PROC(_debug, OID_AUTO, ncores,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT, 0, sizeof(int),
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, 0, sizeof(int),
     sysctl_debug_num_cores_check, "I",
     "Maximum number of generated process corefiles while using index format");
 
@@ -3658,14 +3657,14 @@ corefile_open_last(struct thread *td, char *name, int indexpos,
 		    i);
 		name[indexpos + indexlen] = ch;
 
-		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name, td);
+		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name);
 		error = vn_open_cred(&nd, &flags, cmode, oflags, td->td_ucred,
 		    NULL);
 		if (error != 0)
 			break;
 
 		vp = nd.ni_vp;
-		NDFREE(&nd, NDF_ONLY_PNBUF);
+		NDFREE_PNBUF(&nd);
 		if ((flags & O_CREAT) == O_CREAT) {
 			nextvp = vp;
 			break;
@@ -3833,12 +3832,12 @@ corefile_open(const char *comm, uid_t uid, pid_t pid, struct thread *td,
 		if ((td->td_proc->p_flag & P_SUGID) != 0)
 			flags |= O_EXCL;
 
-		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name, td);
+		NDINIT(&nd, LOOKUP, NOFOLLOW, UIO_SYSSPACE, name);
 		error = vn_open_cred(&nd, &flags, cmode, oflags, td->td_ucred,
 		    NULL);
 		if (error == 0) {
 			*vpp = nd.ni_vp;
-			NDFREE(&nd, NDF_ONLY_PNBUF);
+			NDFREE_PNBUF(&nd);
 		}
 	}
 

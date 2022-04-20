@@ -1,4 +1,4 @@
-/*	$NetBSD: arch.c,v 1.200 2021/05/30 21:16:54 rillig Exp $	*/
+/*	$NetBSD: arch.c,v 1.210 2022/01/15 18:34:41 rillig Exp $	*/
 
 /*
  * Copyright (c) 1988, 1989, 1990, 1993
@@ -147,7 +147,7 @@ struct ar_hdr {
 #include "dir.h"
 
 /*	"@(#)arch.c	8.2 (Berkeley) 1/2/94"	*/
-MAKE_RCSID("$NetBSD: arch.c,v 1.200 2021/05/30 21:16:54 rillig Exp $");
+MAKE_RCSID("$NetBSD: arch.c,v 1.210 2022/01/15 18:34:41 rillig Exp $");
 
 typedef struct List ArchList;
 typedef struct ListNode ArchListNode;
@@ -247,19 +247,20 @@ FullName(const char *archive, const char *member)
 bool
 Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 {
-	char *cp;		/* Pointer into line */
+	char *spec;		/* For modifying some bytes of *pp */
+	const char *cp;		/* Pointer into line */
 	GNode *gn;		/* New node */
-	MFStr libName;		/* Library-part of specification */
-	char *memName;		/* Member-part of specification */
+	FStr lib;		/* Library-part of specification */
+	FStr mem;		/* Member-part of specification */
 	char saveChar;		/* Ending delimiter of member-name */
-	bool expandLibName;	/* Whether the parsed libName contains
-				 * variable expressions that need to be
-				 * expanded */
+	bool expandLib;		/* Whether the parsed lib contains variable
+				 * expressions that need to be expanded */
 
-	libName = MFStr_InitRefer(*pp);
-	expandLibName = false;
+	spec = *pp;
+	lib = FStr_InitRefer(spec);
+	expandLib = false;
 
-	for (cp = libName.str; *cp != '(' && *cp != '\0';) {
+	for (cp = lib.str; *cp != '(' && *cp != '\0';) {
 		if (*cp == '$') {
 			/* Expand nested variable expressions. */
 			/* XXX: This code can probably be shortened. */
@@ -276,20 +277,15 @@ Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 			if (isError)
 				return false;
 
-			expandLibName = true;
+			expandLib = true;
 			cp += nested_p - cp;
 		} else
 			cp++;
 	}
 
-	*cp++ = '\0';
-	if (expandLibName) {
-		char *expanded;
-		(void)Var_Subst(libName.str, scope, VARE_UNDEFERR, &expanded);
-		/* TODO: handle errors */
-		libName = MFStr_InitOwn(expanded);
-	}
-
+	spec[cp++ - spec] = '\0';
+	if (expandLib)
+		Var_Expand(&lib, scope, VARE_UNDEFERR);
 
 	for (;;) {
 		/*
@@ -299,13 +295,15 @@ Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 		 */
 		bool doSubst = false;
 
-		pp_skip_whitespace(&cp);
+		cpp_skip_whitespace(&cp);
 
-		memName = cp;
+		mem = FStr_InitRefer(cp);
 		while (*cp != '\0' && *cp != ')' && !ch_isspace(*cp)) {
 			if (*cp == '$') {
 				/* Expand nested variable expressions. */
-				/* XXX: This code can probably be shortened. */
+				/*
+				 * XXX: This code can probably be shortened.
+				 */
 				FStr result;
 				bool isError;
 				const char *nested_p = cp;
@@ -334,19 +332,19 @@ Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 		 */
 		if (*cp == '\0') {
 			Parse_Error(PARSE_FATAL,
-				    "No closing parenthesis "
-				    "in archive specification");
+			    "No closing parenthesis "
+			    "in archive specification");
 			return false;
 		}
 
 		/*
 		 * If we didn't move anywhere, we must be done
 		 */
-		if (cp == memName)
+		if (cp == mem.str)
 			break;
 
 		saveChar = *cp;
-		*cp = '\0';
+		spec[cp - spec] = '\0';
 
 		/*
 		 * XXX: This should be taken care of intelligently by
@@ -364,21 +362,18 @@ Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 		if (doSubst) {
 			char *fullName;
 			char *p;
-			char *unexpandedMemName = memName;
+			const char *unexpandedMem = mem.str;
 
-			(void)Var_Subst(memName, scope, VARE_UNDEFERR,
-			    &memName);
-			/* TODO: handle errors */
+			Var_Expand(&mem, scope, VARE_UNDEFERR);
 
 			/*
 			 * Now form an archive spec and recurse to deal with
 			 * nested variables and multi-word variable values.
 			 */
-			fullName = FullName(libName.str, memName);
+			fullName = FullName(lib.str, mem.str);
 			p = fullName;
 
-			if (strchr(memName, '$') != NULL &&
-			    strcmp(memName, unexpandedMemName) == 0) {
+			if (strcmp(mem.str, unexpandedMem) == 0) {
 				/*
 				 * Must contain dynamic sources, so we can't
 				 * deal with it now. Just create an ARCHV node
@@ -398,13 +393,13 @@ Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 			free(fullName);
 			/* XXX: does unexpandedMemName leak? */
 
-		} else if (Dir_HasWildcards(memName)) {
+		} else if (Dir_HasWildcards(mem.str)) {
 			StringList members = LST_INIT;
-			SearchPath_Expand(&dirSearchPath, memName, &members);
+			SearchPath_Expand(&dirSearchPath, mem.str, &members);
 
 			while (!Lst_IsEmpty(&members)) {
 				char *member = Lst_Dequeue(&members);
-				char *fullname = FullName(libName.str, member);
+				char *fullname = FullName(lib.str, member);
 				free(member);
 
 				gn = Targ_GetNode(fullname);
@@ -416,7 +411,7 @@ Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 			Lst_Done(&members);
 
 		} else {
-			char *fullname = FullName(libName.str, memName);
+			char *fullname = FullName(lib.str, mem.str);
 			gn = Targ_GetNode(fullname);
 			free(fullname);
 
@@ -430,18 +425,17 @@ Arch_ParseArchive(char **pp, GNodeList *gns, GNode *scope)
 			gn->type |= OP_ARCHV;
 			Lst_Append(gns, gn);
 		}
-		if (doSubst)
-			free(memName);
+		FStr_Done(&mem);
 
-		*cp = saveChar;
+		spec[cp - spec] = saveChar;
 	}
 
-	MFStr_Done(&libName);
+	FStr_Done(&lib);
 
 	cp++;			/* skip the ')' */
 	/* We promised that pp would be set up at the next non-space. */
-	pp_skip_whitespace(&cp);
-	*pp = cp;
+	cpp_skip_whitespace(&cp);
+	*pp += cp - *pp;
 	return true;
 }
 
@@ -600,14 +594,14 @@ ArchStatMember(const char *archive, const char *member, bool addToCache)
 		if (strncmp(memName, AR_EFMT1, sizeof AR_EFMT1 - 1) == 0 &&
 		    ch_isdigit(memName[sizeof AR_EFMT1 - 1])) {
 
-			int elen = atoi(memName + sizeof AR_EFMT1 - 1);
+			size_t elen = atoi(memName + sizeof AR_EFMT1 - 1);
 
-			if ((unsigned int)elen > MAXPATHLEN)
+			if (elen > MAXPATHLEN)
 				goto badarch;
-			if (fread(memName, (size_t)elen, 1, arch) != 1)
+			if (fread(memName, elen, 1, arch) != 1)
 				goto badarch;
 			memName[elen] = '\0';
-			if (fseek(arch, -elen, SEEK_CUR) != 0)
+			if (fseek(arch, -(long)elen, SEEK_CUR) != 0)
 				goto badarch;
 			if (DEBUG(ARCH) || DEBUG(MAKE))
 				debug_printf(
@@ -673,7 +667,7 @@ ArchSVR4Entry(Arch *ar, char *inout_name, size_t size, FILE *arch)
 
 		if (ar->fnametab != NULL) {
 			DEBUG0(ARCH,
-			       "Attempted to redefine an SVR4 name table\n");
+			    "Attempted to redefine an SVR4 name table\n");
 			return -1;
 		}
 
@@ -694,8 +688,9 @@ ArchSVR4Entry(Arch *ar, char *inout_name, size_t size, FILE *arch)
 				entry++;
 				*ptr = '\0';
 			}
-		DEBUG1(ARCH, "Found svr4 archive name table with %lu entries\n",
-		       (unsigned long)entry);
+		DEBUG1(ARCH,
+		    "Found svr4 archive name table with %lu entries\n",
+		    (unsigned long)entry);
 		return 0;
 	}
 
@@ -709,7 +704,7 @@ ArchSVR4Entry(Arch *ar, char *inout_name, size_t size, FILE *arch)
 	}
 	if (entry >= ar->fnamesize) {
 		DEBUG2(ARCH, "SVR4 entry offset %s is greater than %lu\n",
-		       inout_name, (unsigned long)ar->fnamesize);
+		    inout_name, (unsigned long)ar->fnamesize);
 		return 2;
 	}
 
@@ -738,8 +733,10 @@ ArchiveMember_HasName(const struct ar_hdr *hdr,
 	if (ar_name[namelen] == ' ')
 		return true;
 
-	/* In archives created by GNU binutils 2.27, the member names end with
-	 * a slash. */
+	/*
+	 * In archives created by GNU binutils 2.27, the member names end
+	 * with a slash.
+	 */
 	if (ar_name[namelen] == '/' &&
 	    (namelen == ar_name_len || ar_name[namelen + 1] == ' '))
 		return true;
@@ -810,9 +807,9 @@ ArchFindMember(const char *archive, const char *member, struct ar_hdr *out_arh,
 		}
 
 		DEBUG5(ARCH, "Reading archive %s member %.*s mtime %.*s\n",
-		       archive,
-		       (int)sizeof out_arh->AR_NAME, out_arh->AR_NAME,
-		       (int)sizeof out_arh->ar_date, out_arh->ar_date);
+		    archive,
+		    (int)sizeof out_arh->AR_NAME, out_arh->AR_NAME,
+		    (int)sizeof out_arh->ar_date, out_arh->ar_date);
 
 		if (ArchiveMember_HasName(out_arh, member, len)) {
 			/*
@@ -839,14 +836,15 @@ ArchFindMember(const char *archive, const char *member, struct ar_hdr *out_arh,
 		if (strncmp(out_arh->AR_NAME, AR_EFMT1, sizeof AR_EFMT1 - 1) ==
 		    0 &&
 		    (ch_isdigit(out_arh->AR_NAME[sizeof AR_EFMT1 - 1]))) {
-			int elen = atoi(&out_arh->AR_NAME[sizeof AR_EFMT1 - 1]);
+			size_t elen = atoi(
+			    &out_arh->AR_NAME[sizeof AR_EFMT1 - 1]);
 			char ename[MAXPATHLEN + 1];
 
-			if ((unsigned int)elen > MAXPATHLEN) {
+			if (elen > MAXPATHLEN) {
 				fclose(arch);
 				return NULL;
 			}
-			if (fread(ename, (size_t)elen, 1, arch) != 1) {
+			if (fread(ename, elen, 1, arch) != 1) {
 				fclose(arch);
 				return NULL;
 			}
@@ -859,14 +857,14 @@ ArchFindMember(const char *archive, const char *member, struct ar_hdr *out_arh,
 			if (strncmp(ename, member, len) == 0) {
 				/* Found as extended name */
 				if (fseek(arch,
-					  -(long)sizeof(struct ar_hdr) - elen,
-					  SEEK_CUR) != 0) {
+				    -(long)(sizeof(struct ar_hdr) - elen),
+				    SEEK_CUR) != 0) {
 					fclose(arch);
 					return NULL;
 				}
 				return arch;
 			}
-			if (fseek(arch, -elen, SEEK_CUR) != 0) {
+			if (fseek(arch, -(long)elen, SEEK_CUR) != 0) {
 				fclose(arch);
 				return NULL;
 			}
@@ -882,7 +880,7 @@ ArchFindMember(const char *archive, const char *member, struct ar_hdr *out_arh,
 		 */
 		out_arh->AR_SIZE[sizeof out_arh->AR_SIZE - 1] = '\0';
 		size = (int)strtol(out_arh->AR_SIZE, NULL, 10);
-		if (fseek(arch, (size + 1) & ~1, SEEK_CUR) != 0) {
+		if (fseek(arch, (size + 1) & ~1L, SEEK_CUR) != 0) {
 			fclose(arch);
 			return NULL;
 		}
@@ -912,7 +910,7 @@ Arch_Touch(GNode *gn)
 	struct ar_hdr arh;
 
 	f = ArchFindMember(GNode_VarArchive(gn), GNode_VarMember(gn), &arh,
-			   "r+");
+	    "r+");
 	if (f == NULL)
 		return;
 
@@ -991,12 +989,12 @@ Arch_UpdateMemberMTime(GNode *gn)
 			const char *nameEnd = strchr(nameStart, ')');
 			size_t nameLen = (size_t)(nameEnd - nameStart);
 
-			if ((pgn->flags & REMAKE) &&
+			if (pgn->flags.remake &&
 			    strncmp(nameStart, gn->name, nameLen) == 0) {
 				Arch_UpdateMTime(pgn);
 				gn->mtime = pgn->mtime;
 			}
-		} else if (pgn->flags & REMAKE) {
+		} else if (pgn->flags.remake) {
 			/*
 			 * Something which isn't a library depends on the
 			 * existence of this target, so it needs to exist.
@@ -1036,6 +1034,35 @@ Arch_FindLib(GNode *gn, SearchPath *path)
 #endif
 }
 
+/* ARGSUSED */
+static bool
+RanlibOODate(const GNode *gn MAKE_ATTR_UNUSED)
+{
+#ifdef RANLIBMAG
+	struct ar_hdr *arh;	/* Header for __.SYMDEF */
+	int tocModTime;		/* The table-of-contents' mod time */
+
+	arh = ArchStatMember(gn->path, RANLIBMAG, false);
+
+	if (arh == NULL) {
+		/* A library without a table of contents is out-of-date. */
+		if (DEBUG(ARCH) || DEBUG(MAKE))
+			debug_printf("no toc...");
+		return true;
+	}
+
+	tocModTime = (int)strtol(arh->ar_date, NULL, 10);
+
+	if (DEBUG(ARCH) || DEBUG(MAKE))
+		debug_printf("%s modified %s...",
+		    RANLIBMAG, Targ_FmtTime(tocModTime));
+	return gn->youngestChild == NULL ||
+	       gn->youngestChild->mtime > tocModTime;
+#else
+	return false;
+#endif
+}
+
 /*
  * Decide if a node with the OP_LIB attribute is out-of-date. Called from
  * GNode_IsOODate to make its life easier.
@@ -1069,46 +1096,19 @@ Arch_FindLib(GNode *gn, SearchPath *path)
 bool
 Arch_LibOODate(GNode *gn)
 {
-	bool oodate;
 
 	if (gn->type & OP_PHONY) {
-		oodate = true;
+		return true;
 	} else if (!GNode_IsTarget(gn) && Lst_IsEmpty(&gn->children)) {
-		oodate = false;
+		return false;
 	} else if ((!Lst_IsEmpty(&gn->children) && gn->youngestChild == NULL) ||
 		   (gn->mtime > now) ||
 		   (gn->youngestChild != NULL &&
 		    gn->mtime < gn->youngestChild->mtime)) {
-		oodate = true;
+		return true;
 	} else {
-#ifdef RANLIBMAG
-		struct ar_hdr *arh;	/* Header for __.SYMDEF */
-		int modTimeTOC;		/* The table-of-contents' mod time */
-
-		arh = ArchStatMember(gn->path, RANLIBMAG, false);
-
-		if (arh != NULL) {
-			modTimeTOC = (int)strtol(arh->ar_date, NULL, 10);
-
-			if (DEBUG(ARCH) || DEBUG(MAKE))
-				debug_printf("%s modified %s...",
-					     RANLIBMAG,
-					     Targ_FmtTime(modTimeTOC));
-			oodate = gn->youngestChild == NULL ||
-				 gn->youngestChild->mtime > modTimeTOC;
-		} else {
-			/*
-			 * A library without a table of contents is out-of-date.
-			 */
-			if (DEBUG(ARCH) || DEBUG(MAKE))
-				debug_printf("no toc...");
-			oodate = true;
-		}
-#else
-		oodate = false;
-#endif
+		return RanlibOODate(gn);
 	}
-	return oodate;
 }
 
 /* Initialize the archives module. */

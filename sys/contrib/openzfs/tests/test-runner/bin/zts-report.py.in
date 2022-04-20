@@ -15,12 +15,13 @@
 # Copyright (c) 2017 by Delphix. All rights reserved.
 # Copyright (c) 2018 by Lawrence Livermore National Security, LLC.
 #
-# This script must remain compatible with Python 2.6+ and Python 3.4+.
+# This script must remain compatible with Python 3.6+.
 #
 
 import os
 import re
 import sys
+import argparse
 
 #
 # This script parses the stdout of zfstest, which has this format:
@@ -61,13 +62,13 @@ known_reason = 'Known issue'
 exec_reason = 'Test user execute permissions required for utilities'
 
 #
-# Some tests require a minimum python version of 3.5 and will be skipped when
+# Some tests require a minimum python version of 3.6 and will be skipped when
 # the default system version is too old.  There may also be tests which require
-# additional python modules be installed, for example python-cffi is required
+# additional python modules be installed, for example python3-cffi is required
 # by the pyzfs tests.
 #
-python_reason = 'Python v3.5 or newer required'
-python_deps_reason = 'Python modules missing: python-cffi'
+python_reason = 'Python v3.6 or newer required'
+python_deps_reason = 'Python modules missing: python3-cffi'
 
 #
 # Some tests require the O_TMPFILE flag which was first introduced in the
@@ -167,6 +168,8 @@ known = {
     'casenorm/mixed_formd_lookup_ci': ['FAIL', '7633'],
     'cli_root/zfs_unshare/zfs_unshare_002_pos': ['SKIP', na_reason],
     'cli_root/zfs_unshare/zfs_unshare_006_pos': ['SKIP', na_reason],
+    'cli_root/zpool_import/import_rewind_device_replaced':
+        ['FAIL', rewind_reason],
     'cli_user/misc/zfs_share_001_neg': ['SKIP', na_reason],
     'cli_user/misc/zfs_unshare_001_neg': ['SKIP', na_reason],
     'privilege/setup': ['SKIP', na_reason],
@@ -178,6 +181,8 @@ known = {
 
 if sys.platform.startswith('freebsd'):
     known.update({
+        'cli_root/zfs_receive/receive-o-x_props_override':
+            ['FAIL', known_reason],
         'cli_root/zpool_wait/zpool_wait_trim_basic': ['SKIP', trim_reason],
         'cli_root/zpool_wait/zpool_wait_trim_cancel': ['SKIP', trim_reason],
         'cli_root/zpool_wait/zpool_wait_trim_flag': ['SKIP', trim_reason],
@@ -219,10 +224,6 @@ maybe = {
     'cli_root/zfs_unshare/setup': ['SKIP', share_reason],
     'cli_root/zpool_add/zpool_add_004_pos': ['FAIL', known_reason],
     'cli_root/zpool_destroy/zpool_destroy_001_pos': ['SKIP', '6145'],
-    'cli_root/zpool_import/import_rewind_device_replaced':
-        ['FAIL', rewind_reason],
-    'cli_root/zpool_import/import_rewind_config_changed':
-        ['FAIL', rewind_reason],
     'cli_root/zpool_import/zpool_import_missing_003_pos': ['SKIP', '6839'],
     'cli_root/zpool_initialize/zpool_initialize_import_export':
         ['FAIL', '11948'],
@@ -241,7 +242,6 @@ maybe = {
     'largest_pool/largest_pool_001_pos': ['FAIL', known_reason],
     'mmp/mmp_on_uberblocks': ['FAIL', known_reason],
     'pyzfs/pyzfs_unittest': ['SKIP', python_deps_reason],
-    'no_space/enospc_002_pos': ['FAIL', enospc_reason],
     'pool_checkpoint/checkpoint_discard_busy': ['FAIL', '11946'],
     'projectquota/setup': ['SKIP', exec_reason],
     'redundancy/redundancy_004_neg': ['FAIL', '7290'],
@@ -249,12 +249,6 @@ maybe = {
     'removal/removal_condense_export': ['FAIL', known_reason],
     'reservation/reservation_008_pos': ['FAIL', '7741'],
     'reservation/reservation_018_pos': ['FAIL', '5642'],
-    'rsend/rsend_019_pos': ['FAIL', '6086'],
-    'rsend/rsend_020_pos': ['FAIL', '6446'],
-    'rsend/rsend_021_pos': ['FAIL', '6446'],
-    'rsend/rsend_024_pos': ['FAIL', '5665'],
-    'rsend/send-c_volume': ['FAIL', '6087'],
-    'rsend/send_partial_dataset': ['FAIL', known_reason],
     'snapshot/clone_001_pos': ['FAIL', known_reason],
     'snapshot/snapshot_009_pos': ['FAIL', '7961'],
     'snapshot/snapshot_010_pos': ['FAIL', '7961'],
@@ -265,7 +259,6 @@ maybe = {
     'upgrade/upgrade_projectquota_001_pos': ['SKIP', project_id_reason],
     'user_namespace/setup': ['SKIP', user_ns_reason],
     'userquota/setup': ['SKIP', exec_reason],
-    'vdev_zaps/vdev_zaps_004_pos': ['FAIL', '6935'],
     'zvol/zvol_ENOSPC/zvol_ENOSPC_001_pos': ['FAIL', '5848'],
     'pam/setup': ['SKIP', "pamtester might be not available"],
 }
@@ -274,8 +267,6 @@ if sys.platform.startswith('freebsd'):
     maybe.update({
         'cli_root/zfs_copies/zfs_copies_002_pos': ['FAIL', known_reason],
         'cli_root/zfs_inherit/zfs_inherit_001_neg': ['FAIL', known_reason],
-        'cli_root/zfs_receive/receive-o-x_props_override':
-            ['FAIL', known_reason],
         'cli_root/zfs_share/zfs_share_011_pos': ['FAIL', known_reason],
         'cli_root/zfs_share/zfs_share_concurrent_shares':
             ['FAIL', known_reason],
@@ -288,14 +279,7 @@ if sys.platform.startswith('freebsd'):
     })
 elif sys.platform.startswith('linux'):
     maybe.update({
-        'alloc_class/alloc_class_009_pos': ['FAIL', known_reason],
-        'alloc_class/alloc_class_010_pos': ['FAIL', known_reason],
-        'alloc_class/alloc_class_011_neg': ['FAIL', known_reason],
-        'alloc_class/alloc_class_012_pos': ['FAIL', known_reason],
-        'alloc_class/alloc_class_013_pos': ['FAIL', '11888'],
         'cli_root/zfs_rename/zfs_rename_002_pos': ['FAIL', known_reason],
-        'cli_root/zpool_expand/zpool_expand_001_pos': ['FAIL', known_reason],
-        'cli_root/zpool_expand/zpool_expand_005_pos': ['FAIL', known_reason],
         'cli_root/zpool_reopen/zpool_reopen_003_pos': ['FAIL', known_reason],
         'fault/auto_spare_shared': ['FAIL', '11889'],
         'io/io_uring': ['SKIP', 'io_uring support required'],
@@ -304,11 +288,6 @@ elif sys.platform.startswith('linux'):
         'mmp/mmp_active_import': ['FAIL', known_reason],
         'mmp/mmp_exported_import': ['FAIL', known_reason],
         'mmp/mmp_inactive_import': ['FAIL', known_reason],
-        'refreserv/refreserv_raidz': ['FAIL', known_reason],
-        'rsend/rsend_007_pos': ['FAIL', known_reason],
-        'rsend/rsend_010_pos': ['FAIL', known_reason],
-        'rsend/rsend_011_pos': ['FAIL', known_reason],
-        'snapshot/rollback_003_pos': ['FAIL', known_reason],
         'zvol/zvol_misc/zvol_misc_snapdev': ['FAIL', '12621'],
         'zvol/zvol_misc/zvol_misc_volmode': ['FAIL', known_reason],
     })
@@ -380,10 +359,33 @@ def process_results(pathname):
     return d
 
 
+class ListMaybesAction(argparse.Action):
+    def __init__(self,
+                 option_strings,
+                 dest="SUPPRESS",
+                 default="SUPPRESS",
+                 help="list flaky tests and exit"):
+        super(ListMaybesAction, self).__init__(
+            option_strings=option_strings,
+            dest=dest,
+            default=default,
+            nargs=0,
+            help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        for test in maybe:
+            print(test)
+        sys.exit(0)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        usage('usage: %s <pathname>' % sys.argv[0])
-    results = process_results(sys.argv[1])
+    parser = argparse.ArgumentParser(description='Analyze ZTS logs')
+    parser.add_argument('logfile')
+    parser.add_argument('--list-maybes', action=ListMaybesAction)
+    parser.add_argument('--no-maybes', action='store_false', dest='maybes')
+    args = parser.parse_args()
+
+    results = process_results(args.logfile)
 
     if summary['total'] == 0:
         print("\n\nNo test results were found.")
@@ -392,6 +394,7 @@ if __name__ == "__main__":
 
     expected = []
     unexpected = []
+    all_maybes = True
 
     for test in list(results.keys()):
         if results[test] == "PASS":
@@ -404,11 +407,16 @@ if __name__ == "__main__":
             if setup in maybe and maybe[setup][0] == "SKIP":
                 continue
 
-        if ((test not in known or results[test] not in known[test][0]) and
-                (test not in maybe or results[test] not in maybe[test][0])):
-            unexpected.append(test)
-        else:
+        if (test in known and results[test] in known[test][0]):
             expected.append(test)
+        elif test in maybe and results[test] in maybe[test][0]:
+            if results[test] == 'SKIP' or args.maybes:
+                expected.append(test)
+            elif not args.maybes:
+                unexpected.append(test)
+        else:
+            unexpected.append(test)
+            all_maybes = False
 
     print("\nTests with results other than PASS that are expected:")
     for test in sorted(expected):
@@ -454,5 +462,7 @@ if __name__ == "__main__":
 
     if len(unexpected) == 0:
         sys.exit(0)
+    elif not args.maybes and all_maybes:
+        sys.exit(2)
     else:
         sys.exit(1)

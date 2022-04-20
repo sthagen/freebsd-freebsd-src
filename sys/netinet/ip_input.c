@@ -82,7 +82,6 @@ __FBSDID("$FreeBSD$");
 #include <machine/in_cksum.h>
 #include <netinet/ip_carp.h>
 #include <netinet/in_rss.h>
-#include <netinet/ip_mroute.h>
 
 #include <netipsec/ipsec_support.h>
 
@@ -301,12 +300,10 @@ SYSCTL_PROC(_net_inet_ip, IPCTL_INTRDQDROPS, intr_direct_queue_drops,
  * IP initialization: fill in IP protocol switch table.
  * All protocols not implemented in kernel go to raw IP protocol handler.
  */
-void
-ip_init(void)
+static void
+ip_vnet_init(void *arg __unused)
 {
 	struct pfil_head_args args;
-	struct protosw *pr;
-	int i;
 
 	CK_STAILQ_INIT(&V_in_ifaddrhead);
 	V_in_ifaddrhashtbl = hashinit(INADDR_NHASH, M_IFADDR, &V_in_ifaddrhmask);
@@ -332,23 +329,27 @@ ip_init(void)
 		printf("%s: WARNING: unable to register output helper hook\n",
 		    __func__);
 
-	/* Skip initialization of globals for non-default instances. */
 #ifdef VIMAGE
-	if (!IS_DEFAULT_VNET(curvnet)) {
-		netisr_register_vnet(&ip_nh);
+	netisr_register_vnet(&ip_nh);
 #ifdef	RSS
-		netisr_register_vnet(&ip_direct_nh);
+	netisr_register_vnet(&ip_direct_nh);
 #endif
-		return;
-	}
 #endif
+}
+VNET_SYSINIT(ip_vnet_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_FOURTH,
+    ip_vnet_init, NULL);
+
+
+static void
+ip_init(const void *unused __unused)
+{
+	struct protosw *pr;
 
 	pr = pffindproto(PF_INET, IPPROTO_RAW, SOCK_RAW);
-	if (pr == NULL)
-		panic("ip_init: PF_INET not found");
+	KASSERT(pr, ("%s: PF_INET not found", __func__));
 
 	/* Initialize the entire ip_protox[] array to IPPROTO_RAW. */
-	for (i = 0; i < IPPROTO_MAX; i++)
+	for (int i = 0; i < IPPROTO_MAX; i++)
 		ip_protox[i] = pr - inetsw;
 	/*
 	 * Cycle through IP protocols and put them into the appropriate place
@@ -368,6 +369,7 @@ ip_init(void)
 	netisr_register(&ip_direct_nh);
 #endif
 }
+SYSINIT(ip_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_THIRD, ip_init, NULL);
 
 #ifdef VIMAGE
 static void
@@ -445,7 +447,6 @@ ip_direct_input(struct mbuf *m)
 void
 ip_input(struct mbuf *m)
 {
-	MROUTER_RLOCK_TRACKER;
 	struct ip *ip = NULL;
 	struct in_ifaddr *ia = NULL;
 	struct ifaddr *ifa;
@@ -560,8 +561,9 @@ tooshort:
 
 	/*
 	 * Try to forward the packet, but if we fail continue.
-	 * ip_tryforward() does not generate redirects, so fall
-	 * through to normal processing if redirects are required.
+	 * ip_tryforward() may generate redirects these days.
+	 * XXX the logic below falling through to normal processing
+	 * if redirects are required should be revisited as well.
 	 * ip_tryforward() does inbound and outbound packet firewall
 	 * processing. If firewall has decided that destination becomes
 	 * our local address, it sets M_FASTFWD_OURS flag. In this
@@ -574,6 +576,10 @@ tooshort:
 	    IPSEC_CAPS(ipv4, m, IPSEC_CAP_OPERABLE) == 0)
 #endif
 	    ) {
+		/*
+		 * ip_dooptions() was run so we can ignore the source route (or
+		 * any IP options case) case for redirects in ip_tryforward().
+		 */
 		if ((m = ip_tryforward(m)) == NULL)
 			return;
 		if (m->m_flags & M_FASTFWD_OURS) {
@@ -736,7 +742,6 @@ passin:
 		ia = NULL;
 	}
 	if (IN_MULTICAST(ntohl(ip->ip_dst.s_addr))) {
-		MROUTER_RLOCK();
 		/*
 		 * RFC 3927 2.7: Do not forward multicast packets from
 		 * IN_LINKLOCAL.
@@ -751,7 +756,6 @@ passin:
 			 * must be discarded, else it may be accepted below.
 			 */
 			if (ip_mforward && ip_mforward(ip, ifp, m, 0) != 0) {
-				MROUTER_RUNLOCK();
 				IPSTAT_INC(ips_cantforward);
 				m_freem(m);
 				return;
@@ -763,12 +767,10 @@ passin:
 			 * host belongs to their destination groups.
 			 */
 			if (ip->ip_p == IPPROTO_IGMP) {
-				MROUTER_RUNLOCK();
 				goto ours;
 			}
 			IPSTAT_INC(ips_forward);
 		}
-		MROUTER_RUNLOCK();
 		/*
 		 * Assume the packet is for us, to avoid prematurely taking
 		 * a lock on the in_multi hash. Protocols must perform
@@ -1281,8 +1283,7 @@ ip_savecontrol(struct inpcb *inp, struct mbuf **mp, struct ip *ip,
 		struct sockaddr_dl *sdp;
 		struct sockaddr_dl *sdl2 = &sdlbuf.sdl;
 
-		if ((ifp = m->m_pkthdr.rcvif) &&
-		    ifp->if_index && ifp->if_index <= V_if_index) {
+		if ((ifp = m->m_pkthdr.rcvif)) {
 			sdp = (struct sockaddr_dl *)ifp->if_addr->ifa_addr;
 			/*
 			 * Change our mind and don't try copy.

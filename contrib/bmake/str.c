@@ -1,4 +1,4 @@
-/*	$NetBSD: str.c,v 1.85 2021/05/30 21:16:54 rillig Exp $	*/
+/*	$NetBSD: str.c,v 1.89 2022/03/03 19:50:01 rillig Exp $	*/
 
 /*
  * Copyright (c) 1988, 1989, 1990, 1993
@@ -71,7 +71,11 @@
 #include "make.h"
 
 /*	"@(#)str.c	5.8 (Berkeley) 6/1/90"	*/
-MAKE_RCSID("$NetBSD: str.c,v 1.85 2021/05/30 21:16:54 rillig Exp $");
+MAKE_RCSID("$NetBSD: str.c,v 1.89 2022/03/03 19:50:01 rillig Exp $");
+
+
+static HashTable interned_strings;
+
 
 /* Return the concatenation of s1 and s2, freshly allocated. */
 char *
@@ -188,10 +192,9 @@ Substring_Words(const char *str, bool expand)
 
 			*word_end++ = '\0';
 			if (words_len == words_cap) {
-				size_t new_size;
 				words_cap *= 2;
-				new_size = (words_cap + 1) * sizeof(words[0]);
-				words = bmake_realloc(words, new_size);
+				words = bmake_realloc(words,
+				    (words_cap + 1) * sizeof(words[0]));
 			}
 			words[words_len++] =
 			    Substring_Init(word_start, word_end - 1);
@@ -361,9 +364,9 @@ Str_Match(const char *str, const char *pat)
 				if (pat[1] == '-') {
 					if (pat[2] == '\0')
 						return neg;
-					if (*pat <= *str && pat[2] >= *str)
+					if (pat[0] <= *str && *str <= pat[2])
 						break;
-					if (*pat >= *str && pat[2] <= *str)
+					if (pat[2] <= *str && *str <= pat[0])
 						break;
 					pat += 2;
 				}
@@ -395,4 +398,25 @@ Str_Match(const char *str, const char *pat)
 		pat++;
 		str++;
 	}
+}
+
+void
+Str_Intern_Init(void)
+{
+	HashTable_Init(&interned_strings);
+}
+
+void
+Str_Intern_End(void)
+{
+#ifdef CLEANUP
+	HashTable_Done(&interned_strings);
+#endif
+}
+
+/* Return a canonical instance of str, with unlimited lifetime. */
+const char *
+Str_Intern(const char *str)
+{
+	return HashTable_CreateEntry(&interned_strings, str, NULL)->key;
 }

@@ -625,7 +625,7 @@ static int bce_rx_quick_cons_trip_int = DEFAULT_RX_QUICK_CONS_TRIP_INT;
 #endif
 SYSCTL_UINT(_hw_bce, OID_AUTO, rx_quick_cons_trip_int, CTLFLAG_RDTUN,
     &bce_rx_quick_cons_trip_int, 0,
-    "Receive BD trip point duirng interrupts");
+    "Receive BD trip point during interrupts");
 
 /* Allowable values are 1 ... 100 */
 #ifdef BCE_DEBUG
@@ -7119,10 +7119,11 @@ bce_tso_setup(struct bce_softc *sc, struct mbuf **m_head, u16 *flags)
 	struct ip *ip;
 	struct tcphdr *th;
 	u16 etype;
-	int hdr_len, ip_hlen = 0, tcp_hlen = 0, ip_len = 0;
+	int hdr_len __unused, ip_len __unused, ip_hlen = 0, tcp_hlen = 0;
 
 	DBRUN(sc->tso_frames_requested++);
 
+	ip_len = 0;
 	/* Controller may modify mbuf chains. */
 	if (M_WRITABLE(*m_head) == 0) {
 		m = m_dup(*m_head, M_NOWAIT);
@@ -7431,7 +7432,7 @@ bce_start_locked(struct ifnet *ifp)
 	struct bce_softc *sc = ifp->if_softc;
 	struct mbuf *m_head = NULL;
 	int count = 0;
-	u16 tx_prod, tx_chain_prod;
+	u16 tx_prod, tx_chain_prod __unused;
 
 	DBENTER(BCE_VERBOSE_SEND | BCE_VERBOSE_CTX);
 
@@ -7995,7 +7996,7 @@ bce_set_rx_mode(struct bce_softc *sc)
 		REG_WR(sc, BCE_EMAC_RX_MODE, rx_mode);
 	}
 
-	/* Disable and clear the exisitng sort before enabling a new sort. */
+	/* Disable and clear the existing sort before enabling a new sort. */
 	REG_WR(sc, BCE_RPM_SORT_USER0, 0x0);
 	REG_WR(sc, BCE_RPM_SORT_USER0, sort_mode);
 	REG_WR(sc, BCE_RPM_SORT_USER0, sort_mode | BCE_RPM_SORT_USER0_ENA);

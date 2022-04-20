@@ -834,6 +834,15 @@ tcp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	p(tcps_ecn_rcwnd, "\t{:congestion-reductions/%ju} "
 	    "{N:/time%s ECN reduced the congestion window}\n");
 
+	p(tcps_ace_nect, "\t{:ace-nonect-syn/%ju} "
+	    "{N:/ACE SYN packet%s with Non-ECT}\n");
+	p(tcps_ace_ect0, "\t{:ace-ect0-syn/%ju} "
+	    "{N:/ACE SYN packet%s with ECT0}\n");
+	p(tcps_ace_ect1, "\t{:ace-ect1-syn/%ju} "
+	    "{N:/ACE SYN packet%s with ECT1}\n");
+	p(tcps_ace_ce, "\t{:ace-ce-syn/%ju} "
+	    "{N:/ACE SYN packet%s with CE}\n");
+
 	xo_close_container("ecn");
 	xo_open_container("tcp-signature");
 	p(tcps_sig_rcvgoodsig, "\t{:received-good-signature/%ju} "
@@ -857,13 +866,23 @@ tcp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	    "{N:/Path MTU discovery black hole detection min MSS activation%s}\n");
 	p(tcps_pmtud_blackhole_failed, "\t{:pmtud-failed/%ju} "
 	    "{N:/Path MTU discovery black hole detection failure%s}\n");
+
+	xo_close_container("pmtud");
+	xo_open_container("tw");
+
+	p(tcps_tw_responds, "\t{:tw_responds/%ju} "
+	    "{N:/time%s connection in TIME-WAIT responded with ACK}\n");
+	p(tcps_tw_recycles, "\t{:tw_recycles/%ju} "
+	    "{N:/time%s connection in TIME-WAIT was actively recycled}\n");
+	p(tcps_tw_resets, "\t{:tw_resets/%ju} "
+	    "{N:/time%s connection in TIME-WAIT responded with RST}\n");
+
+	xo_close_container("tw");
  #undef p
  #undef p1a
  #undef p2
  #undef p2a
  #undef p3
-	xo_close_container("pmtud");
-
 
 	xo_open_container("TCP connection count by state");
 	xo_emit("{T:/TCP connection count by state}:\n");

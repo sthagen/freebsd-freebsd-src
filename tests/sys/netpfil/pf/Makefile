@@ -9,6 +9,7 @@ ATF_TESTS_SH+=	altq \
 		anchor \
 		checksum \
 		dup \
+		ether \
 		forward \
 		fragmentation \
 		get_state \
@@ -16,10 +17,12 @@ ATF_TESTS_SH+=	altq \
 		killstate \
 		macro \
 		map_e \
+		match \
 		names \
 		nat \
 		pass_block \
 		pfsync	\
+		prio \
 		proxy \
 		rdr \
 		ridentifier \
@@ -35,11 +38,13 @@ ATF_TESTS_SH+=	altq \
 
 ${PACKAGE}FILES+=	CVE-2019-5597.py \
 			CVE-2019-5598.py \
+			daytime_inetd.conf \
 			echo_inetd.conf \
 			fragcommon.py \
 			frag-overindex.py \
 			frag-overlimit.py \
 			frag-overreplace.py \
+			pfsync_defer.py \
 			utils.subr
 
 ${PACKAGE}FILESMODE_CVE-2019-5597.py=	0555
@@ -48,5 +53,6 @@ ${PACKAGE}FILESMODE_fragcommon.py=	0555
 ${PACKAGE}FILESMODE_frag-overindex.py=	0555
 ${PACKAGE}FILESMODE_frag-overlimit.py=	0555
 ${PACKAGE}FILESMODE_frag-overreplace.py=	0555
+${PACKAGE}FILESMODE_pfsync_defer.py=	0555
 
 .include <bsd.test.mk>

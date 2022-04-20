@@ -202,6 +202,13 @@ SYSCTL_INT(_kern, OID_AUTO, cryptodevallowsoft, CTLFLAG_RWTUN,
 	   "Enable/disable use of software crypto by /dev/crypto");
 #endif
 
+#ifdef DIAGNOSTIC
+bool crypto_destroyreq_check;
+SYSCTL_BOOL(_kern_crypto, OID_AUTO, destroyreq_check, CTLFLAG_RWTUN,
+	   &crypto_destroyreq_check, 0,
+	   "Enable checks when destroying a request");
+#endif
+
 MALLOC_DEFINE(M_CRYPTO_DATA, "crypto", "crypto session records");
 
 static	void crypto_dispatch_thread(void *arg);
@@ -511,6 +518,8 @@ crypto_auth_hash(const struct crypto_session_params *csp)
 		return (&auth_hash_null);
 	case CRYPTO_RIPEMD160_HMAC:
 		return (&auth_hash_hmac_ripemd_160);
+	case CRYPTO_RIPEMD160:
+		return (&auth_hash_ripemd_160);
 	case CRYPTO_SHA1:
 		return (&auth_hash_sha1);
 	case CRYPTO_SHA2_224:
@@ -559,8 +568,8 @@ crypto_cipher(const struct crypto_session_params *csp)
 {
 
 	switch (csp->csp_cipher_alg) {
-	case CRYPTO_RIJNDAEL128_CBC:
-		return (&enc_xform_rijndael128);
+	case CRYPTO_AES_CBC:
+		return (&enc_xform_aes_cbc);
 	case CRYPTO_AES_XTS:
 		return (&enc_xform_aes_xts);
 	case CRYPTO_AES_ICM:
@@ -577,6 +586,8 @@ crypto_cipher(const struct crypto_session_params *csp)
 		return (&enc_xform_ccm);
 	case CRYPTO_CHACHA20_POLY1305:
 		return (&enc_xform_chacha20_poly1305);
+	case CRYPTO_XCHACHA20_POLY1305:
+		return (&enc_xform_xchacha20_poly1305);
 	default:
 		return (NULL);
 	}
@@ -669,6 +680,7 @@ static enum alg_type {
 	[CRYPTO_AES_CCM_CBC_MAC] = ALG_KEYED_DIGEST,
 	[CRYPTO_AES_CCM_16] = ALG_AEAD,
 	[CRYPTO_CHACHA20_POLY1305] = ALG_AEAD,
+	[CRYPTO_XCHACHA20_POLY1305] = ALG_AEAD,
 };
 
 static enum alg_type
@@ -851,11 +863,20 @@ check_csp(const struct crypto_session_params *csp)
 				return (false);
 			break;
 		case CRYPTO_AES_NIST_GCM_16:
-			if (csp->csp_auth_mlen > 16)
+			if (csp->csp_auth_mlen > AES_GMAC_HASH_LEN)
+				return (false);
+
+			if (csp->csp_ivlen != AES_GCM_IV_LEN)
 				return (false);
 			break;
 		case CRYPTO_CHACHA20_POLY1305:
 			if (csp->csp_ivlen != 8 && csp->csp_ivlen != 12)
+				return (false);
+			if (csp->csp_auth_mlen > POLY1305_HASH_LEN)
+				return (false);
+			break;
+		case CRYPTO_XCHACHA20_POLY1305:
+			if (csp->csp_ivlen != XCHACHA20_POLY1305_IV_LEN)
 				return (false);
 			if (csp->csp_auth_mlen > POLY1305_HASH_LEN)
 				return (false);
@@ -1352,7 +1373,8 @@ crp_sanity(struct cryptop *crp)
 		KASSERT(crp->crp_payload_output_start == 0,
 		    ("payload output start non-zero without output buffer"));
 	} else {
-		KASSERT(crp->crp_payload_output_start < olen,
+		KASSERT(crp->crp_payload_output_start == 0 ||
+		    crp->crp_payload_output_start < olen,
 		    ("invalid payload output start"));
 		KASSERT(crp->crp_payload_output_start +
 		    crp->crp_payload_length <= olen,
@@ -1565,6 +1587,9 @@ crypto_destroyreq(struct cryptop *crp)
 		struct cryptop *crp2;
 		struct crypto_ret_worker *ret_worker;
 
+		if (!crypto_destroyreq_check)
+			return;
+
 		CRYPTO_Q_LOCK();
 		TAILQ_FOREACH(crp2, &crp_q, crp_next) {
 			KASSERT(crp2 != crp,
@@ -1619,6 +1644,27 @@ crypto_getreq(crypto_session_t cses, int how)
 	if (crp != NULL)
 		_crypto_initreq(crp, cses);
 	return (crp);
+}
+
+/*
+ * Clone a crypto request, but associate it with the specified session
+ * rather than inheriting the session from the original request.  The
+ * fields describing the request buffers are copied, but not the
+ * opaque field or callback function.
+ */
+struct cryptop *
+crypto_clonereq(struct cryptop *crp, crypto_session_t cses, int how)
+{
+	struct cryptop *new;
+
+	MPASS((crp->crp_flags & CRYPTO_F_DONE) == 0);
+	new = crypto_getreq(cses, how);
+	if (new == NULL)
+		return (NULL);
+
+	memcpy(&new->crp_startcopy, &crp->crp_startcopy,
+	    __rangeof(struct cryptop, crp_startcopy, crp_endcopy));
+	return (new);
 }
 
 /*

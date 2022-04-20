@@ -197,7 +197,7 @@
 #define EM_RADV		64
 
 /*
- * This parameter controls whether or not autonegotation is enabled.
+ * This parameter controls whether or not autonegotiation is enabled.
  *              0 - Disable autonegotiation
  *              1 - Enable  autonegotiation
  */
@@ -439,7 +439,6 @@ struct em_rx_queue {
 
 /* Our softc structure */
 struct e1000_softc {
-	struct ifnet 		*ifp;
 	struct e1000_hw		hw;
 
 	if_softc_ctx_t		shared;

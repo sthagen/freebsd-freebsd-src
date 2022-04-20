@@ -33,9 +33,9 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.\" $OpenBSD: sshd.8,v 1.316 2021/07/30 14:28:13 jmc Exp $
+.\" $OpenBSD: sshd.8,v 1.318 2022/03/31 17:27:27 naddy Exp $
 .\" $FreeBSD$
-.Dd $Mdocdate: July 30 2021 $
+.Dd $Mdocdate: March 31 2022 $
 .Dt SSHD 8
 .Os
 .Sh NAME
@@ -304,7 +304,12 @@ things like allocating a pseudo-tty, forwarding X11 connections,
 forwarding TCP connections, or forwarding the authentication agent
 connection over the secure channel.
 .Pp
-After this, the client either requests a shell or execution of a command.
+After this, the client either requests an interactive shell or execution
+or a non-interactive command, which
+.Nm
+will execute via the user's shell using its
+.Fl c
+option.
 The sides then enter session mode.
 In this mode, either side may send
 data at any time, and such data is forwarded to/from the shell or
@@ -647,7 +652,7 @@ Enable all restrictions, i.e. disable port, agent and X11 forwarding,
 as well as disabling PTY allocation
 and execution of
 .Pa ~/.ssh/rc .
-If any future restriction capabilities are added to authorized_keys files
+If any future restriction capabilities are added to authorized_keys files,
 they will be included in this set.
 .It Cm tunnel="n"
 Force a

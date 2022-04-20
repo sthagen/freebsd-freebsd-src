@@ -93,7 +93,6 @@ static struct vop_vector fdesc_vnodeops = {
 };
 VFS_VOP_VECTOR_REGISTER(fdesc_vnodeops);
 
-static void fdesc_insmntque_dtr(struct vnode *, void *);
 static void fdesc_remove_entry(struct fdescnode *);
 
 /*
@@ -118,17 +117,6 @@ fdesc_uninit(struct vfsconf *vfsp)
 	hashdestroy(fdhashtbl, M_CACHE, fdhash);
 	mtx_destroy(&fdesc_hashmtx);
 	return (0);
-}
-
-/*
- * If allocating vnode fails, call this.
- */
-static void
-fdesc_insmntque_dtr(struct vnode *vp, void *arg)
-{
-
-	vgone(vp);
-	vput(vp);
 }
 
 /*
@@ -159,10 +147,8 @@ fdesc_allocvp(fdntype ftype, unsigned fd_fd, int ix, struct mount *mp,
 	struct fdhashhead *fc;
 	struct fdescnode *fd, *fd2;
 	struct vnode *vp, *vp2;
-	struct thread *td;
 	int error;
 
-	td = curthread;
 	fc = FD_NHASH(ix);
 loop:
 	mtx_lock(&fdesc_hashmtx);
@@ -205,8 +191,10 @@ loop:
 	fd->fd_ix = ix;
 	if (ftype == Fdesc && fmp->flags & FMNT_LINRDLNKF)
 		vp->v_vflag |= VV_READLINK;
-	error = insmntque1(vp, mp, fdesc_insmntque_dtr, NULL);
+	error = insmntque1(vp, mp);
 	if (error != 0) {
+		vgone(vp);
+		vput(vp);
 		*vpp = NULLVP;
 		return (error);
 	}

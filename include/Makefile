@@ -51,7 +51,7 @@ LSUBDIRS=	dev/acpica dev/agp dev/ciss dev/filemon dev/firewire \
 	fs/procfs fs/smbfs fs/udf fs/unionfs \
 	geom/cache geom/concat geom/eli geom/gate geom/journal geom/label \
 	geom/mirror geom/mountver geom/multipath geom/nop \
-	geom/raid geom/raid3 geom/shsec geom/stripe geom/virstor \
+	geom/raid geom/raid3 geom/shsec geom/stripe geom/union geom/virstor \
 	net/altq \
 	net/route \
 	netgraph/atm netgraph/netflow \
@@ -177,7 +177,7 @@ PCIDIR=		${INCLUDEDIR}/dev/pci
 VERIEXEC=	veriexec_ioctl.h
 VERIEXECDIR=	${INCLUDEDIR}/dev/veriexec
 
-.PATH: ${SRCTOP}/sys/contrib/ipfilter/netinet
+.PATH: ${SRCTOP}/sys/netpfil/ipfilter/netinet
 IPFILTER=	ip_auth.h \
 		ip_compat.h \
 		ip_dstlist.h \
@@ -408,7 +408,7 @@ symlinks: .PHONY .META
 .endfor
 .if ${MK_IPFILTER} != "no"
 	cd ${SRCTOP}; ${INSTALL_SYMLINK} ${TAG_ARGS:D${TAG_ARGS},dev} \
-	    $$(printf '../../../%s ' sys/contrib/ipfilter/netinet/*.h) \
+	    $$(printf '../../../%s ' sys/netpfil/ipfilter/netinet/*.h) \
 	    ${SDESTDIR}${INCLUDEDIR}/netinet;
 .endif
 .if ${MK_PF} != "no"

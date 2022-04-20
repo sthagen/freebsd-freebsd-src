@@ -823,21 +823,6 @@ tmpfs_destroy_vobject(struct vnode *vp, vm_object_t obj)
 }
 
 /*
- * Need to clear v_object for insmntque failure.
- */
-static void
-tmpfs_insmntque_dtr(struct vnode *vp, void *dtr_arg)
-{
-
-	tmpfs_destroy_vobject(vp, vp->v_object);
-	vp->v_object = NULL;
-	vp->v_data = NULL;
-	vp->v_op = &dead_vnodeops;
-	vgone(vp);
-	vput(vp);
-}
-
-/*
  * Allocates a new vnode for the node node or returns a new reference to
  * an existing one if the node had already a vnode referencing it.  The
  * resulting locked vnode is returned in *vpp.
@@ -967,7 +952,7 @@ loop:
 		vp->v_object = object;
 		object->un_pager.swp.swp_tmpfs = vp;
 		vm_object_set_flag(object, OBJ_TMPFS);
-		vn_irflag_set_locked(vp, VIRF_PGREAD);
+		vn_irflag_set_locked(vp, VIRF_PGREAD | VIRF_TEXT_REF);
 		VI_UNLOCK(vp);
 		VM_OBJECT_WUNLOCK(object);
 		break;
@@ -983,9 +968,17 @@ loop:
 	if (vp->v_type != VFIFO)
 		VN_LOCK_ASHARE(vp);
 
-	error = insmntque1(vp, mp, tmpfs_insmntque_dtr, NULL);
-	if (error != 0)
+	error = insmntque1(vp, mp);
+	if (error != 0) {
+		/* Need to clear v_object for insmntque failure. */
+		tmpfs_destroy_vobject(vp, vp->v_object);
+		vp->v_object = NULL;
+		vp->v_data = NULL;
+		vp->v_op = &dead_vnodeops;
+		vgone(vp);
+		vput(vp);
 		vp = NULL;
+	}
 
 unlock:
 	TMPFS_NODE_LOCK(node);
@@ -1527,7 +1520,7 @@ tmpfs_dir_getdotdotdent(struct tmpfs_mount *tm, struct tmpfs_node *node,
  */
 int
 tmpfs_dir_getdents(struct tmpfs_mount *tm, struct tmpfs_node *node,
-    struct uio *uio, int maxcookies, u_long *cookies, int *ncookies)
+    struct uio *uio, int maxcookies, uint64_t *cookies, int *ncookies)
 {
 	struct tmpfs_dir_cursor dc;
 	struct tmpfs_dirent *de, *nde;

@@ -42,6 +42,8 @@
  *	$NetBSD: krpc_subr.c,v 1.10 1995/08/08 20:43:43 gwr Exp $
  */
 
+#define IN_HISTORICAL_NETS		/* include class masks */
+
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
@@ -1333,7 +1335,6 @@ bootpc_decode_reply(struct nfsv3_diskless *nd, struct bootpc_ifcontext *ifctx,
     struct bootpc_globalcontext *gctx)
 {
 	char *p, *s;
-	unsigned int ip;
 
 	ifctx->gotgw = 0;
 	ifctx->gotnetmask = 0;
@@ -1343,8 +1344,6 @@ bootpc_decode_reply(struct nfsv3_diskless *nd, struct bootpc_ifcontext *ifctx,
 	clear_sinaddr(&ifctx->gw);
 
 	ifctx->myaddr.sin_addr = ifctx->reply.yiaddr;
-
-	ip = ntohl(ifctx->myaddr.sin_addr.s_addr);
 
 	printf("%s at ", ifctx->ireq.ifr_name);
 	print_sin_addr(&ifctx->myaddr);
@@ -1486,18 +1485,23 @@ bootpc_decode_reply(struct nfsv3_diskless *nd, struct bootpc_ifcontext *ifctx,
 
 	if (ifctx->gotnetmask == 0) {
 		/*
-		 * If there is no netmask, use a default, but we really
-		 * need the right mask from the server.
+		 * If there is no netmask, use historical default,
+		 * but we really need the right mask from the server.
 		 */
 		printf("%s: no netmask received!\n", ifctx->ireq.ifr_name);
-		ifctx->netmask.sin_addr.s_addr = htonl(IN_NETMASK_DEFAULT);
+		if (IN_CLASSA(ntohl(ifctx->myaddr.sin_addr.s_addr)))
+			ifctx->netmask.sin_addr.s_addr = htonl(IN_CLASSA_NET);
+		else if (IN_CLASSB(ntohl(ifctx->myaddr.sin_addr.s_addr)))
+			ifctx->netmask.sin_addr.s_addr = htonl(IN_CLASSB_NET);
+		else
+			ifctx->netmask.sin_addr.s_addr = htonl(IN_CLASSC_NET);
 	}
 }
 
 void
 bootpc_init(void)
 {
-	struct bootpc_ifcontext *ifctx;		/* Interface BOOTP contexts */
+	struct bootpc_ifcontext *ifctx = NULL;	/* Interface BOOTP contexts */
 	struct bootpc_globalcontext *gctx; 	/* Global BOOTP context */
 	struct ifnet *ifp;
 	struct sockaddr_dl *sdl;
@@ -1567,9 +1571,13 @@ bootpc_init(void)
 		}
 		ifcnt++;
 	}
+
 	IFNET_RUNLOCK();
-	if (ifcnt == 0)
-		panic("%s: no eligible interfaces", __func__);
+	if (ifcnt == 0) {
+		printf("WARNING: BOOTP found no eligible network interfaces, skipping!\n");
+		goto out;
+	}
+
 	for (; ifcnt > 0; ifcnt--)
 		allocifctx(gctx);
 #endif

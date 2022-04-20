@@ -78,6 +78,7 @@
     <elf-symbol name='fnvpair_value_uint64' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='fnvpair_value_uint8' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='libspl_assertf' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
+    <elf-symbol name='libspl_set_assert_ok' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='nv_alloc_fini' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='nv_alloc_init' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='nv_alloc_reset' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
@@ -230,7 +231,6 @@
     <elf-symbol name='nvpair_value_uint8_array' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
   </elf-function-symbols>
   <elf-variable-symbols>
-    <elf-symbol name='libspl_assert_ok' size='4' type='object-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='nv_alloc_nosleep' size='8' type='object-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='nv_fixed_ops' size='8' type='object-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
   </elf-variable-symbols>
@@ -262,7 +262,7 @@
       <return type-id='5ce45b60'/>
     </function-decl>
     <function-decl name='fnvlist_dup' mangled-name='fnvlist_dup' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_dup'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <return type-id='5ce45b60'/>
     </function-decl>
     <function-decl name='fnvlist_merge' mangled-name='fnvlist_merge' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_merge'>
@@ -359,84 +359,84 @@
     <function-decl name='fnvlist_add_boolean_array' mangled-name='fnvlist_add_boolean_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_boolean_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='37e3bd22' name='val'/>
+      <parameter type-id='c5f6c15b' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_byte_array' mangled-name='fnvlist_add_byte_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_byte_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='45b65157' name='val'/>
+      <parameter type-id='d1db479e' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_int8_array' mangled-name='fnvlist_add_int8_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_int8_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='256d5229' name='val'/>
+      <parameter type-id='a06445da' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_uint8_array' mangled-name='fnvlist_add_uint8_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_uint8_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='ae3e8ca6' name='val'/>
+      <parameter type-id='9f7200cf' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_int16_array' mangled-name='fnvlist_add_int16_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_int16_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='f76f73d0' name='val'/>
+      <parameter type-id='a3eb883d' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_uint16_array' mangled-name='fnvlist_add_uint16_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_uint16_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='8a121f49' name='val'/>
+      <parameter type-id='1b7d11c6' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_int32_array' mangled-name='fnvlist_add_int32_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_int32_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='4aafb922' name='val'/>
+      <parameter type-id='1f526493' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_uint32_array' mangled-name='fnvlist_add_uint32_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_uint32_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='90421557' name='val'/>
+      <parameter type-id='a6798dcc' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_int64_array' mangled-name='fnvlist_add_int64_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_int64_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='cb785ebf' name='val'/>
+      <parameter type-id='505bed1a' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_uint64_array' mangled-name='fnvlist_add_uint64_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_uint64_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='5d6479ae' name='val'/>
+      <parameter type-id='713a56f5' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_string_array' mangled-name='fnvlist_add_string_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_string_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='f319fae0' name='val'/>
+      <parameter type-id='13956559' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='fnvlist_add_nvlist_array' mangled-name='fnvlist_add_nvlist_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_add_nvlist_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='857bb57e' name='val'/>
+      <parameter type-id='3bbfee2e' name='val'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='48b5725f'/>
     </function-decl>
@@ -456,57 +456,57 @@
       <return type-id='3fa542f0'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_boolean' mangled-name='fnvlist_lookup_boolean' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_boolean'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='c19b74c3'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_boolean_value' mangled-name='fnvlist_lookup_boolean_value' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_boolean_value'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='c19b74c3'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_byte' mangled-name='fnvlist_lookup_byte' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_byte'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='d8bf0010'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_int8' mangled-name='fnvlist_lookup_int8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_int8'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='ee31ee44'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_int16' mangled-name='fnvlist_lookup_int16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_int16'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='23bd8cb5'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_int32' mangled-name='fnvlist_lookup_int32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_int32'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='3ff5601b'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_int64' mangled-name='fnvlist_lookup_int64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_int64'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='9da381c4'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_uint8' mangled-name='fnvlist_lookup_uint8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_uint8'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='b96825af'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_uint16' mangled-name='fnvlist_lookup_uint16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_uint16'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='149c6638'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_uint32' mangled-name='fnvlist_lookup_uint32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_uint32'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='8f92235e'/>
     </function-decl>
     <function-decl name='fnvlist_lookup_uint64' mangled-name='fnvlist_lookup_uint64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvlist_lookup_uint64'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='9c313c2d'/>
     </function-decl>
@@ -581,43 +581,43 @@
       <return type-id='5d6479ae'/>
     </function-decl>
     <function-decl name='fnvpair_value_boolean_value' mangled-name='fnvpair_value_boolean_value' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_boolean_value'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='c19b74c3'/>
     </function-decl>
     <function-decl name='fnvpair_value_byte' mangled-name='fnvpair_value_byte' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_byte'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='d8bf0010'/>
     </function-decl>
     <function-decl name='fnvpair_value_int8' mangled-name='fnvpair_value_int8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_int8'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='ee31ee44'/>
     </function-decl>
     <function-decl name='fnvpair_value_int16' mangled-name='fnvpair_value_int16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_int16'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='23bd8cb5'/>
     </function-decl>
     <function-decl name='fnvpair_value_int32' mangled-name='fnvpair_value_int32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_int32'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='3ff5601b'/>
     </function-decl>
     <function-decl name='fnvpair_value_int64' mangled-name='fnvpair_value_int64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_int64'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='9da381c4'/>
     </function-decl>
     <function-decl name='fnvpair_value_uint8' mangled-name='fnvpair_value_uint8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_uint8'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='b96825af'/>
     </function-decl>
     <function-decl name='fnvpair_value_uint16' mangled-name='fnvpair_value_uint16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_uint16'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='149c6638'/>
     </function-decl>
     <function-decl name='fnvpair_value_uint32' mangled-name='fnvpair_value_uint32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_uint32'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='8f92235e'/>
     </function-decl>
     <function-decl name='fnvpair_value_uint64' mangled-name='fnvpair_value_uint64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_uint64'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='9c313c2d'/>
     </function-decl>
     <function-decl name='fnvpair_value_string' mangled-name='fnvpair_value_string' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='fnvpair_value_string'>
@@ -631,9 +631,35 @@
   </abi-instr>
   <abi-instr address-size='64' path='../../module/nvpair/nvpair.c' language='LANG_C99'>
     <pointer-type-def type-id='37e3bd22' size-in-bits='64' id='03829398'/>
-    <qualified-type-def type-id='26a90f95' const='yes' id='57de658a'/>
-    <pointer-type-def type-id='57de658a' size-in-bits='64' id='f319fae0'/>
     <pointer-type-def type-id='9b23c9ad' size-in-bits='64' id='c0563f85'/>
+    <qualified-type-def type-id='c19b74c3' const='yes' id='12373e33'/>
+    <pointer-type-def type-id='12373e33' size-in-bits='64' id='c5f6c15b'/>
+    <qualified-type-def type-id='80f4b756' const='yes' id='b99c00c9'/>
+    <pointer-type-def type-id='b99c00c9' size-in-bits='64' id='13956559'/>
+    <qualified-type-def type-id='23bd8cb5' const='yes' id='75f7b0c5'/>
+    <pointer-type-def type-id='75f7b0c5' size-in-bits='64' id='a3eb883d'/>
+    <qualified-type-def type-id='3ff5601b' const='yes' id='922df12b'/>
+    <pointer-type-def type-id='922df12b' size-in-bits='64' id='1f526493'/>
+    <qualified-type-def type-id='9da381c4' const='yes' id='f07b7694'/>
+    <pointer-type-def type-id='f07b7694' size-in-bits='64' id='505bed1a'/>
+    <qualified-type-def type-id='ee31ee44' const='yes' id='721c32d4'/>
+    <pointer-type-def type-id='721c32d4' size-in-bits='64' id='a06445da'/>
+    <qualified-type-def type-id='8e8d4be3' const='yes' id='693c3853'/>
+    <pointer-type-def type-id='693c3853' size-in-bits='64' id='22cce67b'/>
+    <qualified-type-def type-id='22cce67b' const='yes' id='d2816df0'/>
+    <pointer-type-def type-id='d2816df0' size-in-bits='64' id='3bbfee2e'/>
+    <qualified-type-def type-id='57928edf' const='yes' id='642ee20f'/>
+    <pointer-type-def type-id='642ee20f' size-in-bits='64' id='dace003f'/>
+    <qualified-type-def type-id='d8bf0010' const='yes' id='a9125480'/>
+    <pointer-type-def type-id='a9125480' size-in-bits='64' id='d1db479e'/>
+    <qualified-type-def type-id='149c6638' const='yes' id='b01a5ac8'/>
+    <pointer-type-def type-id='b01a5ac8' size-in-bits='64' id='1b7d11c6'/>
+    <qualified-type-def type-id='8f92235e' const='yes' id='b9930aae'/>
+    <pointer-type-def type-id='b9930aae' size-in-bits='64' id='a6798dcc'/>
+    <qualified-type-def type-id='9c313c2d' const='yes' id='c3b7ba7d'/>
+    <pointer-type-def type-id='c3b7ba7d' size-in-bits='64' id='713a56f5'/>
+    <qualified-type-def type-id='b96825af' const='yes' id='2b61797f'/>
+    <pointer-type-def type-id='2b61797f' size-in-bits='64' id='9f7200cf'/>
     <pointer-type-def type-id='a0eb0f08' size-in-bits='64' id='7408d286'/>
     <pointer-type-def type-id='cebdd548' size-in-bits='64' id='e379e62d'/>
     <pointer-type-def type-id='95e97e5e' size-in-bits='64' id='7292109c'/>
@@ -689,13 +715,13 @@
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='nvlist_dup' mangled-name='nvlist_dup' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_dup'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='857bb57e' name='nvlp'/>
       <parameter type-id='95e97e5e' name='kmflag'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_xdup' mangled-name='nvlist_xdup' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_xdup'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='857bb57e' name='nvlp'/>
       <parameter type-id='11871392' name='nva'/>
       <return type-id='95e97e5e'/>
@@ -796,77 +822,77 @@
     <function-decl name='nvlist_add_boolean_array' mangled-name='nvlist_add_boolean_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_boolean_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='37e3bd22' name='a'/>
+      <parameter type-id='c5f6c15b' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_byte_array' mangled-name='nvlist_add_byte_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_byte_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='45b65157' name='a'/>
+      <parameter type-id='d1db479e' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_int8_array' mangled-name='nvlist_add_int8_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_int8_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='256d5229' name='a'/>
+      <parameter type-id='a06445da' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_uint8_array' mangled-name='nvlist_add_uint8_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_uint8_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='ae3e8ca6' name='a'/>
+      <parameter type-id='9f7200cf' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_int16_array' mangled-name='nvlist_add_int16_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_int16_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='f76f73d0' name='a'/>
+      <parameter type-id='a3eb883d' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_uint16_array' mangled-name='nvlist_add_uint16_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_uint16_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='8a121f49' name='a'/>
+      <parameter type-id='1b7d11c6' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_int32_array' mangled-name='nvlist_add_int32_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_int32_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='4aafb922' name='a'/>
+      <parameter type-id='1f526493' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_uint32_array' mangled-name='nvlist_add_uint32_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_uint32_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='90421557' name='a'/>
+      <parameter type-id='a6798dcc' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_int64_array' mangled-name='nvlist_add_int64_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_int64_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='cb785ebf' name='a'/>
+      <parameter type-id='505bed1a' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_uint64_array' mangled-name='nvlist_add_uint64_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_uint64_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='5d6479ae' name='a'/>
+      <parameter type-id='713a56f5' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_string_array' mangled-name='nvlist_add_string_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_string_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='f319fae0' name='a'/>
+      <parameter type-id='13956559' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
@@ -879,109 +905,109 @@
     <function-decl name='nvlist_add_nvlist' mangled-name='nvlist_add_nvlist' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_nvlist'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='5ce45b60' name='val'/>
+      <parameter type-id='22cce67b' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_add_nvlist_array' mangled-name='nvlist_add_nvlist_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_add_nvlist_array'>
       <parameter type-id='5ce45b60' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
-      <parameter type-id='857bb57e' name='a'/>
+      <parameter type-id='3bbfee2e' name='a'/>
       <parameter type-id='3502e3ff' name='n'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_next_nvpair' mangled-name='nvlist_next_nvpair' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_next_nvpair'>
       <parameter type-id='5ce45b60' name='nvl'/>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='3fa542f0'/>
     </function-decl>
     <function-decl name='nvlist_prev_nvpair' mangled-name='nvlist_prev_nvpair' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_prev_nvpair'>
       <parameter type-id='5ce45b60' name='nvl'/>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='3fa542f0'/>
     </function-decl>
     <function-decl name='nvlist_empty' mangled-name='nvlist_empty' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_empty'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <return type-id='c19b74c3'/>
     </function-decl>
     <function-decl name='nvpair_name' mangled-name='nvpair_name' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_name'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='26a90f95'/>
     </function-decl>
     <function-decl name='nvpair_type' mangled-name='nvpair_type' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_type'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='8d0687d2'/>
     </function-decl>
     <function-decl name='nvpair_type_is_array' mangled-name='nvpair_type_is_array' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_type_is_array'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_boolean' mangled-name='nvlist_lookup_boolean' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_boolean'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_boolean_value' mangled-name='nvlist_lookup_boolean_value' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_boolean_value'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='37e3bd22' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_byte' mangled-name='nvlist_lookup_byte' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_byte'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='45b65157' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_int8' mangled-name='nvlist_lookup_int8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_int8'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='256d5229' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_uint8' mangled-name='nvlist_lookup_uint8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_uint8'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='ae3e8ca6' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_int16' mangled-name='nvlist_lookup_int16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_int16'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='f76f73d0' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_uint16' mangled-name='nvlist_lookup_uint16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_uint16'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='8a121f49' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_int32' mangled-name='nvlist_lookup_int32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_int32'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='4aafb922' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_uint32' mangled-name='nvlist_lookup_uint32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_uint32'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='90421557' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_int64' mangled-name='nvlist_lookup_int64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_int64'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='cb785ebf' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_uint64' mangled-name='nvlist_lookup_uint64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_uint64'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='5d6479ae' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_lookup_double' mangled-name='nvlist_lookup_double' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_lookup_double'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <parameter type-id='7408d286' name='val'/>
       <return type-id='95e97e5e'/>
@@ -1109,62 +1135,62 @@
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvlist_exists' mangled-name='nvlist_exists' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvlist_exists'>
-      <parameter type-id='5ce45b60' name='nvl'/>
+      <parameter type-id='22cce67b' name='nvl'/>
       <parameter type-id='80f4b756' name='name'/>
       <return type-id='c19b74c3'/>
     </function-decl>
     <function-decl name='nvpair_value_boolean_value' mangled-name='nvpair_value_boolean_value' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_boolean_value'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='37e3bd22' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_byte' mangled-name='nvpair_value_byte' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_byte'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='45b65157' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_int8' mangled-name='nvpair_value_int8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_int8'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='256d5229' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_uint8' mangled-name='nvpair_value_uint8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_uint8'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='ae3e8ca6' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_int16' mangled-name='nvpair_value_int16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_int16'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='f76f73d0' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_uint16' mangled-name='nvpair_value_uint16' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_uint16'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='8a121f49' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_int32' mangled-name='nvpair_value_int32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_int32'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='4aafb922' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_uint32' mangled-name='nvpair_value_uint32' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_uint32'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='90421557' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_int64' mangled-name='nvpair_value_int64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_int64'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='cb785ebf' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_uint64' mangled-name='nvpair_value_uint64' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_uint64'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='5d6479ae' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='nvpair_value_double' mangled-name='nvpair_value_double' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='nvpair_value_double'>
-      <parameter type-id='3fa542f0' name='nvp'/>
+      <parameter type-id='dace003f' name='nvp'/>
       <parameter type-id='7408d286' name='val'/>
       <return type-id='95e97e5e'/>
     </function-decl>
@@ -1304,7 +1330,8 @@
     </function-decl>
   </abi-instr>
   <abi-instr address-size='64' path='../../module/nvpair/nvpair_alloc_fixed.c' language='LANG_C99'>
-    <var-decl name='nv_fixed_ops' type-id='ee1d4944' mangled-name='nv_fixed_ops' visibility='default' elf-symbol-id='nv_fixed_ops'/>
+    <qualified-type-def type-id='ee1d4944' const='yes' id='4b95388f'/>
+    <var-decl name='nv_fixed_ops' type-id='4b95388f' mangled-name='nv_fixed_ops' visibility='default' elf-symbol-id='nv_fixed_ops'/>
   </abi-instr>
   <abi-instr address-size='64' path='libnvpair.c' language='LANG_C99'>
     <type-decl name='char' size-in-bits='8' id='a84c031d'/>
@@ -2739,10 +2766,11 @@
     <pointer-type-def type-id='aca16c06' size-in-bits='64' id='ee1d4944'/>
     <pointer-type-def type-id='e9ff7293' size-in-bits='64' id='76da8447'/>
     <pointer-type-def type-id='cca08635' size-in-bits='64' id='11871392'/>
+    <qualified-type-def type-id='11871392' const='yes' id='e1cbfe1d'/>
     <pointer-type-def type-id='51a21b4b' size-in-bits='64' id='fe356f6f'/>
     <pointer-type-def type-id='1169c032' size-in-bits='64' id='520da3f4'/>
     <pointer-type-def type-id='9fff962e' size-in-bits='64' id='9ff7f508'/>
-    <var-decl name='nv_alloc_nosleep' type-id='11871392' mangled-name='nv_alloc_nosleep' visibility='default' elf-symbol-id='nv_alloc_nosleep'/>
+    <var-decl name='nv_alloc_nosleep' type-id='e1cbfe1d' mangled-name='nv_alloc_nosleep' visibility='default' elf-symbol-id='nv_alloc_nosleep'/>
     <function-type size-in-bits='64' id='e9ff7293'>
       <parameter type-id='11871392'/>
       <parameter type-id='b7f2d5e6'/>
@@ -2765,7 +2793,10 @@
     </function-type>
   </abi-instr>
   <abi-instr address-size='64' path='assert.c' language='LANG_C99'>
-    <var-decl name='libspl_assert_ok' type-id='95e97e5e' mangled-name='libspl_assert_ok' visibility='default' elf-symbol-id='libspl_assert_ok'/>
+    <function-decl name='libspl_set_assert_ok' mangled-name='libspl_set_assert_ok' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='libspl_set_assert_ok'>
+      <parameter type-id='f58c8277' name='val'/>
+      <return type-id='48b5725f'/>
+    </function-decl>
     <function-decl name='libspl_assertf' mangled-name='libspl_assertf' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='libspl_assertf'>
       <parameter type-id='80f4b756' name='file'/>
       <parameter type-id='80f4b756' name='func'/>

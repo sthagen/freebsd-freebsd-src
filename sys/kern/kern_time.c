@@ -245,9 +245,10 @@ sys_clock_gettime(struct thread *td, struct clock_gettime_args *uap)
 static inline void
 cputick2timespec(uint64_t runtime, struct timespec *ats)
 {
-	runtime = cputick2usec(runtime);
-	ats->tv_sec = runtime / 1000000;
-	ats->tv_nsec = runtime % 1000000 * 1000;
+	uint64_t tr;
+	tr = cpu_tickrate();
+	ats->tv_sec = runtime / tr;
+	ats->tv_nsec = ((runtime % tr) * 1000000000ULL) / tr;
 }
 
 void
@@ -256,11 +257,11 @@ kern_thread_cputime(struct thread *targettd, struct timespec *ats)
 	uint64_t runtime, curtime, switchtime;
 
 	if (targettd == NULL) { /* current thread */
-		critical_enter();
+		spinlock_enter();
 		switchtime = PCPU_GET(switchtime);
 		curtime = cpu_ticks();
 		runtime = curthread->td_runtime;
-		critical_exit();
+		spinlock_exit();
 		runtime += curtime - switchtime;
 	} else {
 		PROC_LOCK_ASSERT(targettd->td_proc, MA_OWNED);
@@ -477,10 +478,7 @@ kern_clock_getres(struct thread *td, clockid_t clock_id, struct timespec *ts)
 	case CLOCK_THREAD_CPUTIME_ID:
 	case CLOCK_PROCESS_CPUTIME_ID:
 	cputime:
-		/* sync with cputick2usec */
-		ts->tv_nsec = 1000000 / cpu_tickrate();
-		if (ts->tv_nsec == 0)
-			ts->tv_nsec = 1000;
+		ts->tv_nsec = 1000000000 / cpu_tickrate() + 1;
 		break;
 	default:
 		if ((int)clock_id < 0)
@@ -952,8 +950,6 @@ realitexpire(void *arg)
 	kern_psignal(p, SIGALRM);
 	if (!timevalisset(&p->p_realtimer.it_interval)) {
 		timevalclear(&p->p_realtimer.it_value);
-		if (p->p_flag & P_WEXIT)
-			wakeup(&p->p_itcallout);
 		return;
 	}
 
@@ -1266,13 +1262,11 @@ kern_ktimer_create(struct thread *td, clockid_t clock_id, struct sigevent *evp,
 	it = uma_zalloc(itimer_zone, M_WAITOK);
 	it->it_flags = 0;
 	it->it_usecount = 0;
-	it->it_active = 0;
 	timespecclear(&it->it_time.it_value);
 	timespecclear(&it->it_time.it_interval);
 	it->it_overrun = 0;
 	it->it_overrun_last = 0;
 	it->it_clockid = clock_id;
-	it->it_timerid = -1;
 	it->it_proc = p;
 	ksiginfo_init(&it->it_ksi);
 	it->it_ksi.ksi_flags |= KSI_INS | KSI_EXT;
@@ -1303,7 +1297,6 @@ kern_ktimer_create(struct thread *td, clockid_t clock_id, struct sigevent *evp,
 			goto out;
 		}
 	}
-	it->it_timerid = id;
 	p->p_itimers->its_timers[id] = it;
 	if (evp != NULL)
 		it->it_sigev = *evp;
@@ -1785,14 +1778,8 @@ static void
 itimers_alloc(struct proc *p)
 {
 	struct itimers *its;
-	int i;
 
 	its = malloc(sizeof (struct itimers), M_SUBPROC, M_WAITOK | M_ZERO);
-	LIST_INIT(&its->its_virtual);
-	LIST_INIT(&its->its_prof);
-	TAILQ_INIT(&its->its_worklist);
-	for (i = 0; i < TIMER_MAX; i++)
-		its->its_timers[i] = NULL;
 	PROC_LOCK(p);
 	if (p->p_itimers == NULL) {
 		p->p_itimers = its;

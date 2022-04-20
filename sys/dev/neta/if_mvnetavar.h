@@ -252,12 +252,14 @@ struct mvneta_softc {
 	uint32_t	version;
 	/*
 	 * mtx must be held by interface functions to/from
-	 * other frameworks. interrupt hander, sysctl hander,
-	 * ioctl hander, and so on.
+	 * other frameworks. interrupt handler, sysctl handler,
+	 * ioctl handler, and so on.
 	 */
 	struct mtx	mtx;
 	struct resource *res[2];
 	void            *ih_cookie[1];
+	
+	uint64_t	clk_freq;
 
 	struct ifnet	*ifp;
 	uint32_t        mvneta_if_flags;

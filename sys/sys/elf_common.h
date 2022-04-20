@@ -804,7 +804,7 @@ typedef struct {
 #define	NT_FREEBSD_FCTL_STKGAP_DISABLE	0x00000004
 #define	NT_FREEBSD_FCTL_WXNEEDED	0x00000008
 #define	NT_FREEBSD_FCTL_LA48		0x00000010
-#define	NT_FREEBSD_FCTL_ASG_DISABLE	0x00000020 /* ASLR STACK GAP Disable */
+/* was ASG_DISABLE, do not reuse	0x00000020 */
 
 /* Values for n_type.  Used in core files. */
 #define	NT_PRSTATUS	1	/* Process status. */
@@ -823,8 +823,11 @@ typedef struct {
 #define	NT_PTLWPINFO		17	/* Thread ptrace miscellaneous info. */
 #define	NT_PPC_VMX	0x100	/* PowerPC Altivec/VMX registers */
 #define	NT_PPC_VSX	0x102	/* PowerPC VSX registers */
+#define	NT_X86_SEGBASES	0x200	/* x86 FS/GS base addresses. */
 #define	NT_X86_XSTATE	0x202	/* x86 XSAVE extended state. */
 #define	NT_ARM_VFP	0x400	/* ARM VFP registers */
+#define	NT_ARM_TLS	0x401	/* ARM TLS register */
+#define	NT_ARM_ADDR_MASK	0x406	/* arm64 address mask (e.g. for TBI) */
 
 /* GNU note types. */
 #define	NT_GNU_ABI_TAG		1
@@ -981,8 +984,9 @@ typedef struct {
 #define	AT_ENVV		31	/* Environment vector */
 #define	AT_PS_STRINGS	32	/* struct ps_strings */
 #define	AT_FXRNG	33	/* Pointer to root RNG seed version. */
+#define	AT_KPRELOAD	34	/* Base of vdso, preloaded by rtld */
 
-#define	AT_COUNT	34	/* Count of defined aux entry types. */
+#define	AT_COUNT	35	/* Count of defined aux entry types. */
 
 /*
  * Relocation types.

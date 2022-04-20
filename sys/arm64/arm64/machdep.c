@@ -109,6 +109,14 @@ enum arm64_bus arm64_bus_method = ARM64_BUS_NONE;
  */
 struct pcpu pcpu0;
 
+#if defined(PERTHREAD_SSP)
+/*
+ * The boot SSP canary. Will be replaced with a per-thread canary when
+ * scheduling has started.
+ */
+uintptr_t boot_canary = 0x49a2d892bc05a0b1ul;
+#endif
+
 static struct trapframe proc0_tf;
 
 int early_boot = 1;
@@ -135,6 +143,16 @@ void pagezero_cache(void *);
 void (*pagezero)(void *p) = pagezero_simple;
 
 int (*apei_nmi)(void);
+
+#if defined(PERTHREAD_SSP_WARNING)
+static void
+print_ssp_warning(void *data __unused)
+{
+	printf("WARNING: Per-thread SSP is enabled but the compiler is too old to support it\n");
+}
+SYSINIT(ssp_warn, SI_SUB_COPYRIGHT, SI_ORDER_ANY, print_ssp_warning, NULL);
+SYSINIT(ssp_warn2, SI_SUB_LAST, SI_ORDER_ANY, print_ssp_warning, NULL);
+#endif
 
 static void
 pan_setup(void)
@@ -347,12 +365,16 @@ init_proc0(vm_offset_t kstack)
 	proc_linkup0(&proc0, &thread0);
 	thread0.td_kstack = kstack;
 	thread0.td_kstack_pages = KSTACK_PAGES;
+#if defined(PERTHREAD_SSP)
+	thread0.td_md.md_canary = boot_canary;
+#endif
 	thread0.td_pcb = (struct pcb *)(thread0.td_kstack +
 	    thread0.td_kstack_pages * PAGE_SIZE) - 1;
 	thread0.td_pcb->pcb_fpflags = 0;
 	thread0.td_pcb->pcb_fpusaved = &thread0.td_pcb->pcb_fpustate;
 	thread0.td_pcb->pcb_vfpcpu = UINT_MAX;
 	thread0.td_frame = &proc0_tf;
+	ptrauth_thread0(&thread0);
 	pcpup->pc_curpcb = thread0.td_pcb;
 
 	/*
@@ -447,7 +469,7 @@ exclude_efi_map_entry(struct efi_md *p)
 		 */
 		break;
 	default:
-		physmem_exclude_region(p->md_phys, p->md_pages * PAGE_SIZE,
+		physmem_exclude_region(p->md_phys, p->md_pages * EFI_PAGE_SIZE,
 		    EXFLAG_NOALLOC);
 	}
 }
@@ -464,6 +486,12 @@ add_efi_map_entry(struct efi_md *p)
 {
 
 	switch (p->md_type) {
+	case EFI_MD_TYPE_RT_CODE:
+		/*
+		 * Some UEFI implementations put the system table in the
+		 * runtime code section. Include it in the DMAP, but will
+		 * be excluded from phys_avail later.
+		 */
 	case EFI_MD_TYPE_RT_DATA:
 		/*
 		 * Runtime data will be excluded after the DMAP
@@ -479,7 +507,7 @@ add_efi_map_entry(struct efi_md *p)
 		 * We're allowed to use any entry with these types.
 		 */
 		physmem_hardware_region(p->md_phys,
-		    p->md_pages * PAGE_SIZE);
+		    p->md_pages * EFI_PAGE_SIZE);
 		break;
 	}
 }
@@ -781,6 +809,7 @@ initarm(struct arm64_bootparams *abp)
 	    "mov x18, %0 \n"
 	    "msr tpidr_el1, %0" :: "r"(pcpup));
 
+	/* locore.S sets sp_el0 to &thread0 so no need to set it here. */
 	PCPU_SET(curthread, &thread0);
 	PCPU_SET(midr, get_midr());
 
@@ -811,6 +840,13 @@ initarm(struct arm64_bootparams *abp)
 		    kern_getenv("kern.cfg.order"));
 
 	/*
+	 * Check if pointer authentication is available on this system, and
+	 * if so enable its use. This needs to be called before init_proc0
+	 * as that will configure the thread0 pointer authentication keys.
+	 */
+	ptrauth_init();
+
+	/*
 	 * Dump the boot metadata. We have to wait for cninit() since console
 	 * output is required. If it's grossly incorrect the kernel will never
 	 * make it this far.
@@ -825,6 +861,10 @@ initarm(struct arm64_bootparams *abp)
 
 	dbg_init();
 	kdb_init();
+#ifdef KDB
+	if ((boothowto & RB_KDB) != 0)
+		kdb_enter(KDB_WHY_BOOTFLAGS, "Boot flags requested debugger");
+#endif
 	pan_enable();
 
 	kcsan_cpu_init(0);

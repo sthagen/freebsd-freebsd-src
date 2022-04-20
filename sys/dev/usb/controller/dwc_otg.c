@@ -90,8 +90,7 @@
 #include <dev/usb/controller/dwc_otgreg.h>
 
 #define	DWC_OTG_BUS2SC(bus) \
-   ((struct dwc_otg_softc *)(((uint8_t *)(bus)) - \
-    ((uint8_t *)&(((struct dwc_otg_softc *)0)->sc_bus))))
+    __containerof(bus, struct dwc_otg_softc, sc_bus)
 
 #define	DWC_OTG_PC2UDEV(pc) \
    (USB_DMATAG_TO_XROOT((pc)->tag_parent)->udev)
@@ -2140,7 +2139,7 @@ dwc_otg_data_tx(struct dwc_otg_softc *sc, struct dwc_otg_td *td)
 	max_buffer = sc->sc_hw_ep_profile[td->ep_no].max_buffer;
 
 repeat:
-	/* check for for endpoint 0 data */
+	/* check for endpoint 0 data */
 
 	temp = sc->sc_last_rx_status;
 

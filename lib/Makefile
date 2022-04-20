@@ -36,6 +36,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libauditd \
 	libbegemot \
 	libblocksruntime \
+	libbsddialog \
 	libbsdstat \
 	libbsm \
 	libbz2 \
@@ -62,6 +63,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libgeom \
 	libifconfig \
 	libipsec \
+	libiscsiutil \
 	libjail \
 	libkiconv \
 	libkvm \
@@ -116,6 +118,7 @@ SUBDIR_DEPEND_geom=	libufs
 SUBDIR_DEPEND_googletest= libregex
 SUBDIR_DEPEND_libarchive= libz libbz2 libexpat liblzma libmd libzstd
 SUBDIR_DEPEND_libauditdm= libbsm
+SUBDIR_DEPEND_libbsddialog= ncurses
 SUBDIR_DEPEND_libbsnmp= ${_libnetgraph}
 SUBDIR_DEPEND_libc++:= libcxxrt
 # libssp_nonshared doesn't need to be linked into libc on every arch, but it is
@@ -181,10 +184,10 @@ SUBDIR.${MK_STATS}+=	libstats
 .if ${COMPILER_TYPE} == "clang" && ${MK_CXX} != "no" && \
     (${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
     ${MACHINE_CPUARCH} == "arm" || ${MACHINE_CPUARCH} == "i386" || \
-    ${MACHINE_CPUARCH} == "powerpc")
+    ${MACHINE_CPUARCH} == "powerpc" || ${MACHINE_CPUARCH} == "riscv")
 _libclang_rt=	libclang_rt
-.elif ${MK_ASAN} != "no" || ${MK_UBSAN} != "no"
-.error "Requested build with sanitizers but cannot build runtime libraries!"
+.elif (${MK_ASAN} != "no" || ${MK_UBSAN} != "no") && make(all)
+.error Requested build with sanitizers but cannot build runtime libraries!
 .endif
 
 .if ${MK_CXX} != "no"

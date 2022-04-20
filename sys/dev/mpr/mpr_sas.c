@@ -248,7 +248,8 @@ mprsas_free_tm(struct mpr_softc *sc, struct mpr_command *tm)
 	 * INRESET flag as well or scsi I/O will not work.
 	 */
 	if (tm->cm_ccb) {
-		mpr_dprint(sc, MPR_XINFO, "Unfreezing devq for target ID %d\n",
+		mpr_dprint(sc, MPR_XINFO | MPR_RECOVERY,
+		    "Unfreezing devq for target ID %d\n",
 		    tm->cm_targ->tid);
 		tm->cm_targ->flags &= ~MPRSAS_TARGET_INRESET;
 		xpt_release_devq(tm->cm_ccb->ccb_h.path, 1, TRUE);
@@ -819,8 +820,6 @@ mpr_attach_sas(struct mpr_softc *sc)
 	sc->sassc->startup_refcount = 0;
 	mprsas_startup_increment(sassc);
 
-	callout_init(&sassc->discovery_callout, 1 /*mpsafe*/);
-
 	mpr_unlock(sc);
 
 	/*
@@ -935,9 +934,6 @@ mprsas_discovery_end(struct mprsas_softc *sassc)
 	struct mpr_softc *sc = sassc->sc;
 
 	MPR_FUNCTRACE(sc);
-
-	if (sassc->flags & MPRSAS_DISCOVERY_TIMEOUT_PENDING)
-		callout_stop(&sassc->discovery_callout);
 
 	/*
 	 * After discovery has completed, check the mapping table for any
@@ -1228,14 +1224,12 @@ static void
 mprsas_logical_unit_reset_complete(struct mpr_softc *sc, struct mpr_command *tm)
 {
 	MPI2_SCSI_TASK_MANAGE_REPLY *reply;
-	MPI2_SCSI_TASK_MANAGE_REQUEST *req;
 	unsigned int cm_count = 0;
 	struct mpr_command *cm;
 	struct mprsas_target *targ;
 
 	callout_stop(&tm->cm_callout);
 
-	req = (MPI2_SCSI_TASK_MANAGE_REQUEST *)tm->cm_req;
 	reply = (MPI2_SCSI_TASK_MANAGE_REPLY *)tm->cm_reply;
 	targ = tm->cm_targ;
 
@@ -1677,19 +1671,19 @@ mprsas_scsiio_timeout(void *data)
 		/* target already in recovery, just queue up another
 		 * timedout command to be processed later.
 		 */
-		mpr_dprint(sc, MPR_RECOVERY, "queued timedout cm %p for "
-		    "processing by tm %p\n", cm, targ->tm);
-	}
-	else if ((targ->tm = mprsas_alloc_tm(sc)) != NULL) {
-		/* start recovery by aborting the first timedout command */
+		mpr_dprint(sc, MPR_RECOVERY,
+		    "queued timedout cm %p for processing by tm %p\n",
+		    cm, targ->tm);
+	} else if ((targ->tm = mprsas_alloc_tm(sc)) != NULL) {
 		mpr_dprint(sc, MPR_RECOVERY|MPR_INFO,
 		    "Sending abort to target %u for SMID %d\n", targ->tid,
 		    cm->cm_desc.Default.SMID);
 		mpr_dprint(sc, MPR_RECOVERY, "timedout cm %p allocated tm %p\n",
 		    cm, targ->tm);
+
+		/* start recovery by aborting the first timedout command */
 		mprsas_send_abort(sc, targ->tm, cm);
-	}
-	else {
+	} else {
 		/* XXX queue this target up for recovery once a TM becomes
 		 * available.  The firmware only has a limited number of
 		 * HighPriority credits for the high priority requests used
@@ -1838,10 +1832,11 @@ mprsas_build_nvme_unmap(struct mpr_softc *sc, struct mpr_command *cm,
 	mpr_build_nvme_prp(sc, cm, req,
 	    (void *)(uintptr_t)nvme_dsm_ranges_dma_handle, 0, data_length);
 	mpr_map_command(sc, cm);
+	res = 0;
 
 out:
 	free(plist, M_MPR);
-	return 0;
+	return (res);
 }
 
 static void
@@ -1869,6 +1864,15 @@ mprsas_action_scsiio(struct mprsas_softc *sassc, union ccb *ccb)
 	targ = &sassc->targets[csio->ccb_h.target_id];
 	mpr_dprint(sc, MPR_TRACE, "ccb %p target flag %x\n", ccb, targ->flags);
 	if (targ->handle == 0x0) {
+		if (targ->flags & MPRSAS_TARGET_INDIAGRESET) {
+			mpr_dprint(sc, MPR_ERROR,
+			    "%s NULL handle for target %u in diag reset freezing queue\n",
+			    __func__, csio->ccb_h.target_id);
+			ccb->ccb_h.status = CAM_REQUEUE_REQ | CAM_DEV_QFRZN;
+			xpt_freeze_devq(ccb->ccb_h.path, 1);
+			xpt_done(ccb);
+			return;
+		}
 		mpr_dprint(sc, MPR_ERROR, "%s NULL handle for target %u\n", 
 		    __func__, csio->ccb_h.target_id);
 		mprsas_set_ccbstatus(ccb, CAM_DEV_NOT_THERE);
@@ -1924,6 +1928,9 @@ mprsas_action_scsiio(struct mprsas_softc *sassc, union ccb *ccb)
 	 */
 	if (targ->flags & MPRSAS_TARGET_INRESET) {
 		ccb->ccb_h.status = CAM_REQUEUE_REQ | CAM_DEV_QFRZN;
+		mpr_dprint(sc, MPR_XINFO | MPR_RECOVERY,
+		    "%s: Freezing devq for target ID %d\n",
+		    __func__, targ->tid);
 		xpt_freeze_devq(ccb->ccb_h.path, 1);
 		xpt_done(ccb);
 		return;
@@ -2513,8 +2520,8 @@ mprsas_scsiio_complete(struct mpr_softc *sc, struct mpr_command *cm)
 		if ((sassc->flags & MPRSAS_QUEUE_FROZEN) == 0) {
 			xpt_freeze_simq(sassc->sim, 1);
 			sassc->flags |= MPRSAS_QUEUE_FROZEN;
-			mpr_dprint(sc, MPR_XINFO, "Error sending command, "
-			    "freezing SIM queue\n");
+			mpr_dprint(sc, MPR_XINFO | MPR_RECOVERY,
+			    "Error sending command, freezing SIM queue\n");
 		}
 	}
 
@@ -2549,7 +2556,7 @@ mprsas_scsiio_complete(struct mpr_softc *sc, struct mpr_command *cm)
 			if (sassc->flags & MPRSAS_QUEUE_FROZEN) {
 				ccb->ccb_h.status |= CAM_RELEASE_SIMQ;
 				sassc->flags &= ~MPRSAS_QUEUE_FROZEN;
-				mpr_dprint(sc, MPR_XINFO,
+				mpr_dprint(sc, MPR_XINFO | MPR_RECOVERY,
 				    "Unfreezing SIM queue\n");
 			}
 		} 
@@ -2817,7 +2824,7 @@ mprsas_scsiio_complete(struct mpr_softc *sc, struct mpr_command *cm)
 	if (sassc->flags & MPRSAS_QUEUE_FROZEN) {
 		ccb->ccb_h.status |= CAM_RELEASE_SIMQ;
 		sassc->flags &= ~MPRSAS_QUEUE_FROZEN;
-		mpr_dprint(sc, MPR_XINFO, "Command completed, unfreezing SIM "
+		mpr_dprint(sc, MPR_INFO, "Command completed, unfreezing SIM "
 		    "queue\n");
 	}
 
@@ -2915,11 +2922,9 @@ mprsas_send_smpcmd(struct mprsas_softc *sassc, union ccb *ccb, uint64_t sasaddr)
 	uint8_t *request, *response;
 	MPI2_SMP_PASSTHROUGH_REQUEST *req;
 	struct mpr_softc *sc;
-	struct sglist *sg;
 	int error;
 
 	sc = sassc->sc;
-	sg = NULL;
 	error = 0;
 
 	switch (ccb->ccb_h.flags & CAM_DATA_MASK) {
@@ -3425,6 +3430,11 @@ mprsas_async(void *callback_arg, uint32_t code, struct cam_path *path,
  * the target until the reset has completed.  The CCB holds the path which
  * is used to release the devq.  The devq is released and the CCB is freed
  * when the TM completes.
+ * We only need to do this when we're entering reset, not at each time we
+ * need to send an abort (which will happen if multiple commands timeout
+ * while we're sending the abort). We do not release the queue for each
+ * command we complete (just at the end when we free the tm), so freezing
+ * it each time doesn't make sense.
  */
 void
 mprsas_prepare_for_tm(struct mpr_softc *sc, struct mpr_command *tm,
@@ -3440,13 +3450,15 @@ mprsas_prepare_for_tm(struct mpr_softc *sc, struct mpr_command *tm,
 		    target->tid, lun_id) != CAM_REQ_CMP) {
 			xpt_free_ccb(ccb);
 		} else {
-			mpr_dprint(sc, MPR_XINFO,
-			    "%s: Freezing devq for target ID %d\n",
-			    __func__, target->tid);
-			xpt_freeze_devq(ccb->ccb_h.path, 1);
 			tm->cm_ccb = ccb;
 			tm->cm_targ = target;
-			target->flags |= MPRSAS_TARGET_INRESET;
+			if ((target->flags & MPRSAS_TARGET_INRESET) == 0) {
+				mpr_dprint(sc, MPR_XINFO | MPR_RECOVERY,
+				    "%s: Freezing devq for target ID %d\n",
+				    __func__, target->tid);
+				xpt_freeze_devq(ccb->ccb_h.path, 1);
+				target->flags |= MPRSAS_TARGET_INRESET;
+			}
 		}
 	}
 }

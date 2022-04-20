@@ -82,8 +82,7 @@
 #define	MUSBOTG_INTR_ENDPT 1
 
 #define	MUSBOTG_BUS2SC(bus) \
-   ((struct musbotg_softc *)(((uint8_t *)(bus)) - \
-   USB_P2U(&(((struct musbotg_softc *)0)->sc_bus))))
+    __containerof(bus, struct musbotg_softc, sc_bus)
 
 #define	MUSBOTG_PC2SC(pc) \
    MUSBOTG_BUS2SC(USB_DMATAG_TO_XROOT((pc)->tag_parent)->bus)
@@ -2127,12 +2126,9 @@ musbotg_host_data_tx(struct musbotg_td *td)
 static uint8_t
 musbotg_xfer_do_fifo(struct usb_xfer *xfer)
 {
-	struct musbotg_softc *sc;
 	struct musbotg_td *td;
 
 	DPRINTFN(8, "\n");
-	sc = MUSBOTG_BUS2SC(xfer->xroot->bus);
-
 	td = xfer->td_transfer_cache;
 	while (1) {
 		if ((td->func) (td)) {
@@ -4013,14 +4009,12 @@ done:
 static void
 musbotg_xfer_setup(struct usb_setup_params *parm)
 {
-	struct musbotg_softc *sc;
 	struct usb_xfer *xfer;
 	void *last_obj;
 	uint32_t ntd;
 	uint32_t n;
 	uint8_t ep_no;
 
-	sc = MUSBOTG_BUS2SC(parm->udev->bus);
 	xfer = parm->curr_xfer;
 
 	/*

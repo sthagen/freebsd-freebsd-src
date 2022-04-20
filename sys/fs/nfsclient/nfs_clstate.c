@@ -1642,8 +1642,22 @@ nfscl_expireopen(struct nfsclclient *clp, struct nfsclopen *op,
 static void
 nfscl_freeopenowner(struct nfsclowner *owp, int local)
 {
+	int owned;
 
+	/*
+	 * Make sure the NFSCLSTATE mutex is held, to avoid races with
+	 * calls in nfscl_renewthread() that do not hold a reference
+	 * count on the nfsclclient and just the mutex.
+	 * The mutex will not be held for calls done with the exclusive
+	 * nfsclclient lock held, in particular, nfscl_hasexpired()
+	 * and nfscl_recalldeleg() might do this.
+	 */
+	owned = mtx_owned(NFSCLSTATEMUTEXPTR);
+	if (owned == 0)
+		NFSLOCKCLSTATE();
 	LIST_REMOVE(owp, nfsow_list);
+	if (owned == 0)
+		NFSUNLOCKCLSTATE();
 	free(owp, M_NFSCLOWNER);
 	if (local)
 		nfsstatsv1.cllocalopenowners--;
@@ -1658,8 +1672,22 @@ void
 nfscl_freelockowner(struct nfscllockowner *lp, int local)
 {
 	struct nfscllock *lop, *nlop;
+	int owned;
 
+	/*
+	 * Make sure the NFSCLSTATE mutex is held, to avoid races with
+	 * calls in nfscl_renewthread() that do not hold a reference
+	 * count on the nfsclclient and just the mutex.
+	 * The mutex will not be held for calls done with the exclusive
+	 * nfsclclient lock held, in particular, nfscl_hasexpired()
+	 * and nfscl_recalldeleg() might do this.
+	 */
+	owned = mtx_owned(NFSCLSTATEMUTEXPTR);
+	if (owned == 0)
+		NFSLOCKCLSTATE();
 	LIST_REMOVE(lp, nfsl_list);
+	if (owned == 0)
+		NFSUNLOCKCLSTATE();
 	LIST_FOREACH_SAFE(lop, &lp->nfsl_lock, nfslo_list, nlop) {
 		nfscl_freelock(lop, local);
 	}
@@ -1849,16 +1877,17 @@ static void
 nfscl_cleanup_common(struct nfsclclient *clp, u_int8_t *own)
 {
 	struct nfsclowner *owp, *nowp;
-	struct nfscllockowner *lp, *nlp;
+	struct nfscllockowner *lp;
 	struct nfscldeleg *dp;
 
 	/* First, get rid of local locks on delegations. */
 	TAILQ_FOREACH(dp, &clp->nfsc_deleg, nfsdl_list) {
-		LIST_FOREACH_SAFE(lp, &dp->nfsdl_lock, nfsl_list, nlp) {
+		LIST_FOREACH(lp, &dp->nfsdl_lock, nfsl_list) {
 		    if (!NFSBCMP(lp->nfsl_owner, own, NFSV4CL_LOCKNAMELEN)) {
 			if ((lp->nfsl_rwlock.nfslock_lock & NFSV4LOCK_WANTED))
 			    panic("nfscllckw");
 			nfscl_freelockowner(lp, 1);
+			break;
 		    }
 		}
 	}
@@ -1877,6 +1906,7 @@ nfscl_cleanup_common(struct nfsclclient *clp, u_int8_t *own)
 				nfscl_freeopenowner(owp, 0);
 			else
 				owp->nfsow_defunct = 1;
+			break;
 		}
 		owp = nowp;
 	}
@@ -1892,6 +1922,7 @@ nfscl_cleanupkext(struct nfsclclient *clp, struct nfscllockownerfhhead *lhp)
 	struct nfsclopen *op;
 	struct nfscllockowner *lp, *nlp;
 	struct nfscldeleg *dp;
+	uint8_t own[NFSV4CL_LOCKNAMELEN];
 
 	/*
 	 * All the pidhash locks must be acquired, since they are sx locks
@@ -1908,8 +1939,10 @@ nfscl_cleanupkext(struct nfsclclient *clp, struct nfscllockownerfhhead *lhp)
 					nfscl_emptylockowner(lp, lhp);
 			}
 		}
-		if (nfscl_procdoesntexist(owp->nfsow_owner))
-			nfscl_cleanup_common(clp, owp->nfsow_owner);
+		if (nfscl_procdoesntexist(owp->nfsow_owner)) {
+			memcpy(own, owp->nfsow_owner, NFSV4CL_LOCKNAMELEN);
+			nfscl_cleanup_common(clp, own);
+		}
 	}
 
 	/*
@@ -1921,8 +1954,11 @@ nfscl_cleanupkext(struct nfsclclient *clp, struct nfscllockownerfhhead *lhp)
 	 */
 	TAILQ_FOREACH(dp, &clp->nfsc_deleg, nfsdl_list) {
 		LIST_FOREACH_SAFE(lp, &dp->nfsdl_lock, nfsl_list, nlp) {
-			if (nfscl_procdoesntexist(lp->nfsl_owner))
-				nfscl_cleanup_common(clp, lp->nfsl_owner);
+			if (nfscl_procdoesntexist(lp->nfsl_owner)) {
+				memcpy(own, lp->nfsl_owner,
+				    NFSV4CL_LOCKNAMELEN);
+				nfscl_cleanup_common(clp, own);
+			}
 		}
 	}
 	NFSUNLOCKCLSTATE();
@@ -3531,8 +3567,9 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 	nfsrvd_rephead(nd);
 	NFSM_DISSECT(tl, u_int32_t *, NFSX_UNSIGNED);
 	taglen = fxdr_unsigned(int, *tl);
-	if (taglen < 0) {
+	if (taglen < 0 || taglen > NFSV4_OPAQUELIMIT) {
 		error = EBADRPC;
+		taglen = -1;
 		goto nfsmout;
 	}
 	if (taglen <= NFSV4_SMALLSTR)
@@ -3570,6 +3607,14 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 		NFSM_BUILD(repp, u_int32_t *, 2 * NFSX_UNSIGNED);
 		*repp++ = *tl;
 		op = fxdr_unsigned(int, *tl);
+		nd->nd_procnum = op;
+		if (i == 0 && op != NFSV4OP_CBSEQUENCE && minorvers !=
+		    NFSV4_MINORVERSION) {
+		    nd->nd_repstat = NFSERR_OPNOTINSESS;
+		    *repp = nfscl_errmap(nd, minorvers);
+		    retops++;
+		    break;
+		}
 		if (op < NFSV4OP_CBGETATTR ||
 		   (op > NFSV4OP_CBRECALL && minorvers == NFSV4_MINORVERSION) ||
 		   (op > NFSV4OP_CBNOTIFYDEVID &&
@@ -3581,7 +3626,6 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 		    retops++;
 		    break;
 		}
-		nd->nd_procnum = op;
 		if (op < NFSV42_CBNOPS)
 			nfsstatsv1.cbrpccnt[nd->nd_procnum]++;
 		switch (op) {
@@ -3593,9 +3637,6 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 			if (!error)
 				error = nfsrv_getattrbits(nd, &attrbits,
 				    NULL, NULL);
-			if (error == 0 && i == 0 &&
-			    minorvers != NFSV4_MINORVERSION)
-				error = NFSERR_OPNOTINSESS;
 			if (!error) {
 				mp = nfscl_getmnt(minorvers, sessionid, cbident,
 				    &clp);
@@ -3659,9 +3700,6 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 			tl += (NFSX_STATEIDOTHER / NFSX_UNSIGNED);
 			trunc = fxdr_unsigned(int, *tl);
 			error = nfsm_getfh(nd, &nfhp);
-			if (error == 0 && i == 0 &&
-			    minorvers != NFSV4_MINORVERSION)
-				error = NFSERR_OPNOTINSESS;
 			if (!error) {
 				NFSLOCKCLSTATE();
 				if (minorvers == NFSV4_MINORVERSION)
@@ -3716,8 +3754,6 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 				NFSBCOPY(tl, stateid.other, NFSX_STATEIDOTHER);
 				if (minorvers == NFSV4_MINORVERSION)
 					error = NFSERR_NOTSUPP;
-				else if (i == 0)
-					error = NFSERR_OPNOTINSESS;
 				NFSCL_DEBUG(4, "off=%ju len=%ju sq=%u err=%d\n",
 				    (uintmax_t)off, (uintmax_t)len,
 				    stateid.seqid, error);
@@ -3828,6 +3864,10 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 			}
 			break;
 		case NFSV4OP_CBSEQUENCE:
+			if (i != 0) {
+			    error = NFSERR_SEQUENCEPOS;
+			    break;
+			}
 			NFSM_DISSECT(tl, uint32_t *, NFSX_V4SESSIONID +
 			    5 * NFSX_UNSIGNED);
 			bcopy(tl, sessionid, NFSX_V4SESSIONID);
@@ -3849,12 +3889,9 @@ nfscl_docb(struct nfsrv_descript *nd, NFSPROC_T *p)
 				}
 			}
 			NFSLOCKCLSTATE();
-			if (i == 0) {
-				clp = nfscl_getclntsess(sessionid);
-				if (clp == NULL)
-					error = NFSERR_SERVERFAULT;
-			} else
-				error = NFSERR_SEQUENCEPOS;
+			clp = nfscl_getclntsess(sessionid);
+			if (clp == NULL)
+				error = NFSERR_SERVERFAULT;
 			if (error == 0) {
 				tsep = nfsmnt_mdssession(clp->nfsc_nmp);
 				error = nfsv4_seqsession(seqid, slotid,

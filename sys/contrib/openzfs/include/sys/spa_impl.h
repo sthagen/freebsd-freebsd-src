@@ -308,6 +308,7 @@ struct spa {
 	uint64_t	spa_missing_tvds;	/* unopenable tvds on load */
 	uint64_t	spa_missing_tvds_allowed; /* allow loading spa? */
 
+	uint64_t	spa_nonallocating_dspace;
 	spa_removing_phys_t spa_removing_phys;
 	spa_vdev_removal_t *spa_vdev_removal;
 
@@ -443,7 +444,7 @@ struct spa {
 };
 
 extern char *spa_config_path;
-extern char *zfs_deadman_failmode;
+extern const char *zfs_deadman_failmode;
 extern int spa_slop_shift;
 extern void spa_taskq_dispatch_ent(spa_t *spa, zio_type_t t, zio_taskq_type_t q,
     task_func_t *func, void *arg, uint_t flags, taskq_ent_t *ent);

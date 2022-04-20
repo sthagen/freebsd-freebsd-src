@@ -239,11 +239,11 @@ sysctl_somaxconn(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 SYSCTL_PROC(_kern_ipc, OID_AUTO, soacceptqueue,
-    CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_NEEDGIANT, 0, sizeof(int),
+    CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_MPSAFE, 0, sizeof(int),
     sysctl_somaxconn, "I",
     "Maximum listen socket pending connection accept queue size");
 SYSCTL_PROC(_kern_ipc, KIPC_SOMAXCONN, somaxconn,
-    CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_SKIP | CTLFLAG_NEEDGIANT, 0,
+    CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_SKIP | CTLFLAG_MPSAFE, 0,
     sizeof(int), sysctl_somaxconn, "I",
     "Maximum listen socket pending connection accept queue size (compat)");
 
@@ -375,7 +375,7 @@ sysctl_maxsockets(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 SYSCTL_PROC(_kern_ipc, OID_AUTO, maxsockets,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT, &maxsockets, 0,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, &maxsockets, 0,
     sysctl_maxsockets, "IU",
     "Maximum number of sockets available");
 
@@ -699,12 +699,24 @@ sonewconn(struct socket *head, int connstatus)
 			}
 			KASSERT(sbuf_len(&descrsb) > 0,
 			    ("%s: sbuf creation failed", __func__));
-			log(LOG_DEBUG,
-			    "%s: pcb %p (%s): Listen queue overflow: "
-			    "%i already in queue awaiting acceptance "
-			    "(%d occurrences)\n",
-			    __func__, head->so_pcb, sbuf_data(&descrsb),
-			    qlen, overcount);
+			if (head->so_cred == 0) {
+				log(LOG_DEBUG,
+			    	"%s: pcb %p (%s): Listen queue overflow: "
+			    	"%i already in queue awaiting acceptance "
+			    	"(%d occurrences)\n",
+			    	__func__, head->so_pcb, sbuf_data(&descrsb),
+			    	qlen, overcount);
+			} else {
+				log(LOG_DEBUG, "%s: pcb %p (%s): Listen queue overflow: "
+				    "%i already in queue awaiting acceptance "
+				    "(%d occurrences), euid %d, rgid %d, jail %s\n",
+				    __func__, head->so_pcb, sbuf_data(&descrsb),
+				    qlen, overcount,
+				    head->so_cred->cr_uid, head->so_cred->cr_rgid,
+				    head->so_cred->cr_prison ?
+					head->so_cred->cr_prison->pr_name :
+					"not_jailed");
+			}
 			sbuf_delete(&descrsb);
 
 			overcount = 0;
@@ -1667,6 +1679,11 @@ sosend_generic(struct socket *so, struct sockaddr *addr, struct uio *uio,
 				atomic = 1;
 			}
 		}
+
+		if (resid == 0 && !ktls_permit_empty_frames(tls)) {
+			error = EINVAL;
+			goto release;
+		}
 	}
 #endif
 
@@ -2172,7 +2189,6 @@ dontblock:
 			else
 				m_freem(cm);
 			if (controlp != NULL) {
-				orig_resid = 0;
 				while (*controlp != NULL)
 					controlp = &(*controlp)->m_next;
 			}

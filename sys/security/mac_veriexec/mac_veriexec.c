@@ -701,11 +701,11 @@ cleanup_file:
 		/* Look up the path to get the vnode */
 		NDINIT(&nd, LOOKUP,
 		    FOLLOW | LOCKLEAF | LOCKSHARED | AUDITVNODE1,
-		    UIO_USERSPACE, arg, td);
+		    UIO_USERSPACE, arg);
 		error = namei(&nd);
 		if (error != 0)
 			break;
-		NDFREE(&nd, NDF_ONLY_PNBUF);
+		NDFREE_PNBUF(&nd);
 
 		/* Check the fingerprint status of the vnode */
 		error = mac_veriexec_check_vp(td->td_ucred, nd.ni_vp, VVERIFY);

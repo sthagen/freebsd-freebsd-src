@@ -2033,12 +2033,10 @@ sysctl_posix_shm_list(SYSCTL_HANDLER_ARGS)
 	struct sbuf sb;
 	struct kinfo_file kif;
 	u_long i;
-	ssize_t curlen;
 	int error, error2;
 
 	sbuf_new_for_sysctl(&sb, NULL, sizeof(struct kinfo_file) * 5, req);
 	sbuf_clear_flags(&sb, SBUF_INCLUDENUL);
-	curlen = 0;
 	error = 0;
 	sx_slock(&shm_dict_lock);
 	for (i = 0; i < shm_hash + 1; i++) {
@@ -2052,14 +2050,10 @@ sysctl_posix_shm_list(SYSCTL_HANDLER_ARGS)
 			if (error != 0)
 				break;
 			pack_kinfo(&kif);
-			if (req->oldptr != NULL &&
-			    kif.kf_structsize + curlen > req->oldlen)
-				break;
 			error = sbuf_bcat(&sb, &kif, kif.kf_structsize) == 0 ?
 			    0 : ENOMEM;
 			if (error != 0)
 				break;
-			curlen += kif.kf_structsize;
 		}
 	}
 	sx_sunlock(&shm_dict_lock);
@@ -2069,7 +2063,7 @@ sysctl_posix_shm_list(SYSCTL_HANDLER_ARGS)
 }
 
 SYSCTL_PROC(_kern_ipc, OID_AUTO, posix_shm_list,
-    CTLFLAG_RD | CTLFLAG_MPSAFE | CTLTYPE_OPAQUE,
+    CTLFLAG_RD | CTLFLAG_PRISON | CTLFLAG_MPSAFE | CTLTYPE_OPAQUE,
     NULL, 0, sysctl_posix_shm_list, "",
     "POSIX SHM list");
 

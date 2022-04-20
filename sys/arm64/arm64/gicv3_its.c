@@ -825,7 +825,7 @@ gicv3_its_attach(device_t dev)
 	struct gicv3_its_softc *sc;
 	int domain, err, i, rid;
 	uint64_t phys;
-	uint32_t iidr;
+	uint32_t ctlr, iidr;
 
 	sc = device_get_softc(dev);
 
@@ -865,6 +865,18 @@ gicv3_its_attach(device_t dev)
 		sc->sc_ds = DOMAINSET_RR();
 	}
 
+	/*
+	 * GIT_CTLR_EN is mandated to reset to 0 on a Warm reset, but we may be
+	 * coming in via, for instance, a kexec/kboot style setup where a
+	 * previous kernel has configured then relinquished control.  Clear it
+	 * so that we can reconfigure GITS_BASER*.
+	 */
+	ctlr = gic_its_read_4(sc, GITS_CTLR);
+	if ((ctlr & GITS_CTLR_EN) != 0) {
+		ctlr &= ~GITS_CTLR_EN;
+		gic_its_write_4(sc, GITS_CTLR, ctlr);
+	}
+
 	/* Allocate the private tables */
 	err = gicv3_its_table_init(dev, sc);
 	if (err != 0)
@@ -890,8 +902,7 @@ gicv3_its_attach(device_t dev)
 			sc->sc_its_cols[cpu] = NULL;
 
 	/* Enable the ITS */
-	gic_its_write_4(sc, GITS_CTLR,
-	    gic_its_read_4(sc, GITS_CTLR) | GITS_CTLR_EN);
+	gic_its_write_4(sc, GITS_CTLR, ctlr | GITS_CTLR_EN);
 
 	/* Create the LPI configuration table */
 	gicv3_its_conftable_init(sc);
@@ -1025,9 +1036,7 @@ static void
 gicv3_its_pre_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct gicv3_its_irqsrc *girq;
-	struct gicv3_its_softc *sc;
 
-	sc = device_get_softc(dev);
 	girq = (struct gicv3_its_irqsrc *)isrc;
 	gic_icc_write(EOIR1, girq->gi_lpi + GIC_FIRST_LPI);
 }
@@ -1042,9 +1051,7 @@ static void
 gicv3_its_post_filter(device_t dev, struct intr_irqsrc *isrc)
 {
 	struct gicv3_its_irqsrc *girq;
-	struct gicv3_its_softc *sc;
 
-	sc = device_get_softc(dev);
 	girq = (struct gicv3_its_irqsrc *)isrc;
 	gic_icc_write(EOIR1, girq->gi_lpi + GIC_FIRST_LPI);
 }
@@ -1960,11 +1967,19 @@ gicv3_its_fdt_attach(device_t dev)
 	/* Register this device as a interrupt controller */
 	xref = OF_xref_from_node(ofw_bus_get_node(dev));
 	sc->sc_pic = intr_pic_register(dev, xref);
-	intr_pic_add_handler(device_get_parent(dev), sc->sc_pic,
+	err = intr_pic_add_handler(device_get_parent(dev), sc->sc_pic,
 	    gicv3_its_intr, sc, sc->sc_irq_base, sc->sc_irq_length);
+	if (err != 0) {
+		device_printf(dev, "Failed to add PIC handler: %d\n", err);
+		return (err);
+	}
 
 	/* Register this device to handle MSI interrupts */
-	intr_msi_register(dev, xref);
+	err = intr_msi_register(dev, xref);
+	if (err != 0) {
+		device_printf(dev, "Failed to register for MSIs: %d\n", err);
+		return (err);
+	}
 
 	return (0);
 }
@@ -2021,11 +2036,19 @@ gicv3_its_acpi_attach(device_t dev)
 
 	di = device_get_ivars(dev);
 	sc->sc_pic = intr_pic_register(dev, di->msi_xref);
-	intr_pic_add_handler(device_get_parent(dev), sc->sc_pic,
+	err = intr_pic_add_handler(device_get_parent(dev), sc->sc_pic,
 	    gicv3_its_intr, sc, sc->sc_irq_base, sc->sc_irq_length);
+	if (err != 0) {
+		device_printf(dev, "Failed to add PIC handler: %d\n", err);
+		return (err);
+	}
 
 	/* Register this device to handle MSI interrupts */
-	intr_msi_register(dev, di->msi_xref);
+	err = intr_msi_register(dev, di->msi_xref);
+	if (err != 0) {
+		device_printf(dev, "Failed to register for MSIs: %d\n", err);
+		return (err);
+	}
 
 	return (0);
 }

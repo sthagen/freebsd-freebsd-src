@@ -332,6 +332,7 @@ stub-first{COLON}		{ YDVAR(1, VAR_STUB_FIRST) }
 stub-no-cache{COLON}		{ YDVAR(1, VAR_STUB_NO_CACHE) }
 stub-ssl-upstream{COLON}	{ YDVAR(1, VAR_STUB_SSL_UPSTREAM) }
 stub-tls-upstream{COLON}	{ YDVAR(1, VAR_STUB_SSL_UPSTREAM) }
+stub-tcp-upstream{COLON}	{ YDVAR(1, VAR_STUB_TCP_UPSTREAM) }
 forward-zone{COLON}		{ YDVAR(0, VAR_FORWARD_ZONE) }
 forward-addr{COLON}		{ YDVAR(1, VAR_FORWARD_ADDR) }
 forward-host{COLON}		{ YDVAR(1, VAR_FORWARD_HOST) }
@@ -339,6 +340,7 @@ forward-first{COLON}		{ YDVAR(1, VAR_FORWARD_FIRST) }
 forward-no-cache{COLON}		{ YDVAR(1, VAR_FORWARD_NO_CACHE) }
 forward-ssl-upstream{COLON}	{ YDVAR(1, VAR_FORWARD_SSL_UPSTREAM) }
 forward-tls-upstream{COLON}	{ YDVAR(1, VAR_FORWARD_SSL_UPSTREAM) }
+forward-tcp-upstream{COLON}	{ YDVAR(1, VAR_FORWARD_TCP_UPSTREAM) }
 auth-zone{COLON}		{ YDVAR(0, VAR_AUTH_ZONE) }
 rpz{COLON}			{ YDVAR(0, VAR_RPZ) }
 tags{COLON}			{ YDVAR(1, VAR_TAGS) }
@@ -346,6 +348,7 @@ rpz-action-override{COLON}	{ YDVAR(1, VAR_RPZ_ACTION_OVERRIDE) }
 rpz-cname-override{COLON}	{ YDVAR(1, VAR_RPZ_CNAME_OVERRIDE) }
 rpz-log{COLON}			{ YDVAR(1, VAR_RPZ_LOG) }
 rpz-log-name{COLON}		{ YDVAR(1, VAR_RPZ_LOG_NAME) }
+rpz-signal-nxdomain-ra{COLON}	{ YDVAR(1, VAR_RPZ_SIGNAL_NXDOMAIN_RA) }
 zonefile{COLON}			{ YDVAR(1, VAR_ZONEFILE) }
 master{COLON}			{ YDVAR(1, VAR_MASTER) }
 primary{COLON}			{ YDVAR(1, VAR_MASTER) }
@@ -500,6 +503,9 @@ ratelimit-for-domain{COLON}	{ YDVAR(2, VAR_RATELIMIT_FOR_DOMAIN) }
 ratelimit-below-domain{COLON}	{ YDVAR(2, VAR_RATELIMIT_BELOW_DOMAIN) }
 ip-ratelimit-factor{COLON}		{ YDVAR(1, VAR_IP_RATELIMIT_FACTOR) }
 ratelimit-factor{COLON}		{ YDVAR(1, VAR_RATELIMIT_FACTOR) }
+ip-ratelimit-backoff{COLON}		{ YDVAR(1, VAR_IP_RATELIMIT_BACKOFF) }
+ratelimit-backoff{COLON}		{ YDVAR(1, VAR_RATELIMIT_BACKOFF) }
+outbound-msg-retry{COLON}		{ YDVAR(1, VAR_OUTBOUND_MSG_RETRY) }
 low-rtt{COLON}			{ YDVAR(1, VAR_LOW_RTT) }
 fast-server-num{COLON}		{ YDVAR(1, VAR_FAST_SERVER_NUM) }
 low-rtt-pct{COLON}		{ YDVAR(1, VAR_FAST_SERVER_PERMIL) }

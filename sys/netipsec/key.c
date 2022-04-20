@@ -590,7 +590,7 @@ static struct supported_ealgs {
 	int sadb_alg;
 	const struct enc_xform *xform;
 } supported_ealgs[] = {
-	{ SADB_X_EALG_AES,		&enc_xform_rijndael128 },
+	{ SADB_X_EALG_AES,		&enc_xform_aes_cbc },
 	{ SADB_EALG_NULL,		&enc_xform_null },
 	{ SADB_X_EALG_AESCTR,		&enc_xform_aes_icm },
 	{ SADB_X_EALG_AESGCM16,		&enc_xform_aes_nist_gcm },
@@ -1357,6 +1357,7 @@ key_freesav(struct secasvar **psav)
 	struct secasvar *sav = *psav;
 
 	IPSEC_ASSERT(sav != NULL, ("null sav"));
+	CURVNET_ASSERT_SET();
 	if (SAV_DELREF(sav) == 0)
 		return;
 
@@ -1380,6 +1381,7 @@ key_unlinksav(struct secasvar *sav)
 	KEYDBG(KEY_STAMP,
 	    printf("%s: SA(%p)\n", __func__, sav));
 
+	CURVNET_ASSERT_SET();
 	SAHTREE_UNLOCK_ASSERT();
 	SAHTREE_WLOCK();
 	if (sav->state == SADB_SASTATE_DEAD) {
@@ -2039,7 +2041,7 @@ key_spdadd(struct socket *so, struct mbuf *m, const struct sadb_msghdr *mhp)
 				__func__, oldsp));
 			KEYDBG(KEY_DATA, kdebug_secpolicy(oldsp));
 		} else {
-			key_freesp(&newsp);
+			key_freesp(&oldsp);
 			ipseclog((LOG_DEBUG,
 			    "%s: a SP entry exists already.\n", __func__));
 			return (key_senderror(so, m, EEXIST));
@@ -2147,10 +2149,12 @@ key_getnewspid(void)
 {
 	struct secpolicy *sp;
 	uint32_t newid = 0;
-	int count = V_key_spi_trycnt;	/* XXX */
+	int tries, limit;
 
 	SPTREE_WLOCK_ASSERT();
-	while (count--) {
+
+	limit = atomic_load_int(&V_key_spi_trycnt);
+	for (tries = 0; tries < limit; tries++) {
 		if (V_policy_id == ~0) /* overflowed */
 			newid = V_policy_id = 1;
 		else
@@ -2162,7 +2166,7 @@ key_getnewspid(void)
 		if (sp == NULL)
 			break;
 	}
-	if (count == 0 || newid == 0) {
+	if (tries == limit || newid == 0) {
 		ipseclog((LOG_DEBUG, "%s: failed to allocate policy id.\n",
 		    __func__));
 		return (0);
@@ -2888,6 +2892,8 @@ key_freesah(struct secashead **psah)
 {
 	struct secashead *sah = *psah;
 
+	CURVNET_ASSERT_SET();
+
 	if (SAH_DELREF(sah) == 0)
 		return;
 
@@ -2959,8 +2965,8 @@ key_newsav(const struct sadb_msghdr *mhp, struct secasindex *saidx,
 		*errp = ENOBUFS;
 		goto done;
 	}
-	sav->lock = malloc(sizeof(struct mtx), M_IPSEC_MISC,
-	    M_NOWAIT | M_ZERO);
+	sav->lock = malloc_aligned(max(sizeof(struct mtx), CACHE_LINE_SIZE),
+	    CACHE_LINE_SIZE, M_IPSEC_MISC, M_NOWAIT | M_ZERO);
 	if (sav->lock == NULL) {
 		*errp = ENOBUFS;
 		goto done;
@@ -5053,7 +5059,7 @@ key_do_getnewspi(struct sadb_spirange *spirange, struct secasindex *saidx)
 	}
 
 	if (min == max) {
-		if (!key_checkspidup(htonl(min))) {
+		if (key_checkspidup(htonl(min))) {
 			ipseclog((LOG_DEBUG, "%s: SPI %u exists already.\n",
 			    __func__, min));
 			return 0;
@@ -8298,8 +8304,9 @@ spdcache_destroy(void)
 	}
 }
 #endif
-void
-key_init(void)
+
+static void
+key_vnet_init(void *arg __unused)
 {
 	int i;
 
@@ -8325,9 +8332,13 @@ key_init(void)
 
 	LIST_INIT(&V_acqtree);
 	LIST_INIT(&V_spacqtree);
+}
+VNET_SYSINIT(key_vnet_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_SECOND,
+    key_vnet_init, NULL);
 
-	if (!IS_DEFAULT_VNET(curvnet))
-		return;
+static void
+key_init(void *arg __unused)
+{
 
 	ipsec_key_lft_zone = uma_zcreate("IPsec SA lft_c",
 	    sizeof(uint64_t) * 2, NULL, NULL, NULL, NULL,
@@ -8351,10 +8362,11 @@ key_init(void)
 	if (bootverbose)
 		printf("IPsec: Initialized Security Association Processing.\n");
 }
+SYSINIT(key_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_FIRST, key_init, NULL);
 
 #ifdef VIMAGE
-void
-key_destroy(void)
+static void
+key_vnet_destroy(void *arg __unused)
 {
 	struct secashead_queue sahdrainq;
 	struct secpolicy_queue drainq;
@@ -8449,10 +8461,18 @@ key_destroy(void)
 	SPACQ_UNLOCK();
 	hashdestroy(V_acqaddrhashtbl, M_IPSEC_SAQ, V_acqaddrhash_mask);
 	hashdestroy(V_acqseqhashtbl, M_IPSEC_SAQ, V_acqseqhash_mask);
+}
+VNET_SYSUNINIT(key_vnet_destroy, SI_SUB_PROTO_DOMAIN, SI_ORDER_SECOND,
+    key_vnet_destroy, NULL);
+#endif
 
-	if (!IS_DEFAULT_VNET(curvnet))
-		return;
-
+/*
+ * XXX: as long as domains are not unloadable, this function is never called,
+ * provided for consistensy and future unload support.
+ */
+static void
+key_destroy(void *arg __unused)
+{
 	uma_zdestroy(ipsec_key_lft_zone);
 
 #ifndef IPSEC_DEBUG2
@@ -8465,7 +8485,7 @@ key_destroy(void)
 	SPACQ_LOCK_DESTROY();
 	SPI_ALLOC_LOCK_DESTROY();
 }
-#endif
+SYSUNINIT(key_destroy, SI_SUB_PROTO_DOMAIN, SI_ORDER_FIRST, key_destroy, NULL);
 
 /* record data transfer on SA, and update timestamps */
 void

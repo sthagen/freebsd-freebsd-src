@@ -35,6 +35,10 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
+#include "opt_inet.h"
+
+#define IN_HISTORICAL_NETS		/* include class masks */
+
 #include <sys/param.h>
 #include <sys/eventhandler.h>
 #include <sys/systm.h>
@@ -467,17 +471,24 @@ in_aifaddr_ioctl(u_long cmd, caddr_t data, struct ifnet *ifp, struct thread *td)
 		ia->ia_sockmask = *mask;
 		ia->ia_subnetmask = ntohl(ia->ia_sockmask.sin_addr.s_addr);
 	} else {
+		in_addr_t i = ntohl(addr->sin_addr.s_addr);
+
 		/*
-	 	 * If netmask isn't supplied, use default for now.
+	 	 * If netmask isn't supplied, use historical default.
 		 * This is deprecated for interfaces other than loopback
 		 * or point-to-point; warn in other cases.  In the future
 		 * we should return an error rather than warning.
 	 	 */
 		if ((ifp->if_flags & (IFF_POINTOPOINT | IFF_LOOPBACK)) == 0)
-			printf("%s: set address: WARNING: network mask"
-			     " should be specified; using default mask\n",
+			printf("%s: set address: WARNING: network mask "
+			     "should be specified; using historical default\n",
 			     ifp->if_xname);
-		ia->ia_subnetmask = IN_NETMASK_DEFAULT;
+		if (IN_CLASSA(i))
+			ia->ia_subnetmask = IN_CLASSA_NET;
+		else if (IN_CLASSB(i))
+			ia->ia_subnetmask = IN_CLASSB_NET;
+		else
+			ia->ia_subnetmask = IN_CLASSC_NET;
 		ia->ia_sockmask.sin_addr.s_addr = htonl(ia->ia_subnetmask);
 	}
 	ia->ia_subnet = ntohl(addr->sin_addr.s_addr) & ia->ia_subnetmask;
@@ -1552,7 +1563,7 @@ in_lltable_alloc(struct lltable *llt, u_int flags, const struct sockaddr *l3addr
 		linkhdrsize = LLE_MAX_LINKHDR;
 		if (lltable_calc_llheader(ifp, AF_INET, IF_LLADDR(ifp),
 		    linkhdr, &linkhdrsize, &lladdr_off) != 0) {
-			NET_EPOCH_CALL(in_lltable_destroy_lle_unlocked, &lle->lle_epoch_ctx);
+			in_lltable_free_entry(llt, lle);
 			return (NULL);
 		}
 		lltable_set_entry_addr(ifp, lle, linkhdr, linkhdrsize,
@@ -1690,6 +1701,17 @@ in_lltattach(struct ifnet *ifp)
 	llt->llt_mark_used = llentry_mark_used;
  	lltable_link(llt);
 
+	return (llt);
+}
+
+struct lltable *
+in_lltable_get(struct ifnet *ifp)
+{
+	struct lltable *llt = NULL;
+
+	void *afdata_ptr = ifp->if_afdata[AF_INET];
+	if (afdata_ptr != NULL)
+		llt = ((struct in_ifinfo *)afdata_ptr)->ii_llt;
 	return (llt);
 }
 

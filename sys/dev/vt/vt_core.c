@@ -2418,8 +2418,8 @@ skip_thunk:
 	case KDGKBTYPE:
 	case KDGETREPEAT:	/* get keyboard repeat & delay rates */
 	case KDSETREPEAT:	/* set keyboard repeat & delay rates (new) */
-	case KBADDKBD:		/* add/remove keyboard to/from mux */
-	case KBRELKBD: {
+	case KBADDKBD:		/* add keyboard to mux */
+	case KBRELKBD: {	/* release keyboard from mux */
 		error = 0;
 
 		mtx_lock(&Giant);
@@ -2559,6 +2559,7 @@ skip_thunk:
 	case FBIO_GETDISPSTART:	/* get display start address */
 	case FBIO_GETLINEWIDTH:	/* get scan line width in bytes */
 	case FBIO_BLANK:	/* blank display */
+	case FBIO_GETRGBOFFS:	/* get RGB offsets */
 		if (vd->vd_driver->vd_fb_ioctl)
 			return (vd->vd_driver->vd_fb_ioctl(vd, cmd, data, td));
 		break;

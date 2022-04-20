@@ -605,7 +605,7 @@ hdaa_eld_dump(struct hdaa_widget *w)
 	struct hdaa_devinfo *devinfo = w->devinfo;
 	device_t dev = devinfo->dev;
 	uint8_t *sad;
-	int len, mnl, i, sadc, fmt;
+	int mnl, i, sadc, fmt;
 
 	if (w->eld == NULL || w->eld_len < 4)
 		return;
@@ -614,7 +614,6 @@ hdaa_eld_dump(struct hdaa_widget *w)
 	    w->nid, w->eld[0] >> 3, w->eld[2]);
 	if ((w->eld[0] >> 3) != 0x02)
 		return;
-	len = min(w->eld_len, (u_int)w->eld[2] * 4);
 	mnl = w->eld[4] & 0x1f;
 	device_printf(dev,
 	    "ELD nid=%d: CEA_EDID_Ver=%u MNL=%u\n",
@@ -3711,7 +3710,7 @@ hdaa_audio_adddac(struct hdaa_devinfo *devinfo, int asid)
 		    asid, as->index);
 	);
 
-	/* Find the exisitng DAC position and return if found more the one. */
+	/* Find the existing DAC position and return if found more the one. */
 	pos = -1;
 	for (i = 0; i < 16; i++) {
 		if (as->dacs[0][i] <= 0)
@@ -6463,8 +6462,13 @@ hdaa_sysctl_reconfig(SYSCTL_HANDLER_ARGS)
 	HDA_BOOTHVERBOSE(
 		device_printf(dev, "Reconfiguration...\n");
 	);
-	if ((error = device_delete_children(dev)) != 0)
+
+	bus_topo_lock();
+
+	if ((error = device_delete_children(dev)) != 0) {
+		bus_topo_unlock();
 		return (error);
+	}
 	hdaa_lock(devinfo);
 	hdaa_unconfigure(dev);
 	hdaa_configure(dev);
@@ -6473,6 +6477,9 @@ hdaa_sysctl_reconfig(SYSCTL_HANDLER_ARGS)
 	HDA_BOOTHVERBOSE(
 		device_printf(dev, "Reconfiguration done\n");
 	);
+
+	bus_topo_unlock();
+
 	return (0);
 }
 
@@ -6669,7 +6676,7 @@ hdaa_attach(device_t dev)
 	    devinfo, 0, hdaa_sysctl_gpo_config, "A", "GPO configuration");
 	SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
 	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-	    "reconfig", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+	    "reconfig", CTLTYPE_INT | CTLFLAG_RW,
 	    dev, 0, hdaa_sysctl_reconfig, "I", "Reprocess configuration");
 	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
 	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,

@@ -150,6 +150,14 @@ static device_method_t enetc_methods[] = {
 	DEVMETHOD(miibus_linkchg,	enetc_miibus_linkchg),
 	DEVMETHOD(miibus_statchg,	enetc_miibus_statchg),
 
+	DEVMETHOD(bus_setup_intr,		bus_generic_setup_intr),
+	DEVMETHOD(bus_teardown_intr,		bus_generic_teardown_intr),
+	DEVMETHOD(bus_release_resource,		bus_generic_release_resource),
+	DEVMETHOD(bus_activate_resource,	bus_generic_activate_resource),
+	DEVMETHOD(bus_deactivate_resource,	bus_generic_deactivate_resource),
+	DEVMETHOD(bus_adjust_resource,		bus_generic_adjust_resource),
+	DEVMETHOD(bus_alloc_resource,		bus_generic_alloc_resource),
+
 	DEVMETHOD_END
 };
 
@@ -158,7 +166,7 @@ static driver_t enetc_driver = {
 };
 
 static devclass_t enetc_devclass;
-DRIVER_MODULE(miibus, enetc, miibus_driver, miibus_devclass, NULL, NULL);
+DRIVER_MODULE(miibus, enetc, miibus_fdt_driver, miibus_fdt_devclass, NULL, NULL);
 /* Make sure miibus gets procesed first. */
 DRIVER_MODULE_ORDERED(enetc, pci, enetc_driver, enetc_devclass, NULL, NULL,
     SI_ORDER_ANY);
@@ -356,7 +364,6 @@ enetc_setup_phy(struct enetc_softc *sc)
 static int
 enetc_attach_pre(if_ctx_t ctx)
 {
-	struct ifnet *ifp;
 	if_softc_ctx_t scctx;
 	struct enetc_softc *sc;
 	int error, rid;
@@ -366,7 +373,8 @@ enetc_attach_pre(if_ctx_t ctx)
 	sc->ctx = ctx;
 	sc->dev = iflib_get_dev(ctx);
 	sc->shared = scctx;
-	ifp = iflib_get_ifp(ctx);
+
+	mtx_init(&sc->mii_lock, "enetc_mdio", NULL, MTX_DEF);
 
 	pci_save_state(sc->dev);
 	pcie_flr(sc->dev, 1000, false);
@@ -463,6 +471,8 @@ enetc_detach(if_ctx_t ctx)
 	if (sc->ctrl_queue.dma.idi_size != 0)
 		iflib_dma_free(&sc->ctrl_queue.dma);
 
+	mtx_destroy(&sc->mii_lock);
+
 	return (error);
 }
 
@@ -491,8 +501,7 @@ enetc_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 		queue->sc = sc;
 		queue->ring = (union enetc_tx_bd*)(vaddrs[i]);
 		queue->ring_paddr = paddrs[i];
-		queue->next_to_clean = 0;
-		queue->ring_full = false;
+		queue->cidx = 0;
 	}
 
 	return (0);
@@ -803,7 +812,7 @@ enetc_hash_mac(void *arg, struct sockaddr_dl *sdl, u_int cnt)
 	for (i = 0; i < 6; i++) {
 		bit = 0;
 		for (j = 0; j < 8; j++)
-			bit ^= address & BIT(i + j*6);
+			bit ^= !!(address & BIT(i + j*6));
 
 		hash |= bit << i;
 	}
@@ -844,7 +853,7 @@ enetc_hash_vid(uint16_t vid)
 
 	for (i = 0;i < 6;i++) {
 		bit = vid & BIT(i);
-		bit ^= vid & BIT(i + 6);
+		bit ^= !!(vid & BIT(i + 6));
 		hash |= bit << i;
 	}
 
@@ -921,7 +930,7 @@ enetc_init(if_ctx_t ctx)
 		ENETC_PORT_WR4(sc, ENETC_PSIPVMR,
 		    ENETC_PSIPVMR_SET_VUTA(1));
 
-	sc->rbmr = ENETC_RBMR_EN | ENETC_RBMR_AL;
+	sc->rbmr = ENETC_RBMR_EN;
 
 	if (if_getcapenable(ifp) & IFCAP_VLAN_HWTAGGING)
 		sc->rbmr |= ENETC_RBMR_VTE;
@@ -948,6 +957,29 @@ enetc_init(if_ctx_t ctx)
 }
 
 static void
+enetc_disable_txq(struct enetc_softc *sc, int qid)
+{
+	qidx_t cidx, pidx;
+	int timeout = 10000;	/* this * DELAY(100) = 1s */
+
+	/* At this point iflib shouldn't be enquing any more frames. */
+	pidx = ENETC_TXQ_RD4(sc, qid, ENETC_TBPIR);
+	cidx = ENETC_TXQ_RD4(sc, qid, ENETC_TBCIR);
+
+	while (pidx != cidx && timeout--) {
+		DELAY(100);
+		cidx = ENETC_TXQ_RD4(sc, qid, ENETC_TBCIR);
+	}
+
+	if (timeout == 0)
+		device_printf(sc->dev,
+		    "Timeout while waiting for txq%d to stop transmitting packets\n",
+		    qid);
+
+	ENETC_TXQ_WR4(sc, qid, ENETC_TBMR, 0);
+}
+
+static void
 enetc_stop(if_ctx_t ctx)
 {
 	struct enetc_softc *sc;
@@ -955,11 +987,11 @@ enetc_stop(if_ctx_t ctx)
 
 	sc = iflib_get_softc(ctx);
 
-	for (i = 0; i < sc->tx_num_queues; i++)
-		ENETC_TXQ_WR4(sc, i, ENETC_TBMR, 0);
-
 	for (i = 0; i < sc->rx_num_queues; i++)
 		ENETC_RXQ_WR4(sc, i, ENETC_RBMR, 0);
+
+	for (i = 0; i < sc->tx_num_queues; i++)
+		enetc_disable_txq(sc, i);
 }
 
 static int
@@ -1113,8 +1145,6 @@ enetc_isc_txd_encap(void *data, if_pkt_info_t ipi)
 
 	desc->flags |= ENETC_TXBD_FLAGS_F;
 	ipi->ipi_new_pidx = pidx;
-	if (pidx == queue->next_to_clean)
-		queue->ring_full = true;
 
 	return (0);
 }
@@ -1132,28 +1162,35 @@ enetc_isc_txd_credits_update(void *data, uint16_t qid, bool clear)
 {
 	struct enetc_softc *sc = data;
 	struct enetc_tx_queue *queue;
-	qidx_t next_to_clean, next_to_process;
-	int clean_count;
+	int cidx, hw_cidx, count;
 
 	queue = &sc->tx_queues[qid];
-	next_to_process =
-	    ENETC_TXQ_RD4(sc, qid, ENETC_TBCIR) & ENETC_TBCIR_IDX_MASK;
-	next_to_clean = queue->next_to_clean;
+	hw_cidx = ENETC_TXQ_RD4(sc, qid, ENETC_TBCIR) & ENETC_TBCIR_IDX_MASK;
+	cidx = queue->cidx;
 
-	if (next_to_clean == next_to_process && !queue->ring_full)
+	/*
+	 * RM states that the ring can hold at most ring_size - 1 descriptors.
+	 * Thanks to that we can assume that the ring is empty if cidx == pidx.
+	 * This requirement is guaranteed implicitly by iflib as it will only
+	 * encap a new frame if we have at least nfrags + 2 descriptors available
+	 * on the ring. This driver uses at most one additional descriptor for
+	 * VLAN tag insertion.
+	 * Also RM states that the TBCIR register is only updated once all
+	 * descriptors in the chain have been processed.
+	 */
+	if (cidx == hw_cidx)
 		return (0);
 
 	if (!clear)
 		return (1);
 
-	clean_count = next_to_process - next_to_clean;
-	if (clean_count <= 0)
-		clean_count += sc->tx_queue_size;
+	count = hw_cidx - cidx;
+	if (count < 0)
+		count += sc->tx_queue_size;
 
-	queue->next_to_clean = next_to_process;
-	queue->ring_full = false;
+	queue->cidx = hw_cidx;
 
-	return (clean_count);
+	return (count);
 }
 
 static int
@@ -1243,8 +1280,7 @@ enetc_isc_rxd_pkt_get(void *data, if_rxd_info_t ri)
 		desc = &queue->ring[cidx];
 	}
 	ri->iri_nfrags = i + 1;
-	ri->iri_len = pkt_size + ENETC_RX_IP_ALIGN;
-	ri->iri_pad = ENETC_RX_IP_ALIGN;
+	ri->iri_len = pkt_size;
 
 	MPASS(desc->r.lstatus & ENETC_RXBD_LSTATUS_F);
 	if (status & ENETC_RXBD_LSTATUS(ENETC_RXBD_ERR_MASK))
@@ -1281,7 +1317,7 @@ enetc_isc_rxd_refill(void *data, if_rxd_update_t iru)
 	 * After enabling the queue NIC will prefetch the first
 	 * 8 descriptors. It probably assumes that the RX is fully
 	 * refilled when cidx == pidx.
-	 * Enable it only if we have enough decriptors ready on the ring.
+	 * Enable it only if we have enough descriptors ready on the ring.
 	 */
 	if (!queue->enabled && pidx >= 8) {
 		ENETC_RXQ_WR4(sc, iru->iru_qsidx, ENETC_RBMR, sc->rbmr);
@@ -1382,20 +1418,32 @@ static int
 enetc_miibus_readreg(device_t dev, int phy, int reg)
 {
 	struct enetc_softc *sc;
+	int val;
 
 	sc = iflib_get_softc(device_get_softc(dev));
-	return (enetc_mdio_read(sc->regs, ENETC_PORT_BASE + ENETC_EMDIO_BASE,
-	    phy, reg));
+
+	mtx_lock(&sc->mii_lock);
+	val = enetc_mdio_read(sc->regs, ENETC_PORT_BASE + ENETC_EMDIO_BASE,
+	    phy, reg);
+	mtx_unlock(&sc->mii_lock);
+
+	return (val);
 }
 
 static int
 enetc_miibus_writereg(device_t dev, int phy, int reg, int data)
 {
 	struct enetc_softc *sc;
+	int ret;
 
 	sc = iflib_get_softc(device_get_softc(dev));
-	return (enetc_mdio_write(sc->regs, ENETC_PORT_BASE + ENETC_EMDIO_BASE,
-	    phy, reg, data));
+
+	mtx_lock(&sc->mii_lock);
+	ret = enetc_mdio_write(sc->regs, ENETC_PORT_BASE + ENETC_EMDIO_BASE,
+	    phy, reg, data);
+	mtx_unlock(&sc->mii_lock);
+
+	return (ret);
 }
 
 static void

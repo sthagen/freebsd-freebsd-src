@@ -561,30 +561,27 @@ nvme_ns_construct(struct nvme_namespace *ns, uint32_t id,
 	 *  not >=.
 	 */
 	if (flbas_fmt > ns->data.nlbaf) {
-		printf("lba format %d exceeds number supported (%d)\n",
+		nvme_printf(ctrlr,
+		    "lba format %d exceeds number supported (%d)\n",
 		    flbas_fmt, ns->data.nlbaf + 1);
 		return (ENXIO);
 	}
 
 	/*
-	 * Older Intel devices advertise in vendor specific space an alignment
-	 * that improves performance.  If present use for the stripe size.  NVMe
-	 * 1.3 standardized this as NOIOB, and newer Intel drives use that.
+	 * Older Intel devices (like the PC35xxx and P45xx series) advertise in
+	 * vendor specific space an alignment that improves performance.  If
+	 * present use for the stripe size.  NVMe 1.3 standardized this as
+	 * NOIOB, and newer Intel drives use that.
 	 */
-	switch (pci_get_devid(ctrlr->dev)) {
-	case 0x09538086:		/* Intel DC PC3500 */
-	case 0x0a538086:		/* Intel DC PC3520 */
-	case 0x0a548086:		/* Intel DC PC4500 */
-	case 0x0a558086:		/* Dell Intel P4600 */
+	if ((ctrlr->quirks & QUIRK_INTEL_ALIGNMENT) != 0) {
 		if (ctrlr->cdata.vs[3] != 0)
 			ns->boundary =
-			    (1 << ctrlr->cdata.vs[3]) * ctrlr->min_page_size;
+			    1 << (ctrlr->cdata.vs[3] + NVME_MPS_SHIFT +
+				NVME_CAP_HI_MPSMIN(ctrlr->cap_hi));
 		else
 			ns->boundary = 0;
-		break;
-	default:
+	} else {
 		ns->boundary = ns->data.noiob * nvme_ns_get_sector_size(ns);
-		break;
 	}
 
 	if (nvme_ctrlr_has_dataset_mgmt(&ctrlr->cdata))

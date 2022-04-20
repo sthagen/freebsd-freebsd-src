@@ -46,7 +46,6 @@ MAN=	aac.4 \
 	${_amdsmn.4} \
 	${_amdtemp.4} \
 	${_bxe.4} \
-	amr.4 \
 	${_aout.4} \
 	${_apic.4} \
 	arcmsr.4 \
@@ -71,6 +70,7 @@ MAN=	aac.4 \
 	axge.4 \
 	axp.4 \
 	bce.4 \
+	bcm5974.4 \
 	bcma.4 \
 	bfe.4 \
 	bge.4 \
@@ -82,6 +82,7 @@ MAN=	aac.4 \
 	bhndb_pci.4 \
 	blackhole.4 \
 	bnxt.4 \
+	boottrace.4 \
 	bpf.4 \
 	bridge.4 \
 	bwi.4 \
@@ -142,7 +143,6 @@ MAN=	aac.4 \
 	ena.4 \
 	enc.4 \
 	epair.4 \
-	esp.4 \
 	est.4 \
 	et.4 \
 	etherswitch.4 \
@@ -166,6 +166,7 @@ MAN=	aac.4 \
 	gbde.4 \
 	gdb.4 \
 	gem.4 \
+	genet.4 \
 	geom.4 \
 	geom_linux_lvm.4 \
 	geom_map.4 \
@@ -211,6 +212,7 @@ MAN=	aac.4 \
 	icmp.4 \
 	icmp6.4 \
 	ida.4 \
+	ietp.4 \
 	if_ipsec.4 \
 	iflib.4 \
 	ifmib.4 \
@@ -223,7 +225,6 @@ MAN=	aac.4 \
 	iichid.4 \
 	iicmux.4 \
 	iicsmb.4 \
-	iir.4 \
 	${_igc.4} \
 	${_imcsmb.4} \
 	inet.4 \
@@ -253,6 +254,8 @@ MAN=	aac.4 \
 	iwmfw.4 \
 	iwn.4 \
 	iwnfw.4 \
+	iwlwifi.4 \
+	iwlwififw.4 \
 	ixgbe.4 \
 	ixl.4 \
 	jedec_dimm.4 \
@@ -288,6 +291,7 @@ MAN=	aac.4 \
 	mac_ntpd.4 \
 	mac_partition.4 \
 	mac_portacl.4 \
+	mac_priority.4 \
 	mac_seeotheruids.4 \
 	mac_stub.4 \
 	mac_test.4 \
@@ -297,7 +301,6 @@ MAN=	aac.4 \
 	mdio.4 \
 	me.4 \
 	mem.4 \
-	meteor.4 \
 	mfi.4 \
 	${_mgb.4} \
 	miibus.4 \
@@ -305,7 +308,6 @@ MAN=	aac.4 \
 	mlx.4 \
 	mlx4en.4 \
 	mlx5en.4 \
-	mly.4 \
 	mmc.4 \
 	mmcsd.4 \
 	mod_cc.4 \
@@ -464,6 +466,8 @@ MAN=	aac.4 \
 	rndtest.4 \
 	route.4 \
 	rtsx.4 \
+	rtw88.4 \
+	rtw88fw.4 \
 	rtwn.4 \
 	rtwnfw.4 \
 	rtwn_pci.4 \
@@ -503,7 +507,6 @@ MAN=	aac.4 \
 	snd_cmi.4 \
 	snd_cs4281.4 \
 	snd_csa.4 \
-	snd_ds1.4 \
 	snd_emu10k1.4 \
 	snd_emu10kx.4 \
 	snd_envy24.4 \
@@ -516,7 +519,6 @@ MAN=	aac.4 \
 	snd_hdspe.4 \
 	snd_ich.4 \
 	snd_maestro3.4 \
-	snd_maestro.4 \
 	snd_mss.4 \
 	snd_neomagic.4 \
 	snd_sbc.4 \
@@ -547,15 +549,14 @@ MAN=	aac.4 \
 	tcp.4 \
 	tcp_bbr.4 \
 	tdfx.4 \
-	terasic_mtl.4 \
 	termios.4 \
 	textdump.4 \
 	ti.4 \
 	timecounters.4 \
 	${_tpm.4} \
+	tslog.4 \
 	tty.4 \
 	tun.4 \
-	twa.4 \
 	twe.4 \
 	tws.4 \
 	udp.4 \
@@ -670,6 +671,7 @@ MLINKS+=fwe.4 if_fwe.4
 MLINKS+=fwip.4 if_fwip.4
 MLINKS+=fxp.4 if_fxp.4
 MLINKS+=gem.4 if_gem.4
+MLINKS+=genet.4 if_genet.4
 MLINKS+=geom.4 GEOM.4
 MLINKS+=gif.4 if_gif.4
 MLINKS+=gpio.4 gpiobus.4

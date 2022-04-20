@@ -376,7 +376,10 @@ ahci_attach(device_t dev)
 		device_set_ivars(child, (void *)(intptr_t)(unit | AHCI_REMAPPED_UNIT));
 	}
 
-	if (ctlr->caps & AHCI_CAP_EMS) {
+	int em = (ctlr->caps & AHCI_CAP_EMS) != 0;
+	resource_int_value(device_get_name(dev), device_get_unit(dev),
+	    "em", &em);
+	if (em) {
 		child = device_add_child(dev, "ahciem", -1);
 		if (child == NULL)
 			device_printf(dev, "failed to add enclosure device\n");
@@ -602,6 +605,8 @@ ahci_alloc_resource(device_t dev, device_t child, int type, int *rid,
 		} else if (!is_em) {
 			offset = AHCI_OFFSET + (unit << 7);
 			size = 128;
+		} else if ((ctlr->caps & AHCI_CAP_EMS) == 0) {
+			break;
 		} else if (*rid == 0) {
 			offset = AHCI_EM_CTL;
 			size = 4;
@@ -2173,7 +2178,8 @@ completeall:
 		ahci_reset(ch);
 		return;
 	}
-	ccb->ccb_h = ch->hold[i]->ccb_h;	/* Reuse old header. */
+	xpt_setup_ccb(&ccb->ccb_h, ch->hold[i]->ccb_h.path,
+	    ch->hold[i]->ccb_h.pinfo.priority);
 	if (ccb->ccb_h.func_code == XPT_ATA_IO) {
 		/* READ LOG */
 		ccb->ccb_h.recovery_type = RECOVERY_READ_LOG;

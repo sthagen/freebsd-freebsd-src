@@ -3786,7 +3786,7 @@ enum iwm_sf_scenario {
 /**
  * Smart Fifo configuration command.
  * @state: smart fifo state, types listed in enum %iwm_sf_state.
- * @watermark: Minimum allowed availabe free space in RXF for transient state.
+ * @watermark: Minimum allowed available free space in RXF for transient state.
  * @long_delay_timeouts: aging and idle timer values for each scenario
  * in long delay state.
  * @full_on_timeouts: timer values for each scenario in full on state.
@@ -5238,7 +5238,7 @@ struct iwm_ba_notif {
 /*
  * struct iwm_mac_beacon_cmd - beacon template command
  * @tx: the tx commands associated with the beacon frame
- * @template_id: currently equal to the mac context id of the coresponding
+ * @template_id: currently equal to the mac context id of the corresponding
  *  mac.
  * @tim_idx: the offset of the tim IE in the beacon
  * @tim_size: the length of the tim IE

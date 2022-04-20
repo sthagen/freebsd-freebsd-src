@@ -25,6 +25,7 @@
 # - retpoline: supports the retpoline speculative execution vulnerability
 #              mitigation.
 # - init-all:  supports stack variable initialization.
+# - aarch64-sha512: supports the AArch64 sha512 intrinsic functions.
 #
 # When bootstrapping on macOS, 'apple-clang' will be set in COMPILER_FEATURES
 # to differentiate Apple's version of Clang. Apple Clang uses a different
@@ -159,7 +160,7 @@ _can_export=	yes
 .for var in ${_exported_vars}
 .if defined(${var}) && (!defined(${var}__${${X_}_cc_hash}) || ${${var}__${${X_}_cc_hash}} != ${${var}})
 .if defined(${var}__${${X_}_ld_hash})
-.info "Cannot import ${X_}COMPILER variables since cached ${var} is different: ${${var}__${${X_}_cc_hash}} != ${${var}}"
+.info Cannot import ${X_}COMPILER variables since cached ${var} is different: ${${var}__${${X_}_cc_hash}} != ${${var}}
 .endif
 _can_export=	no
 .endif
@@ -253,6 +254,13 @@ ${X_}COMPILER_FEATURES+=	compressed-debug
 .if ${${X_}COMPILER_TYPE} == "clang" && ${${X_}COMPILER_VERSION} >= 100000 || \
 	(${${X_}COMPILER_TYPE} == "gcc" && ${${X_}COMPILER_VERSION} >= 80100)
 ${X_}COMPILER_FEATURES+=	fileprefixmap
+.endif
+
+.if (${${X_}COMPILER_TYPE} == "clang" && ${${X_}COMPILER_VERSION} >= 130000) || \
+	(${${X_}COMPILER_TYPE} == "gcc" && ${${X_}COMPILER_VERSION} >= 90000)
+# AArch64 sha512 intrinsics are supported (and have been tested) in
+# clang 13 and gcc 9.
+${X_}COMPILER_FEATURES+=	aarch64-sha512
 .endif
 
 .else

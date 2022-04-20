@@ -49,8 +49,7 @@ int __getosreldate(void);
 static bool
 phdr_in_zero_page(const Elf_Ehdr *hdr)
 {
-	return (hdr->e_phoff + hdr->e_phnum * sizeof(Elf_Phdr) <=
-	    (size_t)PAGE_SIZE);
+	return (hdr->e_phoff + hdr->e_phnum * sizeof(Elf_Phdr) <= page_size);
 }
 
 /*
@@ -134,14 +133,15 @@ map_object(int fd, const char *path, const struct stat *sb)
 
 	case PT_LOAD:
 	    segs[++nsegs] = phdr;
-    	    if ((segs[nsegs]->p_align & (PAGE_SIZE - 1)) != 0) {
+	    if ((segs[nsegs]->p_align & (page_size - 1)) != 0) {
 		_rtld_error("%s: PT_LOAD segment %d not page-aligned",
 		    path, nsegs);
 		goto error;
 	    }
 	    if ((segs[nsegs]->p_flags & PF_X) == PF_X) {
 		text_end = MAX(text_end,
-		    round_page(segs[nsegs]->p_vaddr + segs[nsegs]->p_memsz));
+		    rtld_round_page(segs[nsegs]->p_vaddr +
+		    segs[nsegs]->p_memsz));
 	    }
 	    break;
 
@@ -168,18 +168,18 @@ map_object(int fd, const char *path, const struct stat *sb)
 	    break;
 
 	case PT_NOTE:
-	    if (phdr->p_offset > PAGE_SIZE ||
-	      phdr->p_offset + phdr->p_filesz > PAGE_SIZE) {
-		note_map_len = round_page(phdr->p_offset +
-		  phdr->p_filesz) - trunc_page(phdr->p_offset);
+	    if (phdr->p_offset > page_size ||
+	      phdr->p_offset + phdr->p_filesz > page_size) {
+		note_map_len = rtld_round_page(phdr->p_offset +
+		  phdr->p_filesz) - rtld_trunc_page(phdr->p_offset);
 		note_map = mmap(NULL, note_map_len, PROT_READ,
-		  MAP_PRIVATE, fd, trunc_page(phdr->p_offset));
+		  MAP_PRIVATE, fd, rtld_trunc_page(phdr->p_offset));
 		if (note_map == MAP_FAILED) {
 		    _rtld_error("%s: error mapping PT_NOTE (%d)", path, errno);
 		    goto error;
 		}
 		note_start = (Elf_Addr)(note_map + phdr->p_offset -
-		  trunc_page(phdr->p_offset));
+		  rtld_trunc_page(phdr->p_offset));
 	    } else {
 		note_start = (Elf_Addr)(char *)hdr + phdr->p_offset;
 	    }
@@ -203,13 +203,13 @@ map_object(int fd, const char *path, const struct stat *sb)
      * Map the entire address space of the object, to stake out our
      * contiguous region, and to establish the base address for relocation.
      */
-    base_vaddr = trunc_page(segs[0]->p_vaddr);
-    base_vlimit = round_page(segs[nsegs]->p_vaddr + segs[nsegs]->p_memsz);
+    base_vaddr = rtld_trunc_page(segs[0]->p_vaddr);
+    base_vlimit = rtld_round_page(segs[nsegs]->p_vaddr + segs[nsegs]->p_memsz);
     mapsize = base_vlimit - base_vaddr;
     base_addr = (caddr_t) base_vaddr;
     base_flags = __getosreldate() >= P_OSREL_MAP_GUARD ? MAP_GUARD :
 	MAP_PRIVATE | MAP_ANON | MAP_NOCORE;
-    if (npagesizes > 1 && round_page(segs[0]->p_filesz) >= pagesizes[1])
+    if (npagesizes > 1 && rtld_round_page(segs[0]->p_filesz) >= pagesizes[1])
 	base_flags |= MAP_ALIGNED_SUPER;
     if (base_vaddr != 0)
 	base_flags |= MAP_FIXED | MAP_EXCL;
@@ -228,9 +228,9 @@ map_object(int fd, const char *path, const struct stat *sb)
 
     for (i = 0; i <= nsegs; i++) {
 	/* Overlay the segment onto the proper region. */
-	data_offset = trunc_page(segs[i]->p_offset);
-	data_vaddr = trunc_page(segs[i]->p_vaddr);
-	data_vlimit = round_page(segs[i]->p_vaddr + segs[i]->p_filesz);
+	data_offset = rtld_trunc_page(segs[i]->p_offset);
+	data_vaddr = rtld_trunc_page(segs[i]->p_vaddr);
+	data_vlimit = rtld_round_page(segs[i]->p_vaddr + segs[i]->p_filesz);
 	data_addr = mapbase + (data_vaddr - base_vaddr);
 	data_prot = convert_prot(segs[i]->p_flags);
 	data_flags = convert_flags(segs[i]->p_flags) | MAP_FIXED;
@@ -248,12 +248,12 @@ map_object(int fd, const char *path, const struct stat *sb)
 	    /* Clear any BSS in the last page of the segment. */
 	    clear_vaddr = segs[i]->p_vaddr + segs[i]->p_filesz;
 	    clear_addr = mapbase + (clear_vaddr - base_vaddr);
-	    clear_page = mapbase + (trunc_page(clear_vaddr) - base_vaddr);
+	    clear_page = mapbase + (rtld_trunc_page(clear_vaddr) - base_vaddr);
 
 	    if ((nclear = data_vlimit - clear_vaddr) > 0) {
 		/* Make sure the end of the segment is writable */
 		if ((data_prot & PROT_WRITE) == 0 && -1 ==
-		     mprotect(clear_page, PAGE_SIZE, data_prot|PROT_WRITE)) {
+		     mprotect(clear_page, page_size, data_prot|PROT_WRITE)) {
 			_rtld_error("%s: mprotect failed: %s", path,
 			    rtld_strerror(errno));
 			goto error1;
@@ -263,12 +263,12 @@ map_object(int fd, const char *path, const struct stat *sb)
 
 		/* Reset the data protection back */
 		if ((data_prot & PROT_WRITE) == 0)
-		    mprotect(clear_page, PAGE_SIZE, data_prot);
+		    mprotect(clear_page, page_size, data_prot);
 	    }
 
 	    /* Overlay the BSS segment onto the proper region. */
 	    bss_vaddr = data_vlimit;
-	    bss_vlimit = round_page(segs[i]->p_vaddr + segs[i]->p_memsz);
+	    bss_vlimit = rtld_round_page(segs[i]->p_vaddr + segs[i]->p_memsz);
 	    bss_addr = mapbase +  (bss_vaddr - base_vaddr);
 	    if (bss_vlimit > bss_vaddr) {	/* There is something to do */
 		if (mmap(bss_addr, bss_vlimit - bss_vaddr, data_prot,
@@ -324,14 +324,14 @@ map_object(int fd, const char *path, const struct stat *sb)
 	obj->tlsinit = mapbase + phtls->p_vaddr;
     }
     obj->stack_flags = stack_flags;
-    obj->relro_page = obj->relocbase + trunc_page(relro_page);
-    obj->relro_size = trunc_page(relro_page + relro_size) -
-      trunc_page(relro_page);
+    obj->relro_page = obj->relocbase + rtld_trunc_page(relro_page);
+    obj->relro_size = rtld_trunc_page(relro_page + relro_size) -
+      rtld_trunc_page(relro_page);
     if (note_start < note_end)
 	digest_notes(obj, note_start, note_end);
     if (note_map != NULL)
 	munmap(note_map, note_map_len);
-    munmap(hdr, PAGE_SIZE);
+    munmap(hdr, page_size);
     return (obj);
 
 error1:
@@ -341,8 +341,41 @@ error:
 	munmap(note_map, note_map_len);
     if (!phdr_in_zero_page(hdr))
 	munmap(phdr, hdr->e_phnum * sizeof(phdr[0]));
-    munmap(hdr, PAGE_SIZE);
+    munmap(hdr, page_size);
     return (NULL);
+}
+
+bool
+check_elf_headers(const Elf_Ehdr *hdr, const char *path)
+{
+	if (!IS_ELF(*hdr)) {
+		_rtld_error("%s: invalid file format", path);
+		return (false);
+	}
+	if (hdr->e_ident[EI_CLASS] != ELF_TARG_CLASS ||
+	    hdr->e_ident[EI_DATA] != ELF_TARG_DATA) {
+		_rtld_error("%s: unsupported file layout", path);
+		return (false);
+	}
+	if (hdr->e_ident[EI_VERSION] != EV_CURRENT ||
+	    hdr->e_version != EV_CURRENT) {
+		_rtld_error("%s: unsupported file version", path);
+		return (false);
+	}
+	if (hdr->e_type != ET_EXEC && hdr->e_type != ET_DYN) {
+		_rtld_error("%s: unsupported file type", path);
+		return (false);
+	}
+	if (hdr->e_machine != ELF_TARG_MACH) {
+		_rtld_error("%s: unsupported machine", path);
+		return (false);
+	}
+	if (hdr->e_phentsize != sizeof(Elf_Phdr)) {
+		_rtld_error(
+	    "%s: invalid shared object: e_phentsize != sizeof(Elf_Phdr)", path);
+		return (false);
+	}
+	return (true);
 }
 
 static Elf_Ehdr *
@@ -358,7 +391,7 @@ get_elf_header(int fd, const char *path, const struct stat *sbp,
 		return (NULL);
 	}
 
-	hdr = mmap(NULL, PAGE_SIZE, PROT_READ, MAP_PRIVATE | MAP_PREFAULT_READ,
+	hdr = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_PREFAULT_READ,
 	    fd, 0);
 	if (hdr == MAP_FAILED) {
 		_rtld_error("%s: read error: %s", path, rtld_strerror(errno));
@@ -366,39 +399,14 @@ get_elf_header(int fd, const char *path, const struct stat *sbp,
 	}
 
 	/* Make sure the file is valid */
-	if (!IS_ELF(*hdr)) {
-		_rtld_error("%s: invalid file format", path);
+	if (!check_elf_headers(hdr, path))
 		goto error;
-	}
-	if (hdr->e_ident[EI_CLASS] != ELF_TARG_CLASS ||
-	    hdr->e_ident[EI_DATA] != ELF_TARG_DATA) {
-		_rtld_error("%s: unsupported file layout", path);
-		goto error;
-	}
-	if (hdr->e_ident[EI_VERSION] != EV_CURRENT ||
-	    hdr->e_version != EV_CURRENT) {
-		_rtld_error("%s: unsupported file version", path);
-		goto error;
-	}
-	if (hdr->e_type != ET_EXEC && hdr->e_type != ET_DYN) {
-		_rtld_error("%s: unsupported file type", path);
-		goto error;
-	}
-	if (hdr->e_machine != ELF_TARG_MACH) {
-		_rtld_error("%s: unsupported machine", path);
-		goto error;
-	}
 
 	/*
 	 * We rely on the program header being in the first page.  This is
 	 * not strictly required by the ABI specification, but it seems to
 	 * always true in practice.  And, it simplifies things considerably.
 	 */
-	if (hdr->e_phentsize != sizeof(Elf_Phdr)) {
-		_rtld_error(
-	    "%s: invalid shared object: e_phentsize != sizeof(Elf_Phdr)", path);
-		goto error;
-	}
 	if (phdr_in_zero_page(hdr)) {
 		phdr = (Elf_Phdr *)((char *)hdr + hdr->e_phoff);
 	} else {
@@ -415,7 +423,7 @@ get_elf_header(int fd, const char *path, const struct stat *sbp,
 	return (hdr);
 
 error:
-	munmap(hdr, PAGE_SIZE);
+	munmap(hdr, page_size);
 	return (NULL);
 }
 

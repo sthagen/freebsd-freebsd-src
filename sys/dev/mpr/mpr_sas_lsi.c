@@ -271,9 +271,6 @@ mprsas_fw_work(struct mpr_softc *sc, struct mpr_fw_event_work *fw_event)
 	}
 	case MPI2_EVENT_SAS_ENCL_DEVICE_STATUS_CHANGE:
 	{
-		Mpi2EventDataSasEnclDevStatusChange_t *data;
-		data = (Mpi2EventDataSasEnclDevStatusChange_t *)
-		    fw_event->event_data;
 		mpr_mapping_enclosure_dev_status_change_event(sc,
 		    fw_event->event_data);
 		break;
@@ -359,7 +356,7 @@ mprsas_fw_work(struct mpr_softc *sc, struct mpr_fw_event_work *fw_event)
 					 * need to do diag reset
 					 */
 					printf("%s: poll for page completed "
-					    "with error %d", __func__, error);
+					    "with error %d\n", __func__, error);
 				}
 				if (reply && (le16toh(reply->IOCStatus) &
 				    MPI2_IOCSTATUS_MASK) !=

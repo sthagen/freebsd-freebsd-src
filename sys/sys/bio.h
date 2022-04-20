@@ -126,7 +126,7 @@ struct bio {
 #ifdef DIAGNOSTIC
 	void	*_bio_caller1;
 	void	*_bio_caller2;
-	uint8_t	_bio_cflags;
+	uint16_t _bio_cflags;
 #endif
 #if defined(BUF_TRACKING) || defined(FULL_BUF_TRACKING)
 	struct buf *bio_track_bp;	/* Parent buf for tracking */
@@ -152,7 +152,7 @@ extern int bio_transient_maxcnt;
 
 void biodone(struct bio *bp);
 void biofinish(struct bio *bp, struct devstat *stat, int error);
-int biowait(struct bio *bp, const char *wchan);
+int biowait(struct bio *bp, const char *wmesg);
 
 #if defined(BUF_TRACKING) || defined(FULL_BUF_TRACKING)
 void biotrack_buf(struct bio *bp, const char *location);

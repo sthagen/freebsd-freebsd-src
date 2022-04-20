@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC2039
+# shellcheck disable=SC2154,SC3043
 # zed-functions.sh
 #
 # ZED helper functions for use in ZEDLETs
@@ -77,7 +77,7 @@ zed_log_msg()
 zed_log_err()
 {
     logger -p "${ZED_SYSLOG_PRIORITY}" -t "${ZED_SYSLOG_TAG}" -- "error:" \
-        "$(basename -- "$0"):""${ZEVENT_EID:+" eid=${ZEVENT_EID}:"}" "$@"
+        "${0##*/}:""${ZEVENT_EID:+" eid=${ZEVENT_EID}:"}" "$@"
 }
 
 
@@ -258,7 +258,7 @@ zed_notify_email()
     [ -n "${subject}" ] || return 1
     if [ ! -r "${pathname}" ]; then
         zed_log_err \
-                "$(basename "${ZED_EMAIL_PROG}") cannot read \"${pathname}\""
+                "${ZED_EMAIL_PROG##*/} cannot read \"${pathname}\""
         return 1
     fi
 
@@ -266,11 +266,11 @@ zed_notify_email()
         | sed   -e "s/@ADDRESS@/${ZED_EMAIL_ADDR}/g" \
                 -e "s/@SUBJECT@/${subject}/g")"
 
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086,SC2248
     eval ${ZED_EMAIL_PROG} ${ZED_EMAIL_OPTS} < "${pathname}" >/dev/null 2>&1
     rv=$?
     if [ "${rv}" -ne 0 ]; then
-        zed_log_err "$(basename "${ZED_EMAIL_PROG}") exit=${rv}"
+        zed_log_err "${ZED_EMAIL_PROG##*/} exit=${rv}"
         return 1
     fi
     return 0
@@ -417,7 +417,7 @@ zed_notify_slack_webhook()
 
     # Construct the JSON message for posting.
     #
-    msg_json="$(printf '{"text": "*%s*\n%s"}' "${subject}" "${msg_body}" )"
+    msg_json="$(printf '{"text": "*%s*\\n%s"}' "${subject}" "${msg_body}" )"
 
     # Send the POST request and check for errors.
     #

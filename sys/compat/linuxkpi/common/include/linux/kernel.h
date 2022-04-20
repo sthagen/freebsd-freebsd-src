@@ -29,8 +29,8 @@
  *
  * $FreeBSD$
  */
-#ifndef	_LINUX_KERNEL_H_
-#define	_LINUX_KERNEL_H_
+#ifndef	_LINUXKPI_LINUX_KERNEL_H_
+#define	_LINUXKPI_LINUX_KERNEL_H_
 
 #include <sys/cdefs.h>
 #include <sys/types.h>
@@ -109,9 +109,7 @@
 #define	BUILD_BUG_ON_MSG(x, msg)	BUILD_BUG_ON(x)
 #define	BUILD_BUG_ON_NOT_POWER_OF_2(x)	BUILD_BUG_ON(!powerof2(x))
 #define	BUILD_BUG_ON_INVALID(expr)	while (0) { (void)(expr); }
-
-extern const volatile int lkpi_build_bug_on_zero;
-#define	BUILD_BUG_ON_ZERO(x)	((x) ? lkpi_build_bug_on_zero : 0)
+#define	BUILD_BUG_ON_ZERO(x)	((int)sizeof(struct { int:-((x) != 0); }))
 
 #define	BUG()			panic("BUG at %s:%d", __FILE__, __LINE__)
 #define	BUG_ON(cond)		do {				\
@@ -152,6 +150,7 @@ extern int linuxkpi_warn_dump_stack;
 
 #undef	ALIGN
 #define	ALIGN(x, y)		roundup2((x), (y))
+#define	ALIGN_DOWN(x, y)	rounddown2(x, y)
 #undef PTR_ALIGN
 #define	PTR_ALIGN(p, a)		((__typeof(p))ALIGN((uintptr_t)(p), (a)))
 #define	IS_ALIGNED(x, a)	(((x) & ((__typeof(x))(a) - 1)) == 0)
@@ -466,6 +465,12 @@ kstrtou64(const char *cp, unsigned int base, u64 *res)
 }
 
 static inline int
+kstrtoull(const char *cp, unsigned int base, unsigned long long *res)
+{
+	return (kstrtou64(cp, base, (u64 *)res));
+}
+
+static inline int
 kstrtobool(const char *s, bool *res)
 {
 	int len;
@@ -503,6 +508,36 @@ kstrtobool_from_user(const char __user *s, size_t count, bool *res)
 		return (-EFAULT);
 
 	return (kstrtobool(buf, res));
+}
+
+static inline int
+kstrtoint_from_user(const char __user *s, size_t count, unsigned int base,
+    int *p)
+{
+	char buf[36] = {};
+
+	if (count > (sizeof(buf) - 1))
+		count = (sizeof(buf) - 1);
+
+	if (copy_from_user(buf, s, count))
+		return (-EFAULT);
+
+	return (kstrtoint(buf, base, p));
+}
+
+static inline int
+kstrtouint_from_user(const char __user *s, size_t count, unsigned int base,
+    int *p)
+{
+	char buf[36] = {};
+
+	if (count > (sizeof(buf) - 1))
+		count = (sizeof(buf) - 1);
+
+	if (copy_from_user(buf, s, count))
+		return (-EFAULT);
+
+	return (kstrtouint(buf, base, p));
 }
 
 static inline int
@@ -649,6 +684,40 @@ linux_ratelimited(linux_ratelimit_t *rl)
 #define	TAINT_WARN	0
 #define	test_taint(x)	(0)
 
+static inline int
+_h2b(const char c)
+{
+
+	if (c >= '0' && c <= '9')
+		return (c - '0');
+	if (c >= 'a' && c <= 'f')
+		return (10 + c - 'a');
+	if (c >= 'A' && c <= 'F')
+		return (10 + c - 'A');
+	return (-EINVAL);
+}
+
+static inline int
+hex2bin(uint8_t *bindst, const char *hexsrc, size_t binlen)
+{
+	int hi4, lo4;
+
+	while (binlen > 0) {
+		hi4 = _h2b(*hexsrc++);
+		lo4 = _h2b(*hexsrc++);
+		if (hi4 < 0 || lo4 < 0)
+			return (-EINVAL);
+
+		*bindst++ = (hi4 << 4) | lo4;
+		binlen--;
+	}
+
+	return (0);
+}
+
+#define	DECLARE_FLEX_ARRAY(_t, _n)					\
+    struct { struct { } __dummy_ ## _n; _t _n[0]; }
+
 /*
  * Checking if an option is defined would be easy if we could do CPP inside CPP.
  * The defined case whether -Dxxx or -Dxxx=1 are easy to deal with.  In either
@@ -691,4 +760,4 @@ linux_ratelimited(linux_ratelimit_t *rl)
 #define	IS_REACHABLE(_x)	(IS_BUILTIN(_x) || \
 				    (IS_MODULE(_x) && IS_BUILTIN(MODULE)))
 
-#endif	/* _LINUX_KERNEL_H_ */
+#endif	/* _LINUXKPI_LINUX_KERNEL_H_ */

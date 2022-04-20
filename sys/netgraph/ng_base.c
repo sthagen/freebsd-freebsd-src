@@ -787,7 +787,7 @@ ng_rmnode(node_p node, hook_p dummy1, void *dummy2, int dummy3)
 
 /*
  * Remove a reference to the node, possibly the last.
- * deadnode always acts as it it were the last.
+ * deadnode always acts as it were the last.
  */
 void
 ng_unref_node(node_p node)
@@ -2281,7 +2281,7 @@ ng_snd_item(item_p item, int flags)
 		queue = 1;
 	} else {
 		queue = 0;
-#ifdef GET_STACK_USAGE
+
 		/*
 		 * Most of netgraph nodes have small stack consumption and
 		 * for them 25% of free stack space is more than enough.
@@ -2296,7 +2296,6 @@ ng_snd_item(item_p item, int flags)
 		    ((node->nd_flags & NGF_HI_STACK) || (hook &&
 		    (hook->hk_flags & HK_HI_STACK)))))
 			queue = 1;
-#endif
 	}
 
 	if (queue) {
@@ -3375,10 +3374,8 @@ sysctl_debug_ng_dump_items(SYSCTL_HANDLER_ARGS)
 {
 	int error;
 	int val;
-	int i;
 
 	val = allocated;
-	i = 1;
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error != 0 || req->newptr == NULL)
 		return (error);
@@ -3391,7 +3388,7 @@ sysctl_debug_ng_dump_items(SYSCTL_HANDLER_ARGS)
 }
 
 SYSCTL_PROC(_debug, OID_AUTO, ng_dump_items,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT, 0, sizeof(int),
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, 0, sizeof(int),
     sysctl_debug_ng_dump_items, "I",
     "Number of allocated items");
 #endif	/* NETGRAPH_DEBUG */

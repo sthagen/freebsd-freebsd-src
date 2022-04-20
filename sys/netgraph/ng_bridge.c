@@ -532,14 +532,11 @@ ng_bridge_rcvmsg(node_p node, item_p item, hook_p lasthook)
 		    }
 		case NGM_BRIDGE_RESET:
 		    {
-			hook_p rethook;
-
 			/* Flush all entries in the hash table */
 			ng_bridge_remove_hosts(priv, NULL);
 
 			/* Reset all loop detection counters and stats */
-			NG_NODE_FOREACH_HOOK(node, ng_bridge_reset_link, NULL,
-			    rethook);
+			NG_NODE_FOREACH_HOOK(node, ng_bridge_reset_link, NULL);
 			break;
 		    }
 		case NGM_BRIDGE_GET_STATS:
@@ -695,6 +692,8 @@ ng_bridge_send_data(link_cp dst, int manycast, struct mbuf *m, item_p item) {
 		NG_SEND_DATA_ONLY(error, dst->hook, m);
 
 	if (error) {
+		if (error == ENOMEM)
+			counter_u64_add(dst->stats.memoryFailures, 1);
 		/* The packet is still ours */
 		if (item != NULL)
 			NG_FREE_ITEM(item);
@@ -775,7 +774,6 @@ ng_bridge_rcvdata(hook_p hook, item_p item)
 	struct ng_bridge_host *host;
 	struct ether_header *eh;
 	struct ng_bridge_send_ctx ctx = { 0 };
-	hook_p ret;
 
 	NGI_GET_M(item, ctx.m);
 
@@ -894,7 +892,7 @@ ng_bridge_rcvdata(hook_p hook, item_p item)
 	}
 
 	/* Distribute unknown, multicast, broadcast pkts to all other links */
-	NG_NODE_FOREACH_HOOK(node, ng_bridge_send_ctx, &ctx, ret);
+	NG_NODE_FOREACH_HOOK(node, ng_bridge_send_ctx, &ctx);
 
 	/* Finally send out on the first link found */
 	if (ctx.foundFirst != NULL) {
@@ -1166,7 +1164,6 @@ ng_bridge_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 	const priv_p priv = NG_NODE_PRIVATE(node);
 	int bucket;
 	int counter = 0;
-	hook_p ret;
 
 	/* Update host time counters and remove stale entries */
 	for (bucket = 0; bucket < priv->numBuckets; bucket++) {
@@ -1196,7 +1193,7 @@ ng_bridge_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 
 	/* Decrease loop counter on muted looped back links */
 	counter = 0;
-	NG_NODE_FOREACH_HOOK(node, ng_bridge_unmute, &counter, ret);
+	NG_NODE_FOREACH_HOOK(node, ng_bridge_unmute, &counter);
 	KASSERT(priv->numLinks == counter,
 	    ("%s: links: %d != %d", __func__, priv->numLinks, counter));
 

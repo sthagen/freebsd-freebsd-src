@@ -31,8 +31,7 @@
 #ifndef _CRYPTO_XFORM_AUTH_H_
 #define _CRYPTO_XFORM_AUTH_H_
 
-#include <sys/malloc.h>
-#include <sys/errno.h>
+#include <sys/types.h>
 
 #include <crypto/sha1.h>
 #include <crypto/sha2/sha224.h>
@@ -70,6 +69,7 @@ extern const struct auth_hash auth_hash_hmac_sha2_224;
 extern const struct auth_hash auth_hash_hmac_sha2_256;
 extern const struct auth_hash auth_hash_hmac_sha2_384;
 extern const struct auth_hash auth_hash_hmac_sha2_512;
+extern const struct auth_hash auth_hash_ripemd_160;
 extern const struct auth_hash auth_hash_sha1;
 extern const struct auth_hash auth_hash_sha2_224;
 extern const struct auth_hash auth_hash_sha2_256;
@@ -84,7 +84,6 @@ extern const struct auth_hash auth_hash_poly1305;
 extern const struct auth_hash auth_hash_ccm_cbc_mac_128;
 extern const struct auth_hash auth_hash_ccm_cbc_mac_192;
 extern const struct auth_hash auth_hash_ccm_cbc_mac_256;
-extern const struct auth_hash auth_hash_chacha20_poly1305;
 
 union authctx {
 	SHA1_CTX sha1ctx;

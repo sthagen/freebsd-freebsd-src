@@ -465,8 +465,8 @@ main(int argc, const char *argv[])
 
 	      default:
 		errx(1, 
-"[-abCHIijnPqStuvwz] [-d count] [-m io | cpu] [-o field] [-p pid]\n"
-"       [-s time] [-J jail] [-U username] [number]");
+"[-abCHIijnPqStuvwz] [-d count] [-J jail] [-m cpu | io] [-o field]\n"
+"     [-p pid] [-s time] [-U username] [number]");
 	    }
 	}
 
@@ -652,7 +652,7 @@ restart:
 	{
 	    /* determine number of processes to actually display */
 	    /* this number will be the smallest of:  active processes,
-	       number user requested, number current screen accomodates */
+	       number user requested, number current screen accommodates */
 	    active_procs = system_info.p_pactive;
 	    if (active_procs > topn)
 	    {

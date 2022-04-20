@@ -75,8 +75,8 @@ __FBSDID("$FreeBSD$");
 #include <xen/xenstore/xenstorevar.h>
 #include <xen/xen_pv.h>
 
-#include <xen/interface/arch-x86/hvm/start_info.h>
-#include <xen/interface/vcpu.h>
+#include <contrib/xen/arch-x86/hvm/start_info.h>
+#include <contrib/xen/vcpu.h>
 
 #include <dev/xen/timer/timer.h>
 
@@ -255,10 +255,7 @@ xen_pvh_parse_symtab(void)
 {
 	Elf_Ehdr *ehdr;
 	Elf_Shdr *shdr;
-	uint32_t size;
 	int i, j;
-
-	size = end;
 
 	ehdr = (Elf_Ehdr *)(&end + 1);
 	if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) ||

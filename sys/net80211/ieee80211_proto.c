@@ -249,6 +249,8 @@ static void vap_update_erp_protmode(void *, int);
 static void vap_update_preamble(void *, int);
 static void vap_update_ht_protmode(void *, int);
 static void ieee80211_newstate_cb(void *, int);
+static struct ieee80211_node *vap_update_bss(struct ieee80211vap *,
+    struct ieee80211_node *);
 
 static int
 null_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
@@ -394,6 +396,7 @@ ieee80211_proto_vattach(struct ieee80211vap *vap)
 	vap->iv_update_beacon = null_update_beacon;
 	vap->iv_deliver_data = ieee80211_deliver_data;
 	vap->iv_protmode = IEEE80211_PROT_CTSONLY;
+	vap->iv_update_bss = vap_update_bss;
 
 	/* attach support for operating mode */
 	ic->ic_vattach[vap->iv_opmode](vap);
@@ -822,6 +825,17 @@ ieee80211_reset_erp(struct ieee80211com *ic)
 	}
 #endif
 	/* XXX TODO: schedule a new per-VAP ERP calculation */
+}
+
+static struct ieee80211_node *
+vap_update_bss(struct ieee80211vap *vap, struct ieee80211_node *ni)
+{
+	struct ieee80211_node *obss;
+
+	obss = vap->iv_bss;
+	vap->iv_bss = ni;
+
+	return (obss);
 }
 
 /*
@@ -2654,8 +2668,8 @@ ieee80211_new_state_locked(struct ieee80211vap *vap,
 	}
 	ostate = vap->iv_state;
 	IEEE80211_DPRINTF(vap, IEEE80211_MSG_STATE,
-	    "%s: %s -> %s (nrunning %d nscanning %d)\n", __func__,
-	    ieee80211_state_name[ostate], ieee80211_state_name[nstate],
+	    "%s: %s -> %s (arg %d) (nrunning %d nscanning %d)\n", __func__,
+	    ieee80211_state_name[ostate], ieee80211_state_name[nstate], arg,
 	    nrunning, nscanning);
 	switch (nstate) {
 	case IEEE80211_S_SCAN:

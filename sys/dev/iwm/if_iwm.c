@@ -2513,15 +2513,12 @@ static int
 iwm_pcie_load_cpu_sections(struct iwm_softc *sc,
 	const struct iwm_fw_img *image, int cpu, int *first_ucode_section)
 {
-	int shift_param;
 	int i, ret = 0;
 	uint32_t last_read_idx = 0;
 
 	if (cpu == 1) {
-		shift_param = 0;
 		*first_ucode_section = 0;
 	} else {
-		shift_param = 16;
 		(*first_ucode_section)++;
 	}
 
@@ -3153,7 +3150,6 @@ iwm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211vap *vap = TAILQ_FIRST(&ic->ic_vaps);
-	struct ieee80211_frame *wh;
 	struct ieee80211_rx_stats rxs;
 	struct iwm_rx_phy_info *phy_info;
 	struct iwm_rx_mpdu_res_start *rx_res;
@@ -3164,7 +3160,6 @@ iwm_rx_rx_mpdu(struct iwm_softc *sc, struct mbuf *m, uint32_t offset,
 
 	phy_info = &sc->sc_last_phy_info;
 	rx_res = (struct iwm_rx_mpdu_res_start *)pkt->data;
-	wh = (struct ieee80211_frame *)(pkt->data + sizeof(*rx_res));
 	len = le16toh(rx_res->byte_count);
 	rx_pkt_status = le32toh(*(uint32_t *)(pkt->data + sizeof(*rx_res) + len));
 
@@ -5480,8 +5475,6 @@ iwm_handle_rxb(struct iwm_softc *sc, struct mbuf *m)
 			break;
 
 		case IWM_SCAN_ITERATION_COMPLETE: {
-			struct iwm_lmac_scan_complete_notif *notif;
-			notif = (void *)pkt->data;
 			break;
 		}
 
@@ -5627,7 +5620,7 @@ iwm_intr(void *arg)
 {
 	struct iwm_softc *sc = arg;
 	int handled = 0;
-	int r1, r2, rv = 0;
+	int r1, r2;
 	int isperiodic = 0;
 
 	IWM_LOCK(sc);
@@ -5719,7 +5712,6 @@ iwm_intr(void *arg)
 		handled |= IWM_CSR_INT_BIT_HW_ERR;
 		device_printf(sc->sc_dev, "hardware error, stopping device\n");
 		iwm_stop(sc);
-		rv = 1;
 		goto out;
 	}
 
@@ -5764,8 +5756,6 @@ iwm_intr(void *arg)
 	if (__predict_false(r1 & ~handled))
 		IWM_DPRINTF(sc, IWM_DEBUG_INTR,
 		    "%s: unhandled interrupts: %x\n", __func__, r1);
-	rv = 1;
-
  out_ena:
 	iwm_restore_interrupts(sc);
  out:
@@ -5900,9 +5890,9 @@ iwm_pci_attach(device_t dev)
 	}
 	error = bus_setup_intr(dev, sc->sc_irq, INTR_TYPE_NET | INTR_MPSAFE,
 	    NULL, iwm_intr, sc, &sc->sc_ih);
-	if (sc->sc_ih == NULL) {
+	if (error != 0) {
 		device_printf(dev, "can't establish interrupt");
-			return (ENXIO);
+		return (error);
 	}
 	sc->sc_dmat = bus_get_dma_tag(sc->sc_dev);
 

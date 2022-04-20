@@ -50,7 +50,7 @@ SYSCTL_INT(_hw_nvme, OID_AUTO, use_nvd, CTLFLAG_RDTUN,
     &nvme_use_nvd, 1, "1 = Create NVD devices, 0 = Create NDA devices");
 SYSCTL_BOOL(_hw_nvme, OID_AUTO, verbose_cmd_dump, CTLFLAG_RWTUN,
     &nvme_verbose_cmd_dump, 0,
-    "enable verbose command printting when a command fails");
+    "enable verbose command printing when a command fails");
 
 static void
 nvme_dump_queue(struct nvme_qpair *qpair)
@@ -371,6 +371,14 @@ nvme_sysctl_initialize_ctrlr(struct nvme_controller *ctrlr)
 	SYSCTL_ADD_PROC(ctrlr_ctx, ctrlr_list, OID_AUTO,
 	    "reset_stats", CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_MPSAFE, ctrlr,
 	    0, nvme_sysctl_reset_stats, "IU", "Reset statistics to zero");
+
+	SYSCTL_ADD_UINT(ctrlr_ctx, ctrlr_list, OID_AUTO, "cap_lo",
+	    CTLFLAG_RD, &ctrlr->cap_lo, 0,
+	    "Low 32-bits of capacities for the drive");
+
+	SYSCTL_ADD_UINT(ctrlr_ctx, ctrlr_list, OID_AUTO, "cap_hi",
+	    CTLFLAG_RD, &ctrlr->cap_hi, 0,
+	    "Hi 32-bits of capacities for the drive");
 
 	que_tree = SYSCTL_ADD_NODE(ctrlr_ctx, ctrlr_list, OID_AUTO, "adminq",
 	    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, "Admin Queue");

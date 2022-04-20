@@ -133,6 +133,7 @@ typedef	__uint64_t	__nlink_t;	/* link count */
 typedef	__int64_t	__off_t;	/* file offset */
 typedef	__int64_t	__off64_t;	/* file offset (alias) */
 typedef	__int32_t	__pid_t;	/* process [group] */
+typedef	__int64_t	__sbintime_t;
 typedef	__int64_t	__rlim_t;	/* resource limit - intentionally */
 					/* signed, because of legacy code */
 					/* that uses -1 for RLIM_INFINITY */
@@ -207,13 +208,8 @@ typedef __uintmax_t     __rman_res_t;
  * Types for varargs. These are all provided by builtin types these
  * days, so centralize their definition.
  */
-#ifdef __GNUCLIKE_BUILTIN_VARARGS
 typedef	__builtin_va_list	__va_list;	/* internally known to gcc */
-#else
-#error "No support for your compiler for stdargs"
-#endif
-#if defined(__GNUC_VA_LIST_COMPATIBILITY) && !defined(__GNUC_VA_LIST) \
-    && !defined(__NO_GNUC_VA_LIST)
+#if !defined(__GNUC_VA_LIST) && !defined(__NO_GNUC_VA_LIST)
 #define __GNUC_VA_LIST
 typedef __va_list		__gnuc_va_list;	/* compatibility w/GNU headers*/
 #endif

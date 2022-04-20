@@ -201,7 +201,7 @@ static uint32_t
 vlapic_get_ccr(struct vlapic *vlapic)
 {
 	struct bintime bt_now, bt_rem;
-	struct LAPIC *lapic;
+	struct LAPIC *lapic __diagused;
 	uint32_t ccr;
 
 	ccr = 0;
@@ -1740,10 +1740,13 @@ vlapic_snapshot(struct vm *vm, struct vm_snapshot_meta *meta)
 
 		SNAPSHOT_VAR_OR_LEAVE(ccr, meta, ret, done);
 
-		if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (meta->op == VM_SNAPSHOT_RESTORE &&
+		    vlapic_enabled(vlapic) && lapic->icr_timer != 0) {
 			/* Reset the value of the 'timer_fire_bt' and the vlapic
 			 * callout based on the value of the current count
-			 * register saved when the VM snapshot was created
+			 * register saved when the VM snapshot was created.
+			 * If initial count register is 0, timer is not used.
+			 * Look at "10.5.4 APIC Timer" in Software Developer Manual.
 			 */
 			vlapic_reset_callout(vlapic, ccr);
 		}

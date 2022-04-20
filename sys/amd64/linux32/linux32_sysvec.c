@@ -771,16 +771,11 @@ linux_copyout_strings(struct image_params *imgp, uintptr_t *stack_base)
 	char canary[LINUX_AT_RANDOM_LEN];
 	size_t execpath_len;
 
-	/* Calculate string base and vector table pointers. */
-	if (imgp->execpath != NULL && imgp->auxargs != NULL)
-		execpath_len = strlen(imgp->execpath) + 1;
-	else
-		execpath_len = 0;
-
-	arginfo = (struct linux32_ps_strings *)LINUX32_PS_STRINGS;
+	arginfo = (struct linux32_ps_strings *)PROC_PS_STRINGS(imgp->proc);
 	destp = (uintptr_t)arginfo;
 
-	if (execpath_len != 0) {
+	if (imgp->execpath != NULL && imgp->auxargs != NULL) {
+		execpath_len = strlen(imgp->execpath) + 1;
 		destp -= execpath_len;
 		destp = rounddown2(destp, sizeof(uint32_t));
 		imgp->execpathp = (void *)destp;
@@ -890,6 +885,9 @@ SYSCTL_ULONG(_compat_linux32, OID_AUTO, maxssiz, CTLFLAG_RW,
 static u_long	linux32_maxvmem = LINUX32_MAXVMEM;
 SYSCTL_ULONG(_compat_linux32, OID_AUTO, maxvmem, CTLFLAG_RW,
     &linux32_maxvmem, 0, "");
+bool linux32_emulate_i386 = false;
+SYSCTL_BOOL(_compat_linux32, OID_AUTO, emulate_i386, CTLFLAG_RWTUN,
+    &linux32_emulate_i386, 0, "Emulate the real i386");
 
 static void
 linux32_fixlimit(struct rlimit *rl, int which)
@@ -942,6 +940,7 @@ struct sysentvec elf_linux_sysvec = {
 	.sv_maxuser	= LINUX32_MAXUSER,
 	.sv_usrstack	= LINUX32_USRSTACK,
 	.sv_psstrings	= LINUX32_PS_STRINGS,
+	.sv_psstringssz	= sizeof(struct linux32_ps_strings),
 	.sv_stackprot	= VM_PROT_ALL,
 	.sv_copyout_auxargs = linux_copyout_auxargs,
 	.sv_copyout_strings = linux_copyout_strings,

@@ -28,8 +28,8 @@
  *
  * $FreeBSD$
  */
-#ifndef	_LINUX_SCHED_H_
-#define	_LINUX_SCHED_H_
+#ifndef	_LINUXKPI_LINUX_SCHED_H_
+#define	_LINUXKPI_LINUX_SCHED_H_
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -45,6 +45,7 @@
 #include <linux/pid.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/spinlock.h>
 #include <linux/time.h>
 
 #include <asm/atomic.h>
@@ -127,6 +128,18 @@ put_task_struct(struct task_struct *task)
 
 #define	need_resched() (curthread->td_flags & TDF_NEEDRESCHED)
 
+static inline int
+cond_resched_lock(spinlock_t *lock)
+{
+
+	if (need_resched() == 0)
+		return (0);
+	spin_lock(lock);
+	cond_resched();
+	spin_unlock(lock);
+	return (1);
+}
+
 bool linux_signal_pending(struct task_struct *task);
 bool linux_fatal_signal_pending(struct task_struct *task);
 bool linux_signal_pending_state(long state, struct task_struct *task);
@@ -162,8 +175,12 @@ linux_schedule_get_interrupt_value(struct task_struct *task)
 	return (value);
 }
 
-#define	schedule()					\
-	(void)linux_schedule_timeout(MAX_SCHEDULE_TIMEOUT)
+static inline void
+schedule(void)
+{
+	(void)linux_schedule_timeout(MAX_SCHEDULE_TIMEOUT);
+}
+
 #define	schedule_timeout(timeout)			\
 	linux_schedule_timeout(timeout)
 #define	schedule_timeout_killable(timeout)		\
@@ -197,4 +214,4 @@ get_task_comm(char *buf, struct task_struct *task)
 	return (task->comm);
 }
 
-#endif	/* _LINUX_SCHED_H_ */
+#endif	/* _LINUXKPI_LINUX_SCHED_H_ */

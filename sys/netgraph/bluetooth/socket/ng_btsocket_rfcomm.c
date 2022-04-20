@@ -328,13 +328,9 @@ ng_btsocket_rfcomm_check_fcs(u_int8_t *data, int type, u_int8_t fcs)
  * Initialize everything
  */
 
-void
-ng_btsocket_rfcomm_init(void)
+static void
+ng_btsocket_rfcomm_init(void *arg __unused)
 {
-
-	/* Skip initialization of globals for non-default instances. */
-	if (!IS_DEFAULT_VNET(curvnet))
-		return;
 
 	ng_btsocket_rfcomm_debug_level = NG_BTSOCKET_WARN_LEVEL;
 	ng_btsocket_rfcomm_timo = 60;
@@ -353,6 +349,8 @@ ng_btsocket_rfcomm_init(void)
 	mtx_init(&ng_btsocket_rfcomm_sockets_mtx,
 		"btsocks_rfcomm_sockets_mtx", NULL, MTX_DEF);
 } /* ng_btsocket_rfcomm_init */
+SYSINIT(ng_btsocket_rfcomm_init, SI_SUB_PROTO_DOMAIN, SI_ORDER_THIRD,
+    ng_btsocket_rfcomm_init, NULL);
 
 /*
  * Abort connection on socket
@@ -2003,7 +2001,7 @@ ng_btsocket_rfcomm_receive_sabm(ng_btsocket_rfcomm_session_p s, int dlci)
 	/* Make sure multiplexor channel is open */
 	if (s->state != NG_BTSOCKET_RFCOMM_SESSION_OPEN) {
 		NG_BTSOCKET_RFCOMM_ERR(
-"%s: Got SABM for dlci=%d with mulitplexor channel closed, state=%d, " \
+"%s: Got SABM for dlci=%d with multiplexor channel closed, state=%d, " \
 "flags=%#x\n",		__func__, dlci, s->state, s->flags);
 
 		return (EINVAL);

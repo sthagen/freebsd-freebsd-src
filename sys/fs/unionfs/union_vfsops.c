@@ -78,7 +78,6 @@ unionfs_domount(struct mount *mp)
 	struct vnode   *lowerrootvp;
 	struct vnode   *upperrootvp;
 	struct unionfs_mount *ump;
-	struct thread *td;
 	char           *target;
 	char           *tmp;
 	char           *ep;
@@ -105,7 +104,6 @@ unionfs_domount(struct mount *mp)
 	copymode = UNIONFS_TRANSPARENT;	/* default */
 	whitemode = UNIONFS_WHITE_ALWAYS;
 	ndp = &nd;
-	td = curthread;
 
 	if (mp->mnt_flag & MNT_ROOTFS) {
 		vfs_mount_error(mp, "Cannot union mount root filesystem");
@@ -234,15 +232,17 @@ unionfs_domount(struct mount *mp)
 	/*
 	 * Find upper node
 	 */
-	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, target, td);
+	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, target);
 	if ((error = namei(ndp)))
 		return (error);
 
-	NDFREE(ndp, NDF_ONLY_PNBUF);
+	NDFREE_PNBUF(ndp);
 
 	/* get root vnodes */
 	lowerrootvp = mp->mnt_vnodecovered;
 	upperrootvp = ndp->ni_vp;
+	KASSERT(lowerrootvp != NULL, ("%s: NULL lower root vp", __func__));
+	KASSERT(upperrootvp != NULL, ("%s: NULL upper root vp", __func__));
 
 	/* create unionfs_mount */
 	ump = malloc(sizeof(struct unionfs_mount), M_UNIONFSMNT,
@@ -284,13 +284,16 @@ unionfs_domount(struct mount *mp)
 	 * Get the unionfs root vnode.
 	 */
 	error = unionfs_nodeget(mp, ump->um_uppervp, ump->um_lowervp,
-	    NULLVP, &(ump->um_rootvp), NULL, td);
+	    NULLVP, &(ump->um_rootvp), NULL);
 	vrele(upperrootvp);
 	if (error != 0) {
 		free(ump, M_UNIONFSMNT);
 		mp->mnt_data = NULL;
 		return (error);
 	}
+	KASSERT(ump->um_rootvp != NULL, ("rootvp cannot be NULL"));
+	KASSERT((ump->um_rootvp->v_vflag & VV_ROOT) != 0,
+	    ("%s: rootvp without VV_ROOT", __func__));
 
 	lowermp = vfs_register_upper_from_vp(ump->um_lowervp, mp,
 	    &ump->um_lower_link);

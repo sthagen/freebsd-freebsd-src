@@ -77,24 +77,6 @@ CODE {
 		return (0);
 	}
 
-	static int
-	null_translate_resource(device_t bus, int type, rman_res_t start,
-		rman_res_t *newstart)
-	{
-		if (device_get_parent(bus) != NULL)
-			return (BUS_TRANSLATE_RESOURCE(device_get_parent(bus),
-			    type, start, newstart));
-
-		*newstart = start;
-		return (0);
-	}
-
-	static ssize_t
-	null_get_property(device_t dev, device_t child, const char *propname,
-	    void *propvalue, size_t size)
-	{
-		return (-1);
-	}
 };
 
 /**
@@ -425,10 +407,12 @@ METHOD int adjust_resource {
 	rman_res_t	_end;
 };
 
-
 /**
  * @brief translate a resource value
  *
+ * Give a bus driver the opportunity to translate resource ranges.  If
+ * successful, the host's view of the resource starting at @p _start is
+ * returned in @p _newstart, otherwise an error is returned.
  *
  * @param _dev		the device associated with the resource
  * @param _type		the type of resource
@@ -440,7 +424,7 @@ METHOD int translate_resource {
 	int		_type;
 	rman_res_t	_start;
 	rman_res_t	*_newstart;
-} DEFAULT null_translate_resource;
+} DEFAULT bus_generic_translate_resource;
 
 /**
  * @brief Release a resource
@@ -954,4 +938,24 @@ METHOD ssize_t get_property {
 	const char *_propname;
 	void *_propvalue;
 	size_t _size;
-} DEFAULT null_get_property;
+	device_property_type_t type;
+} DEFAULT bus_generic_get_property;
+
+/**
+ * @brief Gets a child's full path to the device
+ *
+ * The get_device_path method retrieves a device's
+ * full path to the device using one of several
+ * locators present in the system.
+ *
+ * @param _bus			the bus device
+ * @param _child		the child device
+ * @param _locator		locator name
+ * @param _sb			buffer loaction string
+ */
+METHOD int get_device_path {
+	device_t _bus;
+	device_t _child;
+	const char *_locator;
+	struct sbuf *_sb;
+} DEFAULT bus_generic_get_device_path;

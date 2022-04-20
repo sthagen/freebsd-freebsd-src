@@ -50,11 +50,13 @@ extern "C" {
  * combined into masks that can be passed to various functions.
  */
 typedef enum {
+	ZFS_TYPE_INVALID	= 0,
 	ZFS_TYPE_FILESYSTEM	= (1 << 0),
 	ZFS_TYPE_SNAPSHOT	= (1 << 1),
 	ZFS_TYPE_VOLUME		= (1 << 2),
 	ZFS_TYPE_POOL		= (1 << 3),
-	ZFS_TYPE_BOOKMARK	= (1 << 4)
+	ZFS_TYPE_BOOKMARK	= (1 << 4),
+	ZFS_TYPE_VDEV		= (1 << 5),
 } zfs_type_t;
 
 /*
@@ -205,7 +207,8 @@ typedef enum {
 	ZFS_NUM_USERQUOTA_PROPS
 } zfs_userquota_prop_t;
 
-_SYS_FS_ZFS_H const char *zfs_userquota_prop_prefixes[ZFS_NUM_USERQUOTA_PROPS];
+_SYS_FS_ZFS_H const char *const zfs_userquota_prop_prefixes[
+    ZFS_NUM_USERQUOTA_PROPS];
 
 /*
  * Pool properties are identified by these constants and must be added to the
@@ -252,6 +255,7 @@ typedef enum {
 
 /* Small enough to not hog a whole line of printout in zpool(8). */
 #define	ZPROP_MAX_COMMENT	32
+#define	ZPROP_BOOLEAN_NA	2
 
 #define	ZPROP_VALUE		"value"
 #define	ZPROP_SOURCE		"source"
@@ -299,6 +303,59 @@ typedef int (*zprop_func)(int, void *);
 #define	ZFS_WRITTEN_PROP_PREFIX_LEN	8
 
 /*
+ * VDEV properties are identified by these constants and must be added to the
+ * end of this list to ensure that external consumers are not affected
+ * by the change. If you make any changes to this list, be sure to update
+ * the property table in usr/src/common/zfs/zpool_prop.c.
+ */
+typedef enum {
+	VDEV_PROP_INVAL = -1,
+#define	VDEV_PROP_USER	VDEV_PROP_INVAL
+	VDEV_PROP_NAME,
+	VDEV_PROP_CAPACITY,
+	VDEV_PROP_STATE,
+	VDEV_PROP_GUID,
+	VDEV_PROP_ASIZE,
+	VDEV_PROP_PSIZE,
+	VDEV_PROP_ASHIFT,
+	VDEV_PROP_SIZE,
+	VDEV_PROP_FREE,
+	VDEV_PROP_ALLOCATED,
+	VDEV_PROP_COMMENT,
+	VDEV_PROP_EXPANDSZ,
+	VDEV_PROP_FRAGMENTATION,
+	VDEV_PROP_BOOTSIZE,
+	VDEV_PROP_PARITY,
+	VDEV_PROP_PATH,
+	VDEV_PROP_DEVID,
+	VDEV_PROP_PHYS_PATH,
+	VDEV_PROP_ENC_PATH,
+	VDEV_PROP_FRU,
+	VDEV_PROP_PARENT,
+	VDEV_PROP_CHILDREN,
+	VDEV_PROP_NUMCHILDREN,
+	VDEV_PROP_READ_ERRORS,
+	VDEV_PROP_WRITE_ERRORS,
+	VDEV_PROP_CHECKSUM_ERRORS,
+	VDEV_PROP_INITIALIZE_ERRORS,
+	VDEV_PROP_OPS_NULL,
+	VDEV_PROP_OPS_READ,
+	VDEV_PROP_OPS_WRITE,
+	VDEV_PROP_OPS_FREE,
+	VDEV_PROP_OPS_CLAIM,
+	VDEV_PROP_OPS_TRIM,
+	VDEV_PROP_BYTES_NULL,
+	VDEV_PROP_BYTES_READ,
+	VDEV_PROP_BYTES_WRITE,
+	VDEV_PROP_BYTES_FREE,
+	VDEV_PROP_BYTES_CLAIM,
+	VDEV_PROP_BYTES_TRIM,
+	VDEV_PROP_REMOVING,
+	VDEV_PROP_ALLOCATING,
+	VDEV_NUM_PROPS
+} vdev_prop_t;
+
+/*
  * Dataset property functions shared between libzfs and kernel.
  */
 _SYS_FS_ZFS_H const char *zfs_prop_default_string(zfs_prop_t);
@@ -336,6 +393,22 @@ _SYS_FS_ZFS_H int zpool_prop_index_to_string(zpool_prop_t, uint64_t,
 _SYS_FS_ZFS_H int zpool_prop_string_to_index(zpool_prop_t, const char *,
     uint64_t *);
 _SYS_FS_ZFS_H uint64_t zpool_prop_random_value(zpool_prop_t, uint64_t seed);
+
+/*
+ * VDEV property functions shared between libzfs and kernel.
+ */
+_SYS_FS_ZFS_H vdev_prop_t vdev_name_to_prop(const char *);
+_SYS_FS_ZFS_H boolean_t vdev_prop_user(const char *name);
+_SYS_FS_ZFS_H const char *vdev_prop_to_name(vdev_prop_t);
+_SYS_FS_ZFS_H const char *vdev_prop_default_string(vdev_prop_t);
+_SYS_FS_ZFS_H uint64_t vdev_prop_default_numeric(vdev_prop_t);
+_SYS_FS_ZFS_H boolean_t vdev_prop_readonly(vdev_prop_t prop);
+_SYS_FS_ZFS_H int vdev_prop_index_to_string(vdev_prop_t, uint64_t,
+    const char **);
+_SYS_FS_ZFS_H int vdev_prop_string_to_index(vdev_prop_t, const char *,
+    uint64_t *);
+_SYS_FS_ZFS_H boolean_t zpool_prop_vdev(const char *name);
+_SYS_FS_ZFS_H uint64_t vdev_prop_random_value(vdev_prop_t prop, uint64_t seed);
 
 /*
  * Definitions for the Delegation.
@@ -712,6 +785,7 @@ typedef struct zpool_load_policy {
 #define	ZPOOL_CONFIG_ORIG_GUID		"orig_guid"
 #define	ZPOOL_CONFIG_SPLIT_GUID		"split_guid"
 #define	ZPOOL_CONFIG_SPLIT_LIST		"guid_list"
+#define	ZPOOL_CONFIG_NONALLOCATING	"non_allocating"
 #define	ZPOOL_CONFIG_REMOVING		"removing"
 #define	ZPOOL_CONFIG_RESILVER_TXG	"resilver_txg"
 #define	ZPOOL_CONFIG_REBUILD_TXG	"rebuild_txg"
@@ -765,6 +839,7 @@ typedef struct zpool_load_policy {
 
 /* Rewind data discovered */
 #define	ZPOOL_CONFIG_LOAD_TIME		"rewind_txg_ts"
+#define	ZPOOL_CONFIG_LOAD_META_ERRORS	"verify_meta_errors"
 #define	ZPOOL_CONFIG_LOAD_DATA_ERRORS	"verify_data_errors"
 #define	ZPOOL_CONFIG_REWIND_TIME	"seconds_of_rewind"
 
@@ -1109,13 +1184,13 @@ typedef struct vdev_stat {
 	uint64_t	vs_configured_ashift;   /* TLV vdev_ashift */
 	uint64_t	vs_logical_ashift;	/* vdev_logical_ashift  */
 	uint64_t	vs_physical_ashift;	/* vdev_physical_ashift */
+	uint64_t	vs_noalloc;		/* allocations halted?	*/
+	uint64_t	vs_pspace;		/* physical capacity */
 } vdev_stat_t;
 
-/* BEGIN CSTYLED */
 #define	VDEV_STAT_VALID(field, uint64_t_field_count) \
-    ((uint64_t_field_count * sizeof (uint64_t)) >=	 \
-     (offsetof(vdev_stat_t, field) + sizeof (((vdev_stat_t *)NULL)->field)))
-/* END CSTYLED */
+((uint64_t_field_count * sizeof (uint64_t)) >=	 \
+	(offsetof(vdev_stat_t, field) + sizeof (((vdev_stat_t *)NULL)->field)))
 
 /*
  * Extended stats
@@ -1362,6 +1437,8 @@ typedef enum zfs_ioc {
 	ZFS_IOC_GET_BOOKMARK_PROPS,		/* 0x5a52 */
 	ZFS_IOC_WAIT,				/* 0x5a53 */
 	ZFS_IOC_WAIT_FS,			/* 0x5a54 */
+	ZFS_IOC_VDEV_GET_PROPS,			/* 0x5a55 */
+	ZFS_IOC_VDEV_SET_PROPS,			/* 0x5a56 */
 
 	/*
 	 * Per-platform (Optional) - 8/128 numbers reserved.
@@ -1382,6 +1459,41 @@ typedef enum zfs_ioc {
  * zvol ioctl to get dataset name
  */
 #define	BLKZNAME		_IOR(0x12, 125, char[ZFS_MAX_DATASET_NAME_LEN])
+
+#ifdef __linux__
+
+/*
+ * IOCTLs to update and retrieve additional file level attributes on
+ * Linux.
+ */
+#define	ZFS_IOC_GETDOSFLAGS	_IOR(0x83, 1, uint64_t)
+#define	ZFS_IOC_SETDOSFLAGS	_IOW(0x83, 2, uint64_t)
+
+/*
+ * Additional file level attributes, that are stored
+ * in the upper half of z_pflags
+ */
+#define	ZFS_READONLY		0x0000000100000000ull
+#define	ZFS_HIDDEN		0x0000000200000000ull
+#define	ZFS_SYSTEM		0x0000000400000000ull
+#define	ZFS_ARCHIVE		0x0000000800000000ull
+#define	ZFS_IMMUTABLE		0x0000001000000000ull
+#define	ZFS_NOUNLINK		0x0000002000000000ull
+#define	ZFS_APPENDONLY		0x0000004000000000ull
+#define	ZFS_NODUMP		0x0000008000000000ull
+#define	ZFS_OPAQUE		0x0000010000000000ull
+#define	ZFS_AV_QUARANTINED	0x0000020000000000ull
+#define	ZFS_AV_MODIFIED		0x0000040000000000ull
+#define	ZFS_REPARSE		0x0000080000000000ull
+#define	ZFS_OFFLINE		0x0000100000000000ull
+#define	ZFS_SPARSE		0x0000200000000000ull
+
+#define	ZFS_DOS_FL_USER_VISIBLE	(ZFS_IMMUTABLE | ZFS_APPENDONLY | \
+	    ZFS_NOUNLINK | ZFS_ARCHIVE | ZFS_NODUMP | ZFS_SYSTEM | \
+	    ZFS_HIDDEN | ZFS_READONLY | ZFS_REPARSE | ZFS_OFFLINE | \
+	    ZFS_SPARSE)
+
+#endif
 
 /*
  * ZFS-specific error codes used for returning descriptive errors
@@ -1417,6 +1529,7 @@ typedef enum {
 	ZFS_ERR_RESILVER_IN_PROGRESS,
 	ZFS_ERR_REBUILD_IN_PROGRESS,
 	ZFS_ERR_BADPROP,
+	ZFS_ERR_VDEV_NOTSUP,
 } zfs_errno_t;
 
 /*
@@ -1507,6 +1620,18 @@ typedef enum {
 #define	ZPOOL_WAIT_ACTIVITY		"wait_activity"
 #define	ZPOOL_WAIT_TAG			"wait_tag"
 #define	ZPOOL_WAIT_WAITED		"wait_waited"
+
+/*
+ * The following are names used when invoking ZFS_IOC_VDEV_GET_PROP.
+ */
+#define	ZPOOL_VDEV_PROPS_GET_VDEV	"vdevprops_get_vdev"
+#define	ZPOOL_VDEV_PROPS_GET_PROPS	"vdevprops_get_props"
+
+/*
+ * The following are names used when invoking ZFS_IOC_VDEV_SET_PROP.
+ */
+#define	ZPOOL_VDEV_PROPS_SET_VDEV	"vdevprops_set_vdev"
+#define	ZPOOL_VDEV_PROPS_SET_PROPS	"vdevprops_set_props"
 
 /*
  * The following are names used when invoking ZFS_IOC_WAIT_FS.
@@ -1621,7 +1746,6 @@ typedef enum {
 #define	ZFS_EV_HIST_DSID	"history_dsid"
 #define	ZFS_EV_RESILVER_TYPE	"resilver_type"
 
-
 /*
  * We currently support block sizes from 512 bytes to 16MB.
  * The benefits of larger blocks, and thus larger IO, need to be weighed
@@ -1643,7 +1767,6 @@ typedef enum {
 #define	SPA_OLD_MAXBLOCKSIZE	(1ULL << SPA_OLD_MAXBLOCKSHIFT)
 #define	SPA_MAXBLOCKSIZE	(1ULL << SPA_MAXBLOCKSHIFT)
 
-
 /* supported encryption algorithms */
 enum zio_encrypt {
 	ZIO_CRYPT_INHERIT = 0,
@@ -1661,6 +1784,34 @@ enum zio_encrypt {
 #define	ZIO_CRYPT_ON_VALUE	ZIO_CRYPT_AES_256_GCM
 #define	ZIO_CRYPT_DEFAULT	ZIO_CRYPT_OFF
 
+/*
+ * xattr namespace prefixes.  These are forbidden in xattr names.
+ *
+ * For cross-platform compatibility, xattrs in the user namespace should not be
+ * prefixed with the namespace name, but for backwards compatibility with older
+ * ZFS on Linux versions we do prefix the namespace.
+ */
+#define	ZFS_XA_NS_FREEBSD_PREFIX		"freebsd:"
+#define	ZFS_XA_NS_FREEBSD_PREFIX_LEN		strlen("freebsd:")
+#define	ZFS_XA_NS_LINUX_SECURITY_PREFIX		"security."
+#define	ZFS_XA_NS_LINUX_SECURITY_PREFIX_LEN	strlen("security.")
+#define	ZFS_XA_NS_LINUX_SYSTEM_PREFIX		"system."
+#define	ZFS_XA_NS_LINUX_SYSTEM_PREFIX_LEN	strlen("system.")
+#define	ZFS_XA_NS_LINUX_TRUSTED_PREFIX		"trusted."
+#define	ZFS_XA_NS_LINUX_TRUSTED_PREFIX_LEN	strlen("trusted.")
+#define	ZFS_XA_NS_LINUX_USER_PREFIX		"user."
+#define	ZFS_XA_NS_LINUX_USER_PREFIX_LEN		strlen("user.")
+
+#define	ZFS_XA_NS_PREFIX_MATCH(ns, name) \
+	(strncmp(name, ZFS_XA_NS_##ns##_PREFIX, \
+	ZFS_XA_NS_##ns##_PREFIX_LEN) == 0)
+
+#define	ZFS_XA_NS_PREFIX_FORBIDDEN(name) \
+	(ZFS_XA_NS_PREFIX_MATCH(FREEBSD, name) || \
+	    ZFS_XA_NS_PREFIX_MATCH(LINUX_SECURITY, name) || \
+	    ZFS_XA_NS_PREFIX_MATCH(LINUX_SYSTEM, name) || \
+	    ZFS_XA_NS_PREFIX_MATCH(LINUX_TRUSTED, name) || \
+	    ZFS_XA_NS_PREFIX_MATCH(LINUX_USER, name))
 
 #ifdef	__cplusplus
 }

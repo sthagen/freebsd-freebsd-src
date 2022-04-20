@@ -38,12 +38,14 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/conf.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/module.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/proc.h>
 #include <sys/rman.h>
 #include <sys/queue.h>
 #include <sys/taskqueue.h>
@@ -61,9 +63,7 @@ __FBSDID("$FreeBSD$");
 #include <machine/cpu.h>
 #include <machine/intr.h>
 
-#ifdef EXT_RESOURCES
 #include <dev/extres/clk/clk.h>
-#endif
 
 #include <dev/mmc/host/dwmmc_reg.h>
 #include <dev/mmc/host/dwmmc_var.h>
@@ -459,6 +459,9 @@ dwmmc_handle_card_present(struct dwmmc_softc *sc, bool is_present)
 {
 	bool was_present;
 
+	if (dumping || SCHEDULER_STOPPED())
+		return;
+
 	was_present = sc->child != NULL;
 
 	if (!was_present && is_present) {
@@ -515,9 +518,7 @@ parse_fdt(struct dwmmc_softc *sc)
 	phandle_t node;
 	uint32_t bus_hz = 0;
 	int len;
-#ifdef EXT_RESOURCES
 	int error;
-#endif
 
 	if ((node = ofw_bus_get_node(sc->dev)) == -1)
 		return (ENXIO);
@@ -548,8 +549,6 @@ parse_fdt(struct dwmmc_softc *sc)
 		OF_getencprop(node, "clock-frequency", dts_value, len);
 		bus_hz = dts_value[0];
 	}
-
-#ifdef EXT_RESOURCES
 
 	/* IP block reset is optional */
 	error = hwreset_get_by_ofw_name(sc->dev, 0, "reset", &sc->hwreset);
@@ -657,7 +656,6 @@ parse_fdt(struct dwmmc_softc *sc)
 			goto fail;
 		}
 	}
-#endif /* EXT_RESOURCES */
 
 	if (sc->bus_hz == 0) {
 		device_printf(sc->dev, "No bus speed provided\n");
@@ -799,7 +797,6 @@ dwmmc_detach(device_t dev)
 
 	DWMMC_LOCK_DESTROY(sc);
 
-#ifdef EXT_RESOURCES
 	if (sc->hwreset != NULL && hwreset_deassert(sc->hwreset) != 0)
 		device_printf(sc->dev, "cannot deassert reset\n");
 	if (sc->biu != NULL && clk_disable(sc->biu) != 0)
@@ -811,7 +808,6 @@ dwmmc_detach(device_t dev)
 		device_printf(sc->dev, "Cannot disable vmmc regulator\n");
 	if (sc->vqmmc && regulator_disable(sc->vqmmc) != 0)
 		device_printf(sc->dev, "Cannot disable vqmmc regulator\n");
-#endif
 
 #ifdef MMCCAM
 	mmc_cam_sim_free(&sc->mmc_sim);
@@ -1543,6 +1539,15 @@ dwmmc_cam_request(device_t dev, union ccb *ccb)
 
 	return (0);
 }
+
+static void
+dwmmc_cam_poll(device_t dev)
+{
+	struct dwmmc_softc *sc;
+
+	sc = device_get_softc(dev);
+	dwmmc_intr(sc);
+}
 #endif /* MMCCAM */
 
 static device_method_t dwmmc_methods[] = {
@@ -1564,6 +1569,7 @@ static device_method_t dwmmc_methods[] = {
 	DEVMETHOD(mmc_sim_get_tran_settings,	dwmmc_get_tran_settings),
 	DEVMETHOD(mmc_sim_set_tran_settings,	dwmmc_set_tran_settings),
 	DEVMETHOD(mmc_sim_cam_request,		dwmmc_cam_request),
+	DEVMETHOD(mmc_sim_cam_poll,		dwmmc_cam_poll),
 
 	DEVMETHOD(bus_add_child,		bus_generic_add_child),
 #endif

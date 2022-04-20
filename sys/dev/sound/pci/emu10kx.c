@@ -732,7 +732,6 @@ emu_wr_p16vptr(struct emu_sc_info *sc, uint16_t chn, uint16_t reg, uint32_t data
 static void
 emu_wr_cbptr(struct emu_sc_info *sc, uint32_t data)
 {
-	uint32_t val;
 
 	/*
 	 * 0x38 is IPE3 (CD S/PDIF interrupt pending register) on CA0102. Seems
@@ -740,9 +739,9 @@ emu_wr_cbptr(struct emu_sc_info *sc, uint32_t data)
 	 * CA0108, with value(?) in top 16 bit, address(?) in low 16
 	 */
 
-	val = emu_rd_nolock(sc, 0x38, 4);
+	emu_rd_nolock(sc, 0x38, 4);
 	emu_wr_nolock(sc, 0x38, data, 4);
-	val = emu_rd_nolock(sc, 0x38, 4);
+	emu_rd_nolock(sc, 0x38, 4);
 
 }
 
@@ -1267,10 +1266,9 @@ emu_valloc(struct emu_sc_info *sc)
 void
 emu_vfree(struct emu_sc_info *sc, struct emu_voice *v)
 {
-	int i, r;
 
 	mtx_lock(&sc->lock);
-	for (i = 0; i < NUM_G; i++) {
+	for (int i = 0; i < NUM_G; i++) {
 		if (v == &sc->voice[i] && sc->voice[i].busy) {
 			v->busy = 0;
 			/*
@@ -1279,7 +1277,7 @@ emu_vfree(struct emu_sc_info *sc, struct emu_voice *v)
 			 * this problem
 			 */
 			if (v->slave != NULL)
-				r = emu_memfree(&sc->mem, v->vbuf);
+				emu_memfree(&sc->mem, v->vbuf);
 		}
 	}
 	mtx_unlock(&sc->lock);
@@ -1569,7 +1567,7 @@ emu_addefxmixer(struct emu_sc_info *sc, const char *mix_name, const int mix_id, 
 		snprintf(sysctl_name, 32, "_%s", mix_name);
 		SYSCTL_ADD_PROC(sc->ctx,
 		    SYSCTL_CHILDREN(sc->root), OID_AUTO, sysctl_name,
-		    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT, sc, mix_id,
+		    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, sc, mix_id,
 		    sysctl_emu_mixer_control, "I", "");
 	}
 
@@ -1609,7 +1607,7 @@ emu_digitalswitch(struct emu_sc_info *sc)
 {
 	/* XXX temporary? */
 	SYSCTL_ADD_PROC(sc->ctx, SYSCTL_CHILDREN(sc->root), OID_AUTO,
-	    "_digital", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_NEEDGIANT,
+	    "_digital", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
 	    sc, 0, sysctl_emu_digitalswitch_control, "I",
 	    "Enable digital output");
 

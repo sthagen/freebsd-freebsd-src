@@ -3133,12 +3133,14 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 	 * operation's results to be consistent with NFSv3, but that is
 	 * not what the current Linux client appears to be doing.
 	 * Since both the Linux and OpenSolaris NFSv4 servers do this check,
-	 * I have enabled it by default.
+	 * I have enabled it by default.  Since Linux does not apply this
+	 * check for claim_delegate_cur, this code does the same.
 	 * If this semantic change causes a problem, it can be disabled by
 	 * setting the sysctl vfs.nfsd.v4openaccess to 0 to re-enable the
 	 * previous semantics.
 	 */
-	if (nfsrv_openaccess && create == NFSV4OPEN_NOCREATE)
+	if (nfsrv_openaccess && create == NFSV4OPEN_NOCREATE &&
+	    (stp->ls_flags & NFSLCK_DELEGCUR) == 0)
 		override = NFSACCCHK_NOOVERRIDE;
 	else
 		override = NFSACCCHK_ALLOWOWNER;
@@ -4566,9 +4568,10 @@ nfsrvd_sequence(struct nfsrv_descript *nd, __unused int isdgram,
 		cache_this = 1;
 	else
 		cache_this = 0;
-	nd->nd_flag |= ND_HASSEQUENCE;
 	nd->nd_repstat = nfsrv_checksequence(nd, sequenceid, &highest_slotid,
 	    &target_highest_slotid, cache_this, &sflags, p);
+	if (nd->nd_repstat != NFSERR_BADSLOT)
+		nd->nd_flag |= ND_HASSEQUENCE;
 	if (nd->nd_repstat == 0) {
 		NFSM_BUILD(tl, uint32_t *, NFSX_V4SESSIONID);
 		NFSBCOPY(nd->nd_sessionid, tl, NFSX_V4SESSIONID);
@@ -4959,6 +4962,12 @@ nfsrvd_layoutreturn(struct nfsrv_descript *nd, __unused int isdgram,
 		}
 
 		maxcnt = fxdr_unsigned(int, *tl);
+		/*
+		 * There is no fixed upper bound defined in the RFCs,
+		 * but 128Kbytes should be more than sufficient.
+		 */
+		if (maxcnt < 0 || maxcnt > 131072)
+			maxcnt = 0;
 		if (maxcnt > 0) {
 			layp = malloc(maxcnt + 1, M_TEMP, M_WAITOK);
 			error = nfsrv_mtostr(nd, (char *)layp, maxcnt);
@@ -5075,8 +5084,8 @@ nfsrvd_layoutstats(struct nfsrv_descript *nd, __unused int isdgram,
 	int cnt, error = 0;
 	int layouttype __unused;
 	char devid[NFSX_V4DEVICEID] __unused;
-	uint64_t offset, len, readcount, readbytes, writecount, writebytes
-	    __unused;
+	uint64_t offset __unused, len __unused, readcount __unused;
+	uint64_t readbytes __unused, writecount __unused, writebytes __unused;
 
 	NFSM_DISSECT(tl, uint32_t *, 6 * NFSX_HYPER + NFSX_STATEID +
 	    NFSX_V4DEVICEID + 2 * NFSX_UNSIGNED);
@@ -6089,10 +6098,12 @@ nfsrvd_listxattr(struct nfsrv_descript *nd, __unused int isdgram,
 		if (cookie2 < cookie)
 			nd->nd_repstat = NFSERR_BADXDR;
 	}
+	retlen = NFSX_HYPER + 2 * NFSX_UNSIGNED;
+	if (nd->nd_repstat == 0 && len2 < retlen)
+		nd->nd_repstat = NFSERR_TOOSMALL;
 	if (nd->nd_repstat == 0) {
 		/* Now copy the entries out. */
-		retlen = NFSX_HYPER + 2 * NFSX_UNSIGNED;
-		if (len == 0 && retlen <= len2) {
+		if (len == 0) {
 			/* The cookie was at eof. */
 			NFSM_BUILD(tl, uint32_t *, NFSX_HYPER + 2 *
 			    NFSX_UNSIGNED);

@@ -133,6 +133,7 @@
     <elf-symbol name='getmntany' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='getzoneid' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='libspl_assertf' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
+    <elf-symbol name='libspl_set_assert_ok' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='libzfs_core_fini' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='libzfs_core_init' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='list_create' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
@@ -167,6 +168,7 @@
     <elf-symbol name='lzc_get_bookmarks' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_get_bootenv' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_get_holds' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
+    <elf-symbol name='lzc_get_vdev_prop' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_hold' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_initialize' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_ioctl_fd' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
@@ -191,7 +193,9 @@
     <elf-symbol name='lzc_send_resume_redacted' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_send_space' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_send_space_resume_redacted' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
+    <elf-symbol name='lzc_send_wrapper' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_set_bootenv' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
+    <elf-symbol name='lzc_set_vdev_prop' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_snaprange_space' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_snapshot' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='lzc_sync' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
@@ -210,12 +214,12 @@
     <elf-symbol name='strlcat' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
     <elf-symbol name='strlcpy' type='func-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
   </elf-function-symbols>
-  <elf-variable-symbols>
-    <elf-symbol name='libspl_assert_ok' size='4' type='object-type' binding='global-binding' visibility='default-visibility' is-defined='yes'/>
-  </elf-variable-symbols>
   <abi-instr address-size='64' path='assert.c' language='LANG_C99'>
     <type-decl name='variadic parameter type' id='2c1145c5'/>
-    <var-decl name='libspl_assert_ok' type-id='95e97e5e' mangled-name='libspl_assert_ok' visibility='default' elf-symbol-id='libspl_assert_ok'/>
+    <function-decl name='libspl_set_assert_ok' mangled-name='libspl_set_assert_ok' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='libspl_set_assert_ok'>
+      <parameter type-id='c19b74c3' name='val'/>
+      <return type-id='48b5725f'/>
+    </function-decl>
     <function-decl name='libspl_assertf' mangled-name='libspl_assertf' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='libspl_assertf'>
       <parameter type-id='80f4b756' name='file'/>
       <parameter type-id='80f4b756' name='func'/>
@@ -239,7 +243,6 @@
     <typedef-decl name='__uint16_t' type-id='8efea9e5' id='253c2d2a'/>
     <typedef-decl name='__ssize_t' type-id='bd54fe1a' id='41060289'/>
     <typedef-decl name='ssize_t' type-id='41060289' id='79a0948f'/>
-    <pointer-type-def type-id='48b5725f' size-in-bits='64' id='eaa32e2f'/>
     <qualified-type-def type-id='149c6638' volatile='yes' id='5120c5f7'/>
     <pointer-type-def type-id='5120c5f7' size-in-bits='64' id='93977ae7'/>
     <qualified-type-def type-id='8f92235e' volatile='yes' id='430e0681'/>
@@ -282,6 +285,11 @@
       <parameter type-id='64698d33' name='target'/>
       <return type-id='48b5725f'/>
     </function-decl>
+    <function-decl name='atomic_add_ptr' mangled-name='atomic_add_ptr' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_add_ptr'>
+      <parameter type-id='fe09dd29' name='target'/>
+      <parameter type-id='79a0948f' name='bits'/>
+      <return type-id='48b5725f'/>
+    </function-decl>
     <function-decl name='atomic_add_8' mangled-name='atomic_add_8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_add_8'>
       <parameter type-id='aa323ea4' name='target'/>
       <parameter type-id='ee31ee44' name='bits'/>
@@ -302,7 +310,7 @@
       <parameter type-id='bd54fe1a' name='bits'/>
       <return type-id='48b5725f'/>
     </function-decl>
-    <function-decl name='atomic_add_ptr' mangled-name='atomic_add_ptr' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_add_ptr'>
+    <function-decl name='atomic_sub_ptr' mangled-name='atomic_sub_ptr' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_sub_ptr'>
       <parameter type-id='fe09dd29' name='target'/>
       <parameter type-id='79a0948f' name='bits'/>
       <return type-id='48b5725f'/>
@@ -325,11 +333,6 @@
     <function-decl name='atomic_sub_long' mangled-name='atomic_sub_long' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_sub_long'>
       <parameter type-id='64698d33' name='target'/>
       <parameter type-id='bd54fe1a' name='bits'/>
-      <return type-id='48b5725f'/>
-    </function-decl>
-    <function-decl name='atomic_sub_ptr' mangled-name='atomic_sub_ptr' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_sub_ptr'>
-      <parameter type-id='fe09dd29' name='target'/>
-      <parameter type-id='79a0948f' name='bits'/>
       <return type-id='48b5725f'/>
     </function-decl>
     <function-decl name='atomic_or_8' mangled-name='atomic_or_8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_or_8'>
@@ -404,6 +407,11 @@
       <parameter type-id='64698d33' name='target'/>
       <return type-id='ee1f298e'/>
     </function-decl>
+    <function-decl name='atomic_add_ptr_nv' mangled-name='atomic_add_ptr_nv' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_add_ptr_nv'>
+      <parameter type-id='fe09dd29' name='target'/>
+      <parameter type-id='79a0948f' name='bits'/>
+      <return type-id='eaa32e2f'/>
+    </function-decl>
     <function-decl name='atomic_add_8_nv' mangled-name='atomic_add_8_nv' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_add_8_nv'>
       <parameter type-id='aa323ea4' name='target'/>
       <parameter type-id='ee31ee44' name='bits'/>
@@ -424,7 +432,7 @@
       <parameter type-id='bd54fe1a' name='bits'/>
       <return type-id='ee1f298e'/>
     </function-decl>
-    <function-decl name='atomic_add_ptr_nv' mangled-name='atomic_add_ptr_nv' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_add_ptr_nv'>
+    <function-decl name='atomic_sub_ptr_nv' mangled-name='atomic_sub_ptr_nv' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_sub_ptr_nv'>
       <parameter type-id='fe09dd29' name='target'/>
       <parameter type-id='79a0948f' name='bits'/>
       <return type-id='eaa32e2f'/>
@@ -448,11 +456,6 @@
       <parameter type-id='64698d33' name='target'/>
       <parameter type-id='bd54fe1a' name='bits'/>
       <return type-id='ee1f298e'/>
-    </function-decl>
-    <function-decl name='atomic_sub_ptr_nv' mangled-name='atomic_sub_ptr_nv' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_sub_ptr_nv'>
-      <parameter type-id='fe09dd29' name='target'/>
-      <parameter type-id='79a0948f' name='bits'/>
-      <return type-id='eaa32e2f'/>
     </function-decl>
     <function-decl name='atomic_or_8_nv' mangled-name='atomic_or_8_nv' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_or_8_nv'>
       <parameter type-id='aa323ea4' name='target'/>
@@ -494,6 +497,12 @@
       <parameter type-id='ee1f298e' name='bits'/>
       <return type-id='ee1f298e'/>
     </function-decl>
+    <function-decl name='atomic_cas_ptr' mangled-name='atomic_cas_ptr' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_cas_ptr'>
+      <parameter type-id='fe09dd29' name='target'/>
+      <parameter type-id='eaa32e2f' name='exp'/>
+      <parameter type-id='eaa32e2f' name='des'/>
+      <return type-id='eaa32e2f'/>
+    </function-decl>
     <function-decl name='atomic_cas_8' mangled-name='atomic_cas_8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_cas_8'>
       <parameter type-id='aa323ea4' name='target'/>
       <parameter type-id='b96825af' name='exp'/>
@@ -517,12 +526,6 @@
       <parameter type-id='ee1f298e' name='exp'/>
       <parameter type-id='ee1f298e' name='des'/>
       <return type-id='ee1f298e'/>
-    </function-decl>
-    <function-decl name='atomic_cas_ptr' mangled-name='atomic_cas_ptr' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_cas_ptr'>
-      <parameter type-id='fe09dd29' name='target'/>
-      <parameter type-id='eaa32e2f' name='exp'/>
-      <parameter type-id='eaa32e2f' name='des'/>
-      <return type-id='eaa32e2f'/>
     </function-decl>
     <function-decl name='atomic_swap_8' mangled-name='atomic_swap_8' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='atomic_swap_8'>
       <parameter type-id='aa323ea4' name='target'/>
@@ -1565,10 +1568,12 @@
     <pointer-type-def type-id='9623bc03' size-in-bits='64' id='8341348b'/>
     <qualified-type-def type-id='8e8d4be3' const='yes' id='693c3853'/>
     <pointer-type-def type-id='693c3853' size-in-bits='64' id='22cce67b'/>
+    <pointer-type-def type-id='c70fa2e8' size-in-bits='64' id='2e711a2a'/>
     <pointer-type-def type-id='8e8d4be3' size-in-bits='64' id='5ce45b60'/>
     <pointer-type-def type-id='5ce45b60' size-in-bits='64' id='857bb57e'/>
     <pointer-type-def type-id='9c313c2d' size-in-bits='64' id='5d6479ae'/>
     <pointer-type-def type-id='b96825af' size-in-bits='64' id='ae3e8ca6'/>
+    <pointer-type-def type-id='48b5725f' size-in-bits='64' id='eaa32e2f'/>
     <function-decl name='libzfs_core_init' mangled-name='libzfs_core_init' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='libzfs_core_init'>
       <return type-id='95e97e5e'/>
     </function-decl>
@@ -1646,6 +1651,12 @@
     <function-decl name='lzc_get_holds' mangled-name='lzc_get_holds' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='lzc_get_holds'>
       <parameter type-id='80f4b756' name='snapname'/>
       <parameter type-id='857bb57e' name='holdsp'/>
+      <return type-id='95e97e5e'/>
+    </function-decl>
+    <function-decl name='lzc_send_wrapper' mangled-name='lzc_send_wrapper' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='lzc_send_wrapper'>
+      <parameter type-id='2e711a2a' name='func'/>
+      <parameter type-id='95e97e5e' name='orig_fd'/>
+      <parameter type-id='eaa32e2f' name='data'/>
       <return type-id='95e97e5e'/>
     </function-decl>
     <function-decl name='lzc_send' mangled-name='lzc_send' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='lzc_send'>
@@ -1823,6 +1834,18 @@
       <parameter type-id='857bb57e' name='outnvl'/>
       <return type-id='95e97e5e'/>
     </function-decl>
+    <function-decl name='lzc_get_vdev_prop' mangled-name='lzc_get_vdev_prop' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='lzc_get_vdev_prop'>
+      <parameter type-id='80f4b756' name='poolname'/>
+      <parameter type-id='5ce45b60' name='innvl'/>
+      <parameter type-id='857bb57e' name='outnvl'/>
+      <return type-id='95e97e5e'/>
+    </function-decl>
+    <function-decl name='lzc_set_vdev_prop' mangled-name='lzc_set_vdev_prop' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='lzc_set_vdev_prop'>
+      <parameter type-id='80f4b756' name='poolname'/>
+      <parameter type-id='5ce45b60' name='innvl'/>
+      <parameter type-id='857bb57e' name='outnvl'/>
+      <return type-id='95e97e5e'/>
+    </function-decl>
     <function-decl name='lzc_load_key' mangled-name='lzc_load_key' visibility='default' binding='global' size-in-bits='64' elf-symbol-id='lzc_load_key'>
       <parameter type-id='80f4b756' name='fsname'/>
       <parameter type-id='c19b74c3' name='noop'/>
@@ -1898,6 +1921,11 @@
       <parameter type-id='857bb57e' name='outnvl'/>
       <return type-id='95e97e5e'/>
     </function-decl>
+    <function-type size-in-bits='64' id='c70fa2e8'>
+      <parameter type-id='95e97e5e'/>
+      <parameter type-id='eaa32e2f'/>
+      <return type-id='95e97e5e'/>
+    </function-type>
   </abi-instr>
   <abi-instr address-size='64' path='os/linux/libzfs_core_ioctl.c' language='LANG_C99'>
     <array-type-def dimensions='1' type-id='a84c031d' size-in-bits='32768' id='d16c6df4'>

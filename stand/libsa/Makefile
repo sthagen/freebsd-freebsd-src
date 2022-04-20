@@ -132,7 +132,7 @@ CLEANFILES+= ${SAFE_INCS} ${STAND_H_INC} ${OTHER_INC}
 
 # io routines
 SRCS+=	closeall.c dev.c ioctl.c nullfs.c stat.c mount.c \
-	fstat.c close.c lseek.c open.c read.c write.c readdir.c
+	fstat.c close.c lseek.c open.c read.c write.c readdir.c preload.c
 
 # SMBios routines
 SRCS+=	smbios.c
@@ -167,6 +167,9 @@ SRCS+=	time.c
 .PATH: ${SRCTOP}/sys/ufs/ffs
 SRCS+=ffs_subr.c ffs_tables.c
 
+CFLAGS.dosfs.c+= -I${LDRSRC}
+CFLAGS.tftp.c+= -I${LDRSRC}
+CFLAGS.ufs.c+= -I${LDRSRC}
 CFLAGS.bzipfs.c+= -I${SRCTOP}/contrib/bzip2
 
 # explicit_bzero and calculate_crc32c

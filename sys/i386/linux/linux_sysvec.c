@@ -204,15 +204,11 @@ linux_fixup(uintptr_t *stack_base, struct image_params *imgp)
 static int
 linux_copyout_auxargs(struct image_params *imgp, uintptr_t base)
 {
-	struct proc *p;
 	Elf32_Auxargs *args;
 	Elf32_Auxinfo *argarray, *pos;
-	struct ps_strings *arginfo;
 	int error, issetugid;
 
-	p = imgp->proc;
 	issetugid = imgp->proc->p_flag & P_SUGID ? 1 : 0;
-	arginfo = (struct ps_strings *)p->p_sysent->sv_psstrings;
 	args = (Elf32_Auxargs *)imgp->auxargs;
 	argarray = pos = malloc(LINUX_AT_COUNT * sizeof(*pos), M_TEMP,
 	    M_WAITOK | M_ZERO);
@@ -289,16 +285,12 @@ linux_copyout_strings(struct image_params *imgp, uintptr_t *stack_base)
 	size_t execpath_len;
 	struct proc *p;
 
-	/* Calculate string base and vector table pointers. */
 	p = imgp->proc;
-	if (imgp->execpath != NULL && imgp->auxargs != NULL)
-		execpath_len = strlen(imgp->execpath) + 1;
-	else
-		execpath_len = 0;
-	arginfo = (struct ps_strings *)p->p_sysent->sv_psstrings;
+	arginfo = (struct ps_strings *)PROC_PS_STRINGS(p);
 	destp = (uintptr_t)arginfo;
 
-	if (execpath_len != 0) {
+	if (imgp->execpath != NULL && imgp->auxargs != NULL) {
+		execpath_len = strlen(imgp->execpath) + 1;
 		destp -= execpath_len;
 		destp = rounddown2(destp, sizeof(void *));
 		imgp->execpathp = (void *)destp;
@@ -512,13 +504,12 @@ linux_sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	struct trapframe *regs;
 	struct l_sigframe *fp, frame;
 	l_sigset_t lmask;
-	int sig, code;
+	int sig;
 	int oonstack;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	psp = p->p_sigacts;
 	sig = ksi->ksi_signo;
-	code = ksi->ksi_code;
 	mtx_assert(&psp->ps_mtx, MA_OWNED);
 	if (SIGISMEMBER(psp->ps_siginfo, sig)) {
 		/* Signal handler installed with SA_SIGINFO. */
@@ -849,6 +840,7 @@ struct sysentvec linux_sysvec = {
 	.sv_maxuser	= VM_MAXUSER_ADDRESS,
 	.sv_usrstack	= LINUX_USRSTACK,
 	.sv_psstrings	= PS_STRINGS,
+	.sv_psstringssz	= sizeof(struct ps_strings),
 	.sv_stackprot	= VM_PROT_ALL,
 	.sv_copyout_strings = exec_copyout_strings,
 	.sv_setregs	= linux_exec_setregs,
@@ -889,6 +881,7 @@ struct sysentvec elf_linux_sysvec = {
 	.sv_maxuser	= VM_MAXUSER_ADDRESS,
 	.sv_usrstack	= LINUX_USRSTACK,
 	.sv_psstrings	= LINUX_PS_STRINGS,
+	.sv_psstringssz	= sizeof(struct ps_strings),
 	.sv_stackprot	= VM_PROT_ALL,
 	.sv_copyout_auxargs = linux_copyout_auxargs,
 	.sv_copyout_strings = linux_copyout_strings,

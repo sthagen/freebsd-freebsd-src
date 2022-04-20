@@ -42,6 +42,9 @@
 /* posix_acl has refcount_t */
 /* #undef HAVE_ACL_REFCOUNT */
 
+/* add_disk() returns int */
+/* #undef HAVE_ADD_DISK_RET */
+
 /* Define if host toolchain supports AES */
 #define HAVE_AES 1
 
@@ -85,8 +88,14 @@
 /* bdev_check_media_change() exists */
 /* #undef HAVE_BDEV_CHECK_MEDIA_CHANGE */
 
+/* block_device_operations->submit_bio() returns void */
+/* #undef HAVE_BDEV_SUBMIT_BIO_RETURNS_VOID */
+
 /* bdev_whole() is available */
 /* #undef HAVE_BDEV_WHOLE */
+
+/* bio_alloc() takes 4 arguments */
+/* #undef HAVE_BIO_ALLOC_4ARG */
 
 /* bio->bi_bdev->bd_disk exists */
 /* #undef HAVE_BIO_BDEV_DISK */
@@ -112,8 +121,14 @@
 /* bio_set_dev() GPL-only */
 /* #undef HAVE_BIO_SET_DEV_GPL_ONLY */
 
+/* bio_set_dev() is a macro */
+/* #undef HAVE_BIO_SET_DEV_MACRO */
+
 /* bio_set_op_attrs is available */
 /* #undef HAVE_BIO_SET_OP_ATTRS */
+
+/* blkdev_get_by_path() handles ERESTARTSYS */
+/* #undef HAVE_BLKDEV_GET_ERESTARTSYS */
 
 /* blkdev_reread_part() exists */
 /* #undef HAVE_BLKDEV_REREAD_PART */
@@ -206,6 +221,9 @@
 /* DECLARE_EVENT_CLASS() is available */
 /* #undef HAVE_DECLARE_EVENT_CLASS */
 
+/* dequeue_signal() takes 4 arguments */
+/* #undef HAVE_DEQUEUE_SIGNAL_4ARG */
+
 /* lookup_bdev() wants dev_t arg */
 /* #undef HAVE_DEVT_LOOKUP_BDEV */
 
@@ -235,6 +253,12 @@
 
 /* sops->evict_inode() exists */
 /* #undef HAVE_EVICT_INODE */
+
+/* FALLOC_FL_ZERO_RANGE is defined */
+/* #undef HAVE_FALLOC_FL_ZERO_RANGE */
+
+/* fault_in_iov_iter_readable() is available */
+/* #undef HAVE_FAULT_IN_IOV_ITER_READABLE */
 
 /* fops->aio_fsync() exists */
 /* #undef HAVE_FILE_AIO_FSYNC */
@@ -353,6 +377,9 @@
 /* iov_iter_revert() is available */
 /* #undef HAVE_IOV_ITER_REVERT */
 
+/* iov_iter_type() is available */
+/* #undef HAVE_IOV_ITER_TYPE */
+
 /* iov_iter types are available */
 /* #undef HAVE_IOV_ITER_TYPES */
 
@@ -428,6 +455,9 @@
 /* Define if you have [uuid] */
 /* #undef HAVE_LIBUUID */
 
+/* linux/blk-cgroup.h exists */
+/* #undef HAVE_LINUX_BLK_CGROUP_HEADER */
+
 /* lseek_execute() is available */
 /* #undef HAVE_LSEEK_EXECUTE */
 
@@ -460,6 +490,9 @@
 
 /* new_sync_read()/new_sync_write() are available */
 /* #undef HAVE_NEW_SYNC_READ */
+
+/* folio_wait_bit() exists */
+/* #undef HAVE_PAGEMAP_FOLIO_WAIT_BIT */
 
 /* iops->getattr() takes a path */
 /* #undef HAVE_PATH_IOPS_GETATTR */
@@ -739,6 +772,18 @@
 /* xattr_handler->set() takes user_namespace */
 /* #undef HAVE_XATTR_SET_USERNS */
 
+/* Define if host toolchain supports XSAVE */
+#define HAVE_XSAVE 1
+
+/* Define if host toolchain supports XSAVEOPT */
+#define HAVE_XSAVEOPT 1
+
+/* Define if host toolchain supports XSAVES */
+#define HAVE_XSAVES 1
+
+/* ZERO_PAGE() is GPL-only */
+/* #undef HAVE_ZERO_PAGE_GPL_ONLY */
+
 /* Define if you have [z] */
 #define HAVE_ZLIB 1
 
@@ -775,6 +820,9 @@
 /* struct shrink_control has nid */
 /* #undef SHRINK_CONTROL_HAS_NID */
 
+/* using complete_and_exit() instead */
+/* #undef SPL_KTHREAD_COMPLETE_AND_EXIT */
+
 /* Defined for legacy compatibility. */
 #define SPL_META_ALIAS ZFS_META_ALIAS
 
@@ -783,6 +831,9 @@
 
 /* Defined for legacy compatibility. */
 #define SPL_META_VERSION ZFS_META_VERSION
+
+/* pde_data() is PDE_DATA() */
+/* #undef SPL_PDE_DATA */
 
 /* True if ZFS is to be compiled for a FreeBSD system */
 #define SYSTEM_FREEBSD 1
@@ -824,7 +875,7 @@
 /* #undef ZFS_IS_GPL_COMPATIBLE */
 
 /* Define the project alias string. */
-#define ZFS_META_ALIAS "zfs-2.1.99-FreeBSD_g6c8f03232"
+#define ZFS_META_ALIAS "zfs-2.1.99-FreeBSD_gbc3f12bfa"
 
 /* Define the project author. */
 #define ZFS_META_AUTHOR "OpenZFS"
@@ -833,7 +884,7 @@
 /* #undef ZFS_META_DATA */
 
 /* Define the maximum compatible kernel version. */
-#define ZFS_META_KVER_MAX "5.14"
+#define ZFS_META_KVER_MAX "5.17"
 
 /* Define the minimum compatible kernel version. */
 #define ZFS_META_KVER_MIN "3.10"
@@ -854,7 +905,7 @@
 #define ZFS_META_NAME "zfs"
 
 /* Define the project release. */
-#define ZFS_META_RELEASE "FreeBSD_g6c8f03232"
+#define ZFS_META_RELEASE "FreeBSD_gbc3f12bfa"
 
 /* Define the project version. */
 #define ZFS_META_VERSION "2.1.99"

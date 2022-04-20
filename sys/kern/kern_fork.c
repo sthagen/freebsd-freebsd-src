@@ -340,7 +340,7 @@ fork_norfproc(struct thread *td, int flags)
 		struct filedesc *fdtmp;
 		struct pwddesc *pdtmp;
 		pdtmp = pdinit(td->td_proc->p_pd, false);
-		fdtmp = fdinit(td->td_proc->p_fd, false, NULL);
+		fdtmp = fdinit();
 		pdescfree(td);
 		fdescfree(td);
 		p1->p_fd = fdtmp;
@@ -418,7 +418,7 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	 */
 	if (fr->fr_flags & RFCFDG) {
 		pd = pdinit(p1->p_pd, false);
-		fd = fdinit(p1->p_fd, false, NULL);
+		fd = fdinit();
 		fdtol = NULL;
 	} else if (fr->fr_flags & RFFDG) {
 		if (fr->fr_flags2 & FR2_SHARE_PATHS)
@@ -484,6 +484,12 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	 */
 	thread_lock(td);
 	sched_fork(td, td2);
+	/*
+	 * Request AST to check for TDP_RFPPWAIT.  Do it here
+	 * to avoid calling thread_lock() again.
+	 */
+	if ((fr->fr_flags & RFPPWAIT) != 0)
+		td->td_flags |= TDF_ASTPENDING;
 	thread_unlock(td);
 
 	/*

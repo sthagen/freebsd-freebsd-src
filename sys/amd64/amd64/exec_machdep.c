@@ -95,10 +95,9 @@ __FBSDID("$FreeBSD$");
 #include <machine/specialreg.h>
 #include <machine/trap.h>
 
-static void get_fpcontext(struct thread *td, mcontext_t *mcp,
-    char **xfpusave, size_t *xfpusave_len);
-static int set_fpcontext(struct thread *td, mcontext_t *mcp,
-    char *xfpustate, size_t xfpustate_len);
+_Static_assert(sizeof(mcontext_t) == 800, "mcontext_t size incorrect");
+_Static_assert(sizeof(ucontext_t) == 880, "ucontext_t size incorrect");
+_Static_assert(sizeof(siginfo_t) == 80, "siginfo_t size incorrect");
 
 /*
  * Send an interrupt to process.
@@ -631,7 +630,7 @@ get_mcontext(struct thread *td, mcontext_t *mcp, int flags)
 	mcp->mc_gs = tp->tf_gs;
 	mcp->mc_flags = tp->tf_flags;
 	mcp->mc_len = sizeof(*mcp);
-	get_fpcontext(td, mcp, NULL, 0);
+	get_fpcontext(td, mcp, NULL, NULL);
 	update_pcb_bases(pcb);
 	mcp->mc_fsbase = pcb->pcb_fsbase;
 	mcp->mc_gsbase = pcb->pcb_gsbase;
@@ -714,7 +713,7 @@ set_mcontext(struct thread *td, mcontext_t *mcp)
 	return (0);
 }
 
-static void
+void
 get_fpcontext(struct thread *td, mcontext_t *mcp, char **xfpusave,
     size_t *xfpusave_len)
 {
@@ -735,7 +734,7 @@ get_fpcontext(struct thread *td, mcontext_t *mcp, char **xfpusave,
 	}
 }
 
-static int
+int
 set_fpcontext(struct thread *td, mcontext_t *mcp, char *xfpustate,
     size_t xfpustate_len)
 {

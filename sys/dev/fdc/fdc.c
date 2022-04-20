@@ -1182,9 +1182,7 @@ static void
 fd_enqueue(struct fd_data *fd, struct bio *bp)
 {
 	struct fdc_data *fdc;
-	int call;
 
-	call = 0;
 	fdc = fd->fdc;
 	mtx_lock(&fdc->fdc_mtx);
 	/* If we go from idle, cancel motor turnoff */
@@ -1468,11 +1466,9 @@ fd_access(struct g_provider *pp, int r, int w, int e)
 static void
 fd_start(struct bio *bp)
 {
- 	struct fdc_data *	fdc;
  	struct fd_data *	fd;
 
 	fd = bp->bio_to->geom->softc;
-	fdc = fd->fdc;
 	bp->bio_driver1 = fd;
 	if (bp->bio_cmd == BIO_GETATTR) {
 		if (g_handleattr_int(bp, "GEOM::fwsectors", fd->ft->sectrac))
@@ -1891,7 +1887,9 @@ fdc_print_child(device_t me, device_t child)
 static int
 fd_probe(device_t dev)
 {
+#if defined(__i386__) || defined(__amd64__)
 	int	unit;
+#endif
 	int	i;
 	u_int	st0, st3;
 	struct	fd_data *fd;
@@ -1907,7 +1905,6 @@ fd_probe(device_t dev)
 	fd->dev = dev;
 	fd->fdc = fdc;
 	fd->fdsu = fdsu;
-	unit = device_get_unit(dev);
 
 	/* Auto-probe if fdinfo is present, but always allow override. */
 	type = flags & FD_TYPEMASK;
@@ -1921,6 +1918,7 @@ fd_probe(device_t dev)
 	}
 
 #if defined(__i386__) || defined(__amd64__)
+	unit = device_get_unit(dev);
 	if (fd->type == FDT_NONE && (unit == 0 || unit == 1)) {
 		/* Look up what the BIOS thinks we have. */
 		if (unit == 0)

@@ -48,8 +48,11 @@ unsigned char * read_file(const char *, size_t *);
 #endif
 
 extern int DebugVe;
+extern int VerifyFlags;
 
+#ifndef DEBUG_PRINTF
 #define DEBUG_PRINTF(n, x) if (DebugVe >= n) printf x
+#endif
 
 int ve_trust_init(void);
 size_t ve_trust_anchors_add_buf(unsigned char *, size_t);
@@ -65,9 +68,6 @@ int  ve_self_tests(void);
 
 void fingerprint_info_add(const char *, const char *, const char *,
     const char *, struct stat *);
-
-int ve_check_hash(br_hash_compat_context *, const br_hash_class *,
-    const char *, const char *, size_t);
 
 char * hexdigest(char *, size_t, unsigned char *, size_t);
 int  verify_fd(int, const char *, off_t, struct stat *);

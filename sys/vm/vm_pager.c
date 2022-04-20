@@ -338,12 +338,11 @@ vm_pager_get_pages(vm_object_t object, vm_page_t *m, int count, int *rbehind,
 		 * updated the array.
 		 */
 #ifdef INVARIANTS
-		VM_OBJECT_RLOCK(object);
-		KASSERT(m[i] == vm_page_lookup(object, pindex++),
+		KASSERT(m[i] == vm_page_relookup(object, pindex++),
 		    ("%s: mismatch page %p pindex %ju", __func__,
 		    m[i], (uintmax_t )pindex - 1));
-		VM_OBJECT_RUNLOCK(object);
 #endif
+
 		/*
 		 * Zero out partially filled data.
 		 */
@@ -468,7 +467,7 @@ pbuf_ctor(void *mem, int size, void *arg, int flags)
 	bp->b_ioflags = 0;
 	bp->b_iodone = NULL;
 	bp->b_error = 0;
-	BUF_LOCK(bp, LK_EXCLUSIVE, NULL);
+	BUF_LOCK(bp, LK_EXCLUSIVE | LK_NOWAIT, NULL);
 
 	return (0);
 }
@@ -490,6 +489,8 @@ pbuf_dtor(void *mem, int size, void *arg)
 	BUF_UNLOCK(bp);
 }
 
+static const char pbuf_wmesg[] = "pbufwait";
+
 static int
 pbuf_init(void *mem, int size, int flags)
 {
@@ -499,7 +500,7 @@ pbuf_init(void *mem, int size, int flags)
 	if (bp->b_kvabase == NULL)
 		return (ENOMEM);
 	bp->b_kvasize = ptoa(PBUF_PAGES);
-	BUF_LOCKINIT(bp);
+	BUF_LOCKINIT(bp, pbuf_wmesg);
 	LIST_INIT(&bp->b_dep);
 	bp->b_rcred = bp->b_wcred = NOCRED;
 	bp->b_xflags = 0;

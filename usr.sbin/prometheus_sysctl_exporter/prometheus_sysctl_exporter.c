@@ -300,7 +300,7 @@ oid_get_value(const struct oid *o, const struct oidformat *of,
 		return (false);
 	}
 
-	/* Convert temperatures from decikelvin to degrees Celcius. */
+	/* Convert temperatures from decikelvin to degrees Celsius. */
 	if (oidformat_is_temperature(of)) {
 		double v;
 		int e;
@@ -403,7 +403,7 @@ oid_get_metric(const struct oidname *on, const struct oidformat *of,
 		label += strlen(label) + 1;
 	}
 	if (oidformat_is_temperature(of))
-		strlcat(metric, "_celcius", mlen);
+		strlcat(metric, "_celsius", mlen);
 	else if (oidformat_is_timeval(of))
 		strlcat(metric, "_seconds", mlen);
 
@@ -498,6 +498,7 @@ oid_print(const struct oid *o, struct oidname *on, bool print_description,
 	struct oidvalue ov;
 	struct oiddescription od;
 	char metric[BUFSIZ];
+	bool has_desc;
 
 	if (!oid_get_format(o, &of) || !oid_get_value(o, &of, &ov))
 		return;
@@ -511,14 +512,20 @@ oid_print(const struct oid *o, struct oidname *on, bool print_description,
 	if (include && regexec(&inc_regex, metric, 0, NULL, 0) != 0)
 		return;
 
+	has_desc = oid_get_description(o, &od);
+	/*
+	 * Skip metrics with "(LEGACY)" in the name.  It's used by several
+	 * redundant ZFS sysctls whose names alias with the non-legacy versions.
+	 */
+	if (has_desc && strnstr(od.description, "(LEGACY)", BUFSIZ) != NULL)
+		return;
 	/*
 	 * Print the line with the description. Prometheus expects a
 	 * single unique description for every metric, which cannot be
 	 * guaranteed by sysctl if labels are present. Omit the
 	 * description if labels are present.
 	 */
-	if (print_description && !oidname_has_labels(on) &&
-	    oid_get_description(o, &od)) {
+	if (print_description && !oidname_has_labels(on) && has_desc) {
 		fprintf(fp, "# HELP ");
 		fprintf(fp, "%s", metric);
 		fputc(' ', fp);

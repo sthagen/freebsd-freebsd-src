@@ -1,4 +1,4 @@
-/*	$NetBSD: job.c,v 1.435 2021/06/16 09:47:51 rillig Exp $	*/
+/*	$NetBSD: job.c,v 1.452 2022/02/12 11:14:48 rillig Exp $	*/
 
 /*
  * Copyright (c) 1988, 1989, 1990 The Regents of the University of California.
@@ -155,7 +155,7 @@
 #include "trace.h"
 
 /*	"@(#)job.c	8.2 (Berkeley) 3/19/94"	*/
-MAKE_RCSID("$NetBSD: job.c,v 1.435 2021/06/16 09:47:51 rillig Exp $");
+MAKE_RCSID("$NetBSD: job.c,v 1.452 2022/02/12 11:14:48 rillig Exp $");
 
 /*
  * A shell defines how the commands are run.  All commands for a target are
@@ -214,13 +214,15 @@ typedef struct Shell {
 	const char *errOff;	/* command to turn off error checking */
 
 	const char *echoTmpl;	/* template to echo a command */
-	const char *runIgnTmpl;	/* template to run a command
-				 * without error checking */
-	const char *runChkTmpl;	/* template to run a command
-				 * with error checking */
+	const char *runIgnTmpl;	/* template to run a command without error
+				 * checking */
+	const char *runChkTmpl;	/* template to run a command with error
+				 * checking */
 
-	/* string literal that results in a newline character when it appears
-	 * outside of any 'quote' or "quote" characters */
+	/*
+	 * A string literal that results in a newline character when it
+	 * occurs outside of any 'quote' or "quote" characters.
+	 */
 	const char *newline;
 	char commentChar;	/* character used by shell for comment lines */
 
@@ -454,7 +456,7 @@ static void watchfd(Job *);
 static void clearfd(Job *);
 static bool readyfd(Job *);
 
-static char *targPrefix = NULL; /* To identify a job change in the output. */
+static char *targPrefix = NULL;	/* To identify a job change in the output. */
 static Job tokenWaitJob;	/* token wait pseudo-job */
 
 static Job childExitJob;	/* child exit pseudo-job */
@@ -533,13 +535,13 @@ JobDeleteTarget(GNode *gn)
 		return;
 	if (gn->type & OP_PHONY)
 		return;
-	if (Targ_Precious(gn))
+	if (GNode_IsPrecious(gn))
 		return;
 	if (opts.noExecute)
 		return;
 
 	file = GNode_Path(gn);
-	if (eunlink(file) != -1)
+	if (unlink_file(file))
 		Error("*** %s removed", file);
 }
 
@@ -794,8 +796,8 @@ ShellWriter_WriteFmt(ShellWriter *wr, const char *fmt, const char *arg)
 	DEBUG1(JOB, fmt, arg);
 
 	(void)fprintf(wr->f, fmt, arg);
-	/* XXX: Is flushing needed in any case, or only if f == stdout? */
-	(void)fflush(wr->f);
+	if (wr->f == stdout)
+		(void)fflush(wr->f);
 }
 
 static void
@@ -862,7 +864,7 @@ static void
 JobWriteSpecialsEchoCtl(Job *job, ShellWriter *wr, CommandFlags *inout_cmdFlags,
 			const char *escCmd, const char **inout_cmdTemplate)
 {
-	/* XXX: Why is the job modified at this point? */
+	/* XXX: Why is the whole job modified at this point? */
 	job->ignerr = true;
 
 	if (job->echo && inout_cmdFlags->echo) {
@@ -874,9 +876,6 @@ JobWriteSpecialsEchoCtl(Job *job, ShellWriter *wr, CommandFlags *inout_cmdFlags,
 		 * for toggling the error checking.
 		 */
 		inout_cmdFlags->echo = false;
-	} else {
-		if (inout_cmdFlags->echo)
-			ShellWriter_EchoCmd(wr, escCmd);
 	}
 	*inout_cmdTemplate = shell->runIgnTmpl;
 
@@ -940,7 +939,7 @@ JobWriteCommand(Job *job, ShellWriter *wr, StringListNode *ln, const char *ucmd)
 
 	run = GNode_ShouldExecute(job->node);
 
-	Var_Subst(ucmd, job->node, VARE_WANTRES, &xcmd);
+	(void)Var_Subst(ucmd, job->node, VARE_WANTRES, &xcmd);
 	/* TODO: handle errors */
 	xcmdStart = xcmd;
 
@@ -954,7 +953,7 @@ JobWriteCommand(Job *job, ShellWriter *wr, StringListNode *ln, const char *ucmd)
 		 * We're not actually executing anything...
 		 * but this one needs to be - use compat mode just for it.
 		 */
-		Compat_RunCommand(ucmd, job->node, ln);
+		(void)Compat_RunCommand(ucmd, job->node, ln);
 		free(xcmdStart);
 		return;
 	}
@@ -1097,10 +1096,20 @@ DebugFailedJob(const Job *job)
 	if (!DEBUG(ERROR))
 		return;
 
-	debug_printf("\n*** Failed target: %s\n*** Failed commands:\n",
-	    job->node->name);
-	for (ln = job->node->commands.first; ln != NULL; ln = ln->next)
-		debug_printf("\t%s\n", (const char *)ln->datum);
+	debug_printf("\n");
+	debug_printf("*** Failed target: %s\n", job->node->name);
+	debug_printf("*** Failed commands:\n");
+	for (ln = job->node->commands.first; ln != NULL; ln = ln->next) {
+		const char *cmd = ln->datum;
+		debug_printf("\t%s\n", cmd);
+
+		if (strchr(cmd, '$') != NULL) {
+			char *xcmd;
+			(void)Var_Subst(cmd, job->node, VARE_WANTRES, &xcmd);
+			debug_printf("\t=> %s\n", xcmd);
+			free(xcmd);
+		}
+	}
 }
 
 static void
@@ -1125,7 +1134,7 @@ JobFinishDoneExitedError(Job *job, WAIT_T *inout_status)
 	else {
 		if (deleteOnError)
 			JobDeleteTarget(job->node);
-		PrintOnError(job->node, NULL);
+		PrintOnError(job->node, "\n");
 	}
 }
 
@@ -1192,7 +1201,9 @@ JobFinish (Job *job, WAIT_T status)
 
 		JobClosePipes(job);
 		if (job->cmdFILE != NULL && job->cmdFILE != stdout) {
-			(void)fclose(job->cmdFILE);
+			if (fclose(job->cmdFILE) != 0)
+				Punt("Cannot write shell script for '%s': %s",
+				    job->node->name, strerror(errno));
 			job->cmdFILE = NULL;
 		}
 		done = true;
@@ -1283,9 +1294,11 @@ TouchRegular(GNode *gn)
 		return;		/* XXX: What about propagating the error? */
 	}
 
-	/* Last resort: update the file's time stamps in the traditional way.
+	/*
+	 * Last resort: update the file's time stamps in the traditional way.
 	 * XXX: This doesn't work for empty files, which are sometimes used
-	 * as marker files. */
+	 * as marker files.
+	 */
 	if (read(fd, &c, 1) == 1) {
 		(void)lseek(fd, 0, SEEK_SET);
 		while (write(fd, &c, 1) == -1 && errno == EAGAIN)
@@ -1384,10 +1397,10 @@ Job_CheckCommands(GNode *gn, void (*abortProc)(const char *, ...))
 	 * this node's parents so they never get examined.
 	 */
 
-	if (gn->flags & FROM_DEPEND) {
+	if (gn->flags.fromDepend) {
 		if (!Job_RunTarget(".STALE", gn->fname))
 			fprintf(stdout,
-			    "%s: %s, %d: ignoring stale %s for %s\n",
+			    "%s: %s, %u: ignoring stale %s for %s\n",
 			    progname, gn->fname, gn->lineno, makeDependfile,
 			    gn->name);
 		return true;
@@ -1459,9 +1472,8 @@ JobExec(Job *job, char **argv)
 		sigset_t tmask;
 
 #ifdef USE_META
-		if (useMeta) {
+		if (useMeta)
 			meta_job_child(job);
-		}
 #endif
 		/*
 		 * Reset all signal handlers; this is necessary because we
@@ -1544,9 +1556,8 @@ JobExec(Job *job, char **argv)
 	Trace_Log(JOBSTART, job);
 
 #ifdef USE_META
-	if (useMeta) {
+	if (useMeta)
 		meta_job_parent(job, cpid);
-	}
 #endif
 
 	/*
@@ -1558,7 +1569,9 @@ JobExec(Job *job, char **argv)
 	watchfd(job);
 
 	if (job->cmdFILE != NULL && job->cmdFILE != stdout) {
-		(void)fclose(job->cmdFILE);
+		if (fclose(job->cmdFILE) != 0)
+			Punt("Cannot write shell script for '%s': %s",
+			    job->node->name, strerror(errno));
 		job->cmdFILE = NULL;
 	}
 
@@ -1638,7 +1651,7 @@ JobWriteShellCommands(Job *job, GNode *gn, bool *out_run)
 #ifdef USE_META
 	if (useMeta) {
 		meta_job_start(job, gn);
-		if (gn->type & OP_SILENT) /* might have changed */
+		if (gn->type & OP_SILENT)	/* might have changed */
 			job->echo = false;
 	}
 #endif
@@ -1682,7 +1695,7 @@ JobStart(GNode *gn, bool special)
 
 	job->special = special || gn->type & OP_SPECIAL;
 	job->ignerr = opts.ignoreErrors || gn->type & OP_IGNORE;
-	job->echo = !(opts.beSilent || gn->type & OP_SILENT);
+	job->echo = !(opts.silent || gn->type & OP_SILENT);
 
 	/*
 	 * Check the commands now so any attributes from .DEFAULT have a
@@ -1701,11 +1714,11 @@ JobStart(GNode *gn, bool special)
 		 * also dead...
 		 */
 		if (!cmdsOK) {
-			PrintOnError(gn, NULL); /* provide some clue */
+			PrintOnError(gn, "\n");	/* provide some clue */
 			DieHorribly();
 		}
 	} else if (((gn->type & OP_MAKE) && !opts.noRecursiveExecute) ||
-	    (!opts.noExecute && !opts.touchFlag)) {
+	    (!opts.noExecute && !opts.touch)) {
 		/*
 		 * The above condition looks very similar to
 		 * GNode_ShouldExecute but is subtly different.  It prevents
@@ -1718,7 +1731,7 @@ JobStart(GNode *gn, bool special)
 		 * also dead...
 		 */
 		if (!cmdsOK) {
-			PrintOnError(gn, NULL); /* provide some clue */
+			PrintOnError(gn, "\n");	/* provide some clue */
 			DieHorribly();
 		}
 
@@ -1938,7 +1951,7 @@ again:
 			 * we add one of our own free will.
 			 */
 			if (*cp != '\0') {
-				if (!opts.beSilent)
+				if (!opts.silent)
 					SwitchOutputTo(job->node);
 #ifdef USE_META
 				if (useMeta) {
@@ -2002,7 +2015,7 @@ JobRun(GNode *targ)
 	Compat_Make(targ, targ);
 	/* XXX: Replace with GNode_IsError(gn) */
 	if (targ->made == ERROR) {
-		PrintOnError(targ, "\n\nStop.");
+		PrintOnError(targ, "\n\nStop.\n");
 		exit(1);
 	}
 #endif
@@ -2128,7 +2141,7 @@ Job_CatchOutput(void)
 				JobRestartJobs();
 		} else if (count == 0)
 			Punt("unexpected eof on token pipe");
-		else
+		else if (errno != EAGAIN)
 			Punt("token pipe read: %s", strerror(errno));
 		nready--;
 	}
@@ -2150,9 +2163,8 @@ Job_CatchOutput(void)
 		 * than job->inPollfd.
 		 */
 		if (useMeta && job->inPollfd != &fds[i]) {
-			if (meta_job_event(job) <= 0) {
-				fds[i].events = 0; /* never mind */
-			}
+			if (meta_job_event(job) <= 0)
+				fds[i].events = 0;	/* never mind */
 		}
 #endif
 		if (--nready == 0)
@@ -2182,8 +2194,11 @@ InitShellNameAndPath(void)
 		return;
 	}
 #endif
-
+#ifdef DEFSHELL_PATH
+	shellPath = DEFSHELL_PATH;
+#else
 	shellPath = str_concat3(_PATH_DEFSHELLDIR, "/", shellName);
+#endif
 }
 
 void
@@ -2203,14 +2218,8 @@ Shell_Init(void)
 			free(shellErrFlag);
 			shellErrFlag = NULL;
 		}
-		if (shellErrFlag == NULL) {
-			size_t n = strlen(shell->errFlag) + 2;
-
-			shellErrFlag = bmake_malloc(n);
-			if (shellErrFlag != NULL)
-				snprintf(shellErrFlag, n, "-%s",
-				    shell->errFlag);
-		}
+		if (shellErrFlag == NULL)
+			shellErrFlag = str_concat2("-", shell->errFlag);
 	} else if (shellErrFlag != NULL) {
 		free(shellErrFlag);
 		shellErrFlag = NULL;
@@ -2335,8 +2344,10 @@ Job_Init(void)
 	AddSig(SIGCONT, JobContinueSig);
 
 	(void)Job_RunTarget(".BEGIN", NULL);
-	/* Create the .END node now, even though no code in the unit tests
-	 * depends on it.  See also Targ_GetEndNode in Compat_Run. */
+	/*
+	 * Create the .END node now, even though no code in the unit tests
+	 * depends on it.  See also Targ_GetEndNode in Compat_Run.
+	 */
 	(void)Targ_GetEndNode();
 }
 
@@ -2476,13 +2487,17 @@ Job_ParseShell(char *line)
 			} else if (strncmp(arg, "newline=", 8) == 0) {
 				newShell.newline = arg + 8;
 			} else if (strncmp(arg, "check=", 6) == 0) {
-				/* Before 2020-12-10, these two variables
-				 * had been a single variable. */
+				/*
+				 * Before 2020-12-10, these two variables had
+				 * been a single variable.
+				 */
 				newShell.errOn = arg + 6;
 				newShell.echoTmpl = arg + 6;
 			} else if (strncmp(arg, "ignore=", 7) == 0) {
-				/* Before 2020-12-10, these two variables
-				 * had been a single variable. */
+				/*
+				 * Before 2020-12-10, these two variables had
+				 * been a single variable.
+				 */
 				newShell.errOff = arg + 7;
 				newShell.runIgnTmpl = arg + 7;
 			} else if (strncmp(arg, "errout=", 7) == 0) {
@@ -2624,7 +2639,7 @@ JobInterrupt(bool runINTERRUPT, int signo)
 
 	JobSigUnlock(&mask);
 
-	if (runINTERRUPT && !opts.touchFlag) {
+	if (runINTERRUPT && !opts.touch) {
 		interrupt = Targ_FindNode(".INTERRUPT");
 		if (interrupt != NULL) {
 			opts.ignoreErrors = false;
@@ -2850,7 +2865,7 @@ Job_TempFile(const char *pattern, char *tfile, size_t tfile_sz)
 	JobSigLock(&mask);
 	fd = mkTempFile(pattern, tfile, tfile_sz);
 	if (tfile != NULL && !DEBUG(SCRIPT))
-	    unlink(tfile);
+		unlink(tfile);
 	JobSigUnlock(&mask);
 
 	return fd;
@@ -2982,7 +2997,7 @@ Job_RunTarget(const char *target, const char *fname)
 	JobRun(gn);
 	/* XXX: Replace with GNode_IsError(gn) */
 	if (gn->made == ERROR) {
-		PrintOnError(gn, "\n\nStop.");
+		PrintOnError(gn, "\n\nStop.\n");
 		exit(1);
 	}
 	return true;
@@ -3047,4 +3062,4 @@ emul_poll(struct pollfd *fd, int nfd, int timeout)
 
 	return npoll;
 }
-#endif /* USE_SELECT */
+#endif				/* USE_SELECT */

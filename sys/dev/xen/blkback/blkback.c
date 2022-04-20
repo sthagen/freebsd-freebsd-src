@@ -80,8 +80,8 @@ __FBSDID("$FreeBSD$");
 #include <xen/gnttab.h>
 #include <xen/xen_intr.h>
 
-#include <xen/interface/event_channel.h>
-#include <xen/interface/grant_table.h>
+#include <contrib/xen/event_channel.h>
+#include <contrib/xen/grant_table.h>
 
 #include <xen/xenbus/xenbusvar.h>
 
@@ -1087,7 +1087,7 @@ xbb_unmap_reqlist(struct xbb_xen_reqlist *reqlist)
 	struct gnttab_unmap_grant_ref unmap[XBB_MAX_SEGMENTS_PER_REQLIST];
 	u_int			      i;
 	u_int			      invcount;
-	int			      error;
+	int			      error __diagused;
 
 	invcount = 0;
 	for (i = 0; i < reqlist->nr_segments; i++) {
@@ -1280,7 +1280,7 @@ bailout_error:
  * \param xbb     Per-instance xbb configuration structure.
  * \param req     The request structure to which to respond.
  * \param status  The status code to report.  See BLKIF_RSP_*
- *                in sys/xen/interface/io/blkif.h.
+ *                in sys/contrib/xen/io/blkif.h.
  */
 static void
 xbb_queue_response(struct xbb_softc *xbb, struct xbb_xen_req *req, int status)
@@ -1645,11 +1645,9 @@ xbb_dispatch_io(struct xbb_softc *xbb, struct xbb_xen_reqlist *reqlist)
 
 	STAILQ_FOREACH(nreq, &reqlist->contig_req_list, links) {
 		blkif_request_t		*ring_req;
-		RING_IDX		 req_ring_idx;
 		u_int			 req_seg_idx;
 
 		ring_req	      = nreq->ring_req;
-		req_ring_idx	      = nreq->req_ring_idx;
 		nr_sects              = 0;
 		nseg                  = ring_req->nr_segments;
 		nreq->nr_pages        = nseg;
@@ -2683,7 +2681,7 @@ xbb_open_backend(struct xbb_softc *xbb)
 	pwd_ensure_dirs();
 
  again:
-	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, xbb->dev_name, curthread);
+	NDINIT(&nd, LOOKUP, FOLLOW, UIO_SYSSPACE, xbb->dev_name);
 	error = vn_open(&nd, &flags, 0, NULL);
 	if (error) {
 		/*
@@ -2713,7 +2711,7 @@ xbb_open_backend(struct xbb_softc *xbb)
 		return (error);
 	}
 
-	NDFREE(&nd, NDF_ONLY_PNBUF);
+	NDFREE_PNBUF(&nd);
 		
 	xbb->vn = nd.ni_vp;
 

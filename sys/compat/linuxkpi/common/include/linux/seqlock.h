@@ -26,8 +26,8 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _LINUX_SEQLOCK_H__
-#define	_LINUX_SEQLOCK_H__
+#ifndef _LINUXKPI_LINUX_SEQLOCK_H__
+#define	_LINUXKPI_LINUX_SEQLOCK_H__
 
 #include <sys/param.h>
 #include <sys/lock.h>
@@ -71,7 +71,7 @@ write_seqcount_end(struct seqcount *seqcount)
  * XXX: Are predicts from inline functions still not honored by clang?
  */
 #define	__read_seqcount_retry(seqcount, gen)	\
-	(!seqc_consistent_nomb(&(seqcount)->seqc, gen))
+	(!seqc_consistent_no_fence(&(seqcount)->seqc, gen))
 #define	read_seqcount_retry(seqcount, gen)	\
 	(!seqc_consistent(&(seqcount)->seqc, gen))
 
@@ -134,4 +134,4 @@ read_seqbegin(const struct seqlock *seqlock)
 #define	read_seqretry(seqlock, gen)	\
 	read_seqcount_retry(&(seqlock)->seql_count, gen)
 
-#endif	/* _LINUX_SEQLOCK_H__ */
+#endif	/* _LINUXKPI_LINUX_SEQLOCK_H__ */

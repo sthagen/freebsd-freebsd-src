@@ -159,6 +159,10 @@ struct pkthdr {
 	union {
 		struct m_snd_tag *snd_tag;	/* send tag, if any */
 		struct ifnet	*rcvif;		/* rcv interface */
+		struct {
+			uint16_t rcvidx;	/* rcv interface index ... */
+			uint16_t rcvgen;	/* ... and generation count */
+		};
 	};
 	SLIST_HEAD(packet_tags, m_tag) tags; /* list of packet tags */
 	int32_t		 len;		/* total packet length */
@@ -444,7 +448,7 @@ m_epg_pagelen(const struct mbuf *m, int pidx, int pgoff)
 	    "too large header length");					\
 } while (0)
 #else
-#define	MBUF_EXT_PGS_ASSERT_SANITY(m)	do {} while (0);
+#define	MBUF_EXT_PGS_ASSERT_SANITY(m)	do {} while (0)
 #endif
 #endif
 
@@ -781,7 +785,7 @@ union if_snd_tag_alloc_params;
 		    "Sleeping in \"%s\"", __func__);			\
 } while (0)
 #else
-#define	MBUF_CHECKSLEEP(how)
+#define	MBUF_CHECKSLEEP(how) do {} while (0)
 #endif
 
 /*
@@ -862,6 +866,8 @@ int		 m_snd_tag_alloc(struct ifnet *,
 void		 m_snd_tag_init(struct m_snd_tag *, struct ifnet *,
 		    const struct if_snd_tag_sw *);
 void		 m_snd_tag_destroy(struct m_snd_tag *);
+void		 m_rcvif_serialize(struct mbuf *);
+struct ifnet	*m_rcvif_restore(struct mbuf *);
 
 static __inline int
 m_gettype(int size)
@@ -1139,6 +1145,12 @@ m_extrefcnt(struct mbuf *m)
 	KASSERT((m) != NULL && (m)->m_flags & M_PKTHDR,			\
 	    ("%s: no mbuf packet header!", __func__))
 
+/* Check if the supplied mbuf has no send tag, or else panic. */
+#define	M_ASSERT_NO_SND_TAG(m)						\
+	KASSERT((m) != NULL && (m)->m_flags & M_PKTHDR &&		\
+	       ((m)->m_pkthdr.csum_flags & CSUM_SND_TAG) == 0,		\
+	    ("%s: receive mbuf has send tag!", __func__))
+
 /* Check if mbuf is multipage. */
 #define M_ASSERTEXTPG(m)						\
 	KASSERT(((m)->m_flags & (M_EXTPG|M_PKTHDR)) == M_EXTPG,		\
@@ -1161,7 +1173,7 @@ m_extrefcnt(struct mbuf *m)
 		    ("%s: chain %p contains an unmapped mbuf", __func__, (m)));\
 } while (0)
 #else
-#define	M_ASSERTMAPPED(m)
+#define	M_ASSERTMAPPED(m) do {} while (0)
 #endif
 
 /*
@@ -1369,11 +1381,12 @@ extern bool		mb_use_ext_pgs;	/* Use ext_pgs for sendfile */
 /* Specific cookies and tags. */
 
 /* Packet tag routines. */
-struct m_tag	*m_tag_alloc(u_int32_t, int, int, int);
+struct m_tag	*m_tag_alloc(uint32_t, uint16_t, int, int);
 void		 m_tag_delete(struct mbuf *, struct m_tag *);
 void		 m_tag_delete_chain(struct mbuf *, struct m_tag *);
 void		 m_tag_free_default(struct m_tag *);
-struct m_tag	*m_tag_locate(struct mbuf *, u_int32_t, int, struct m_tag *);
+struct m_tag	*m_tag_locate(struct mbuf *, uint32_t, uint16_t,
+    struct m_tag *);
 struct m_tag	*m_tag_copy(struct m_tag *, int);
 int		 m_tag_copy_chain(struct mbuf *, const struct mbuf *, int);
 void		 m_tag_delete_nonpersistent(struct mbuf *);
@@ -1395,7 +1408,7 @@ m_tag_init(struct mbuf *m)
  * XXX probably should be called m_tag_init, but that was already taken.
  */
 static __inline void
-m_tag_setup(struct m_tag *t, u_int32_t cookie, int type, int len)
+m_tag_setup(struct m_tag *t, uint32_t cookie, uint16_t type, int len)
 {
 
 	t->m_tag_id = type;
@@ -1457,13 +1470,13 @@ m_tag_unlink(struct mbuf *m, struct m_tag *t)
 #define	MTAG_ABI_COMPAT		0		/* compatibility ABI */
 
 static __inline struct m_tag *
-m_tag_get(int type, int length, int wait)
+m_tag_get(uint16_t type, int length, int wait)
 {
 	return (m_tag_alloc(MTAG_ABI_COMPAT, type, length, wait));
 }
 
 static __inline struct m_tag *
-m_tag_find(struct mbuf *m, int type, struct m_tag *start)
+m_tag_find(struct mbuf *m, uint16_t type, struct m_tag *start)
 {
 	return (SLIST_EMPTY(&m->m_pkthdr.tags) ? (struct m_tag *)NULL :
 	    m_tag_locate(m, MTAG_ABI_COMPAT, type, start));

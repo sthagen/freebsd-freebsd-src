@@ -79,8 +79,7 @@
 #include <dev/usb/controller/atmegadci.h>
 
 #define	ATMEGA_BUS2SC(bus) \
-   ((struct atmegadci_softc *)(((uint8_t *)(bus)) - \
-    ((uint8_t *)&(((struct atmegadci_softc *)0)->sc_bus))))
+    __containerof(bus, struct atmegadci_softc, sc_bus)
 
 #define	ATMEGA_PC2SC(pc) \
    ATMEGA_BUS2SC(USB_DMATAG_TO_XROOT((pc)->tag_parent)->bus)
@@ -776,10 +775,8 @@ static void
 atmegadci_setup_standard_chain(struct usb_xfer *xfer)
 {
 	struct atmegadci_std_temp temp;
-	struct atmegadci_softc *sc;
 	struct atmegadci_td *td;
 	uint32_t x;
-	uint8_t ep_no;
 	uint8_t need_sync;
 
 	DPRINTFN(9, "addr=%d endpt=%d sumlen=%d speed=%d\n",
@@ -801,9 +798,6 @@ atmegadci_setup_standard_chain(struct usb_xfer *xfer)
 	temp.setup_alt_next = xfer->flags_int.short_frames_ok ||
 	    xfer->flags_int.isochronous_xfr;
 	temp.did_stall = !xfer->flags_int.control_stall;
-
-	sc = ATMEGA_BUS2SC(xfer->xroot->bus);
-	ep_no = (xfer->endpointno & UE_ADDR);
 
 	/* check if we should prepend a setup message */
 
@@ -1957,14 +1951,12 @@ static void
 atmegadci_xfer_setup(struct usb_setup_params *parm)
 {
 	const struct usb_hw_ep_profile *pf;
-	struct atmegadci_softc *sc;
 	struct usb_xfer *xfer;
 	void *last_obj;
 	uint32_t ntd;
 	uint32_t n;
 	uint8_t ep_no;
 
-	sc = ATMEGA_BUS2SC(parm->udev->bus);
 	xfer = parm->curr_xfer;
 
 	/*

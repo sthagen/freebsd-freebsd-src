@@ -159,6 +159,7 @@ union fuse_payloads_in {
 	];
 	fuse_copy_file_range_in	copy_file_range;
 	fuse_create_in	create;
+	fuse_fallocate_in fallocate;
 	fuse_flush_in	flush;
 	fuse_fsync_in	fsync;
 	fuse_fsync_in	fsyncdir;
@@ -339,6 +340,9 @@ class MockFS {
 	/* pid of child process, for two-process test cases */
 	pid_t m_child_pid;
 
+	/* the expected errno of the next write to /dev/fuse */
+	int m_expected_write_errno;
+
 	/* Maximum size of a FUSE_WRITE write */
 	uint32_t m_maxwrite;
 
@@ -356,7 +360,8 @@ class MockFS {
 		bool default_permissions, bool push_symlinks_in, bool ro,
 		enum poll_method pm, uint32_t flags,
 		uint32_t kernel_minor_version, uint32_t max_write, bool async,
-		bool no_clusterr, unsigned time_gran, bool nointr);
+		bool no_clusterr, unsigned time_gran, bool nointr,
+		bool noatime);
 
 	virtual ~MockFS();
 
