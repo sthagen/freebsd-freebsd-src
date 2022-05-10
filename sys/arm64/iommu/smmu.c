@@ -152,7 +152,7 @@ __FBSDID("$FreeBSD$");
 static struct resource_spec smmu_spec[] = {
 	{ SYS_RES_MEMORY, 0, RF_ACTIVE },
 	{ SYS_RES_IRQ, 0, RF_ACTIVE },
-	{ SYS_RES_IRQ, 1, RF_ACTIVE },
+	{ SYS_RES_IRQ, 1, RF_ACTIVE | RF_OPTIONAL },
 	{ SYS_RES_IRQ, 2, RF_ACTIVE },
 	{ SYS_RES_IRQ, 3, RF_ACTIVE },
 	RESOURCE_SPEC_END
@@ -1547,12 +1547,6 @@ smmu_attach(device_t dev)
 
 	mtx_init(&sc->sc_mtx, device_get_nameunit(sc->dev), "smmu", MTX_DEF);
 
-	error = bus_alloc_resources(dev, smmu_spec, sc->res);
-	if (error) {
-		device_printf(dev, "Couldn't allocate resources.\n");
-		return (ENXIO);
-	}
-
 	error = smmu_setup_interrupts(sc);
 	if (error) {
 		bus_release_resources(dev, smmu_spec, sc->res);
@@ -1766,6 +1760,42 @@ smmu_set_buswide(device_t dev, struct smmu_domain *domain,
 	return (0);
 }
 
+#ifdef DEV_ACPI
+static int
+smmu_pci_get_sid_acpi(device_t child, u_int *sid0)
+{
+	uint16_t rid;
+	u_int xref;
+	int seg;
+	int err;
+	int sid;
+
+	seg = pci_get_domain(child);
+	rid = pci_get_rid(child);
+
+	err = acpi_iort_map_pci_smmuv3(seg, rid, &xref, &sid);
+	if (err == 0)
+		*sid0 = sid;
+
+	return (err);
+}
+#endif
+
+#ifdef FDT
+static int
+smmu_pci_get_sid_fdt(device_t child, u_int *sid0)
+{
+	struct pci_id_ofw_iommu pi;
+	int err;
+
+	err = pci_get_id(child, PCI_ID_OFW_IOMMU, (uintptr_t *)&pi);
+	if (err == 0)
+		*sid0 = pi.id;
+
+	return (err);
+}
+#endif
+
 static struct iommu_ctx *
 smmu_ctx_alloc(device_t dev, struct iommu_domain *iodom, device_t child,
     bool disabled)
@@ -1773,28 +1803,23 @@ smmu_ctx_alloc(device_t dev, struct iommu_domain *iodom, device_t child,
 	struct smmu_domain *domain;
 	struct smmu_softc *sc;
 	struct smmu_ctx *ctx;
-#ifdef DEV_ACPI
-	uint16_t rid;
-	u_int xref;
-	int seg;
-#else
-	struct pci_id_ofw_iommu pi;
-#endif
+	devclass_t pci_class;
 	u_int sid;
 	int err;
 
 	sc = device_get_softc(dev);
 	domain = (struct smmu_domain *)iodom;
 
+	pci_class = devclass_find("pci");
+	if (device_get_devclass(device_get_parent(child)) != pci_class)
+		return (NULL);
+
 #ifdef DEV_ACPI
-	seg = pci_get_domain(child);
-	rid = pci_get_rid(child);
-	err = acpi_iort_map_pci_smmuv3(seg, rid, &xref, &sid);
+	err = smmu_pci_get_sid_acpi(child, &sid);
 #else
-	err = pci_get_id(child, PCI_ID_OFW_IOMMU, (uintptr_t *)&pi);
-	sid = pi.id;
+	err = smmu_pci_get_sid_fdt(child, &sid);
 #endif
-	if (err != 0)
+	if (err)
 		return (NULL);
 
 	if (sc->features & SMMU_FEATURE_2_LVL_STREAM_TABLE) {
@@ -1874,7 +1899,7 @@ smmu_ctx_lookup_by_sid(device_t dev, u_int sid)
 static struct iommu_ctx *
 smmu_ctx_lookup(device_t dev, device_t child)
 {
-	struct iommu_unit *iommu __unused;
+	struct iommu_unit *iommu __diagused;
 	struct smmu_softc *sc;
 	struct smmu_domain *domain;
 	struct smmu_unit *unit;
