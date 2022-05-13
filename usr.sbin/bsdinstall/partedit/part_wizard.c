@@ -105,7 +105,7 @@ boot_disk_select(struct gmesh *mesh)
 	const char *type, *desc;
 	char diskdesc[512];
 	char *chosen;
-	int i, button, selected, n = 0;
+	int i, button, fd, selected, n = 0;
 	struct bsddialog_conf conf;
 
 	bsddialog_initconf(&conf);
@@ -135,6 +135,16 @@ boot_disk_select(struct gmesh *mesh)
 					continue;
 				if (strncmp(pp->lg_name, "cd", 2) == 0)
 					continue;
+				/*
+				 * Check if the disk is available to be opened for
+				 * write operations, it helps prevent the USB
+				 * stick used to boot from being listed as an option
+				 */
+				fd = g_open(pp->lg_name, 1);
+				if (fd == -1) {
+					continue;
+				}
+				g_close(fd);
 
 				disks = realloc(disks, (++n)*sizeof(disks[0]));
 				disks[n-1].name = pp->lg_name;
