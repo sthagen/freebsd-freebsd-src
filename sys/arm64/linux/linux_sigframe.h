@@ -1,9 +1,7 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
- *
- * Copyright (C) 2018 Turing Robotic Industries Inc.
- * Copyright (C) 2020 Andrew Turner <andrew@FreeBSD.org>
- * Copyright (C) 2022 Dmitry Chagin <dchagin@FreeBSD.org>
+ * Copyright (c) 1994-1996 Søren Schmidt
+ * Copyright (c) 2018 Turing Robotic Industries Inc.
+ * Copyright (c) 2022 Dmitry Chagin <dchagin@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,31 +27,60 @@
  * $FreeBSD$
  */
 
-/*
- * arm64 Linux VDSO signal trampoline.
- */
+#ifndef _ARM64_LINUX_SIGFRAME_H_
+#define	_ARM64_LINUX_SIGFRAME_H_
 
-#include <machine/asm.h>
+struct _l_aarch64_ctx {
+	uint32_t	magic;
+	uint32_t	size;
+};
 
-#include <arm64/linux/linux_syscall.h>
+#define	L_FPSIMD_MAGIC	0x46508001
+#define	L_ESR_MAGIC	0x45535201
 
-	.data
+struct l_fpsimd_context {
+	struct _l_aarch64_ctx head;
+	uint32_t	fpsr;
+	uint32_t	fpcr;
+	__uint128_t	vregs[32];
+};
 
-	.globl linux_platform
-linux_platform:
-	.asciz "aarch64"
+struct l_esr_context {
+	struct _l_aarch64_ctx head;
+	uint64_t	esr;
+};
 
-	.text
+struct l_sigcontext {
+	uint64_t	fault_address;
+	uint64_t	regs[31];
+	uint64_t	sp;
+	uint64_t	pc;
+	uint64_t	pstate;
+	uint8_t		__reserved[4096] __attribute__((__aligned__(16)));
+};
 
-	nop	/* This is what Linux calls a "Mysterious NOP". */
-EENTRY(__kernel_rt_sigreturn)
-	mov	x8, #LINUX_SYS_linux_rt_sigreturn
-	svc	#0
-EEND(__kernel_rt_sigreturn)
+struct l_ucontext {
+	unsigned long	uc_flags;
+	struct l_ucontext *uc_link;
+	l_stack_t	uc_stack;
+	l_sigset_t	uc_sigmask;
+	uint8_t		__glibc_hole[1024 / 8 - sizeof(l_sigset_t)];
+	struct l_sigcontext uc_sc;
+};
 
-EENTRY(linux_vdso_sigcode)
-	blr	x8
+struct l_rt_sigframe {
+	l_siginfo_t	sf_si;
+	struct l_ucontext sf_uc;
+} __attribute__((__aligned__(16)));
 
-	mov	x8, #LINUX_SYS_linux_rt_sigreturn
-	svc	#0
-EEND(linux_vdso_sigcode)
+struct l_sigframe {
+	struct l_rt_sigframe sf;
+	/* frame_record */
+	uint64_t	fp;
+	uint64_t	lr;
+	ucontext_t	uc;
+};
+
+#define	LINUX_MINSIGSTKSZ	roundup(sizeof(struct l_sigframe), 16)
+
+#endif /* _ARM64_LINUX_SIGFRAME_H_ */
