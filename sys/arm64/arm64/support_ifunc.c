@@ -1,8 +1,8 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * Copyright (c) 2022 The FreeBSD Foundation
  *
- * Copyright (c) 2000 Marcel Moolenaar
- * All rights reserved.
+ * This software was developed by Andrew Turner under sponsorship from
+ * the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -16,7 +16,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -24,17 +24,35 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#ifndef _LINUX_SIGNAL_H_
-#define _LINUX_SIGNAL_H_
+#include <sys/cdefs.h>
 
-int linux_do_sigaction(struct thread *, int, l_sigaction_t *, l_sigaction_t *);
-void siginfo_to_lsiginfo(const siginfo_t *si, l_siginfo_t *lsi, l_int sig);
-int lsiginfo_to_siginfo(struct thread *td, const l_siginfo_t *lsi,
-		siginfo_t *si, int sig);
-int linux_copyin_sigset(l_sigset_t *, l_size_t, sigset_t *, sigset_t **);
+#include <sys/param.h>
 
-#endif /* _LINUX_SIGNAL_H_ */
+#include <machine/atomic.h>
+#include <machine/ifunc.h>
+
+int casueword32_llsc(volatile uint32_t *, uint32_t, uint32_t *, uint32_t);
+int casueword32_lse(volatile uint32_t *, uint32_t, uint32_t *, uint32_t);
+
+int casueword_llsc(volatile u_long *, u_long, u_long *, u_long);
+int casueword_lse(volatile u_long *, u_long, u_long *, u_long);
+
+DEFINE_IFUNC(, int, casueword32, (volatile uint32_t *base, uint32_t oldval,
+    uint32_t *oldvalp, uint32_t newval))
+{
+	if (lse_supported)
+		return (casueword32_lse);
+
+	return (casueword32_llsc);
+}
+
+DEFINE_IFUNC(, int, casueword, (volatile u_long *base, u_long oldval,
+    u_long *oldvalp, u_long newval))
+{
+	if (lse_supported)
+		return (casueword_lse);
+
+	return (casueword_llsc);
+}
