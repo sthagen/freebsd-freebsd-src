@@ -1137,12 +1137,12 @@ rack_init_sysctls(void)
 	    SYSCTL_CHILDREN(rack_timely),
 	    OID_AUTO, "upperboundss", CTLFLAG_RW,
 	    &rack_per_upper_bound_ss, 0,
-	    "Rack timely higest percentage we allow GP multiplier in SS to raise to (0 is no upperbound)");
+	    "Rack timely highest percentage we allow GP multiplier in SS to raise to (0 is no upperbound)");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_timely),
 	    OID_AUTO, "upperboundca", CTLFLAG_RW,
 	    &rack_per_upper_bound_ca, 0,
-	    "Rack timely higest percentage we allow GP multiplier to CA raise to (0 is no upperbound)");
+	    "Rack timely highest percentage we allow GP multiplier to CA raise to (0 is no upperbound)");
 	SYSCTL_ADD_S32(&rack_sysctl_ctx,
 	    SYSCTL_CHILDREN(rack_timely),
 	    OID_AUTO, "dynamicgp", CTLFLAG_RW,
@@ -4282,7 +4282,7 @@ rack_do_goodput_measurement(struct tcpcb *tp, struct tcp_rack *rack,
 		addpart = rack->r_ctl.num_measurements;
 		rack->r_ctl.num_measurements++;
 		if (rack->r_ctl.num_measurements >= RACK_REQ_AVG) {
-			/* We have collected enought to move forward */
+			/* We have collected enough to move forward */
 			rack->r_ctl.gp_bw /= (uint64_t)rack->r_ctl.num_measurements;
 		}
 		did_add = 3;
