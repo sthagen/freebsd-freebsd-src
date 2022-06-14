@@ -407,7 +407,7 @@ nfs34_access_otw(struct vnode *vp, int wmode, struct thread *td,
 	struct nfsvattr nfsva;
 
 	error = nfsrpc_accessrpc(vp, wmode, cred, td, &nfsva, &attrflag,
-	    &rmode, NULL);
+	    &rmode);
 	if (attrflag)
 		(void) nfscl_loadattrcache(&vp, &nfsva, NULL, 0, 1);
 	if (!error) {
@@ -948,8 +948,7 @@ nfs_close(struct vop_close_args *ap)
 		if (error == 0 && nfscl_mustflush(vp) != 0 &&
 		    vp->v_type == VREG &&
 		    (VFSTONFS(vp->v_mount)->nm_flag & NFSMNT_NOCTO) == 0) {
-			ret = nfsrpc_getattr(vp, cred, ap->a_td, &nfsva,
-			    NULL);
+			ret = nfsrpc_getattr(vp, cred, ap->a_td, &nfsva);
 			if (!ret) {
 				np->n_change = nfsva.na_filerev;
 				(void) nfscl_loadattrcache(&vp, &nfsva, NULL,
@@ -1029,7 +1028,7 @@ nfs_getattr(struct vop_getattr_args *ap)
 			return (0);
 		}
 	}
-	error = nfsrpc_getattr(vp, ap->a_cred, td, &nfsva, NULL);
+	error = nfsrpc_getattr(vp, ap->a_cred, td, &nfsva);
 	if (!error)
 		error = nfscl_loadattrcache(&vp, &nfsva, vap, 0, 0);
 	if (!error) {
@@ -1186,8 +1185,7 @@ nfs_setattrrpc(struct vnode *vp, struct vattr *vap, struct ucred *cred,
 		NFSUNLOCKNODE(np);
 		KDTRACE_NFS_ACCESSCACHE_FLUSH_DONE(vp);
 	}
-	error = nfsrpc_setattr(vp, vap, NULL, cred, td, &nfsva, &attrflag,
-	    NULL);
+	error = nfsrpc_setattr(vp, vap, NULL, cred, td, &nfsva, &attrflag);
 	if (attrflag) {
 		ret = nfscl_loadattrcache(&vp, &nfsva, NULL, 0, 1);
 		if (ret && !error)
@@ -1348,7 +1346,7 @@ nfs_lookup(struct vop_lookup_args *ap)
 	nanouptime(&ts);
 	error = nfsrpc_lookup(dvp, cnp->cn_nameptr, cnp->cn_namelen,
 	    cnp->cn_cred, td, &dnfsva, &nfsva, &nfhp, &attrflag, &dattrflag,
-	    NULL, openmode);
+	    openmode);
 	if (dattrflag)
 		(void) nfscl_loadattrcache(&dvp, &dnfsva, NULL, 0, 1);
 	if (error) {
@@ -1569,7 +1567,7 @@ ncl_readlinkrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred)
 	struct nfsvattr nfsva;
 
 	error = nfsrpc_readlink(vp, uiop, cred, uiop->uio_td, &nfsva,
-	    &attrflag, NULL);
+	    &attrflag);
 	if (attrflag) {
 		ret = nfscl_loadattrcache(&vp, &nfsva, NULL, 0, 1);
 		if (ret && !error)
@@ -1600,7 +1598,7 @@ ncl_readrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred)
 	NFSCL_DEBUG(4, "readrpc: aft doiods=%d\n", error);
 	if (error != 0)
 		error = nfsrpc_read(vp, uiop, cred, uiop->uio_td, &nfsva,
-		    &attrflag, NULL);
+		    &attrflag);
 	if (attrflag) {
 		ret = nfscl_loadattrcache(&vp, &nfsva, NULL, 0, 1);
 		if (ret && !error)
@@ -1680,8 +1678,7 @@ nfs_mknodrpc(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp,
 		if (!nfhp)
 			(void) nfsrpc_lookup(dvp, cnp->cn_nameptr,
 			    cnp->cn_namelen, cnp->cn_cred, curthread,
-			    &dnfsva, &nfsva, &nfhp, &attrflag, &dattrflag,
-			    NULL, 0);
+			    &dnfsva, &nfsva, &nfhp, &attrflag, &dattrflag, 0);
 		if (nfhp)
 			error = nfscl_nget(dvp->v_mount, dvp, nfhp, cnp,
 			    curthread, &np, LK_EXCLUSIVE);
@@ -1795,8 +1792,7 @@ again:
 		if (nfhp == NULL)
 			(void) nfsrpc_lookup(dvp, cnp->cn_nameptr,
 			    cnp->cn_namelen, cnp->cn_cred, curthread,
-			    &dnfsva, &nfsva, &nfhp, &attrflag, &dattrflag,
-			    NULL, 0);
+			    &dnfsva, &nfsva, &nfhp, &attrflag, &dattrflag, 0);
 		if (nfhp != NULL)
 			error = nfscl_nget(dvp->v_mount, dvp, nfhp, cnp,
 			    curthread, &np, LK_EXCLUSIVE);
@@ -1806,8 +1802,8 @@ again:
 	if (!error) {
 		newvp = NFSTOV(np);
 		if (attrflag == 0)
-			error = nfsrpc_getattr(newvp, cnp->cn_cred,
-			    curthread, &nfsva, NULL);
+			error = nfsrpc_getattr(newvp, cnp->cn_cred, curthread,
+			    &nfsva);
 		if (error == 0)
 			error = nfscl_loadattrcache(&newvp, &nfsva, NULL, 0, 1);
 	}
@@ -1824,15 +1820,14 @@ again:
 	} else if (NFS_ISV34(dvp) && (fmode & O_EXCL)) {
 		if (nfscl_checksattr(vap, &nfsva)) {
 			error = nfsrpc_setattr(newvp, vap, NULL, cnp->cn_cred,
-			    curthread, &nfsva, &attrflag, NULL);
+			    curthread, &nfsva, &attrflag);
 			if (error && (vap->va_uid != (uid_t)VNOVAL ||
 			    vap->va_gid != (gid_t)VNOVAL)) {
 				/* try again without setting uid/gid */
 				vap->va_uid = (uid_t)VNOVAL;
 				vap->va_gid = (uid_t)VNOVAL;
 				error = nfsrpc_setattr(newvp, vap, NULL, 
-				    cnp->cn_cred, curthread, &nfsva,
-				    &attrflag, NULL);
+				    cnp->cn_cred, curthread, &nfsva, &attrflag);
 			}
 			if (attrflag)
 				(void) nfscl_loadattrcache(&newvp, &nfsva, NULL,
@@ -2714,7 +2709,7 @@ nfs_lookitup(struct vnode *dvp, char *name, int len, struct ucred *cred,
 
 	nanouptime(&ts);
 	error = nfsrpc_lookup(dvp, name, len, cred, td, &dnfsva, &nfsva,
-	    &nfhp, &attrflag, &dattrflag, NULL, 0);
+	    &nfhp, &attrflag, &dattrflag, 0);
 	if (dattrflag)
 		(void) nfscl_loadattrcache(&dvp, &dnfsva, NULL, 0, 1);
 	if (npp && !error) {
