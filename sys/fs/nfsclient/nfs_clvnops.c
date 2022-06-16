@@ -1673,7 +1673,7 @@ nfs_mknodrpc(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp,
 		return (error);
 	error = nfsrpc_mknod(dvp, cnp->cn_nameptr, cnp->cn_namelen, vap,
 	    rdev, vap->va_type, cnp->cn_cred, curthread, &dnfsva,
-	    &nfsva, &nfhp, &attrflag, &dattrflag, NULL);
+	    &nfsva, &nfhp, &attrflag, &dattrflag);
 	if (!error) {
 		if (!nfhp)
 			(void) nfsrpc_lookup(dvp, cnp->cn_nameptr,
@@ -1787,7 +1787,7 @@ again:
 	cverf = nfs_get_cverf();
 	error = nfsrpc_create(dvp, cnp->cn_nameptr, cnp->cn_namelen,
 	    vap, cverf, fmode, cnp->cn_cred, curthread, &dnfsva, &nfsva,
-	    &nfhp, &attrflag, &dattrflag, NULL);
+	    &nfhp, &attrflag, &dattrflag);
 	if (!error) {
 		if (nfhp == NULL)
 			(void) nfsrpc_lookup(dvp, cnp->cn_nameptr,
@@ -1953,7 +1953,7 @@ nfs_removerpc(struct vnode *dvp, struct vnode *vp, char *name,
 	dnp->n_flag |= NREMOVEINPROG;
 	NFSUNLOCKNODE(dnp);
 	error = nfsrpc_remove(dvp, name, namelen, vp, cred, td, &dnfsva,
-	    &dattrflag, NULL);
+	    &dattrflag);
 	NFSLOCKNODE(dnp);
 	if ((dnp->n_flag & NREMOVEWANT)) {
 		dnp->n_flag &= ~(NREMOVEWANT | NREMOVEINPROG);
@@ -2139,7 +2139,7 @@ nfs_renamerpc(struct vnode *fdvp, struct vnode *fvp, char *fnameptr,
 
 	error = nfsrpc_rename(fdvp, fvp, fnameptr, fnamelen, tdvp, tvp,
 	    tnameptr, tnamelen, cred, td, &fnfsva, &tnfsva, &fattrflag,
-	    &tattrflag, NULL, NULL);
+	    &tattrflag);
 	NFSLOCKNODE(fdnp);
 	fdnp->n_flag |= NMODIFIED;
 	if (fattrflag != 0) {
@@ -2186,8 +2186,7 @@ nfs_link(struct vop_link_args *ap)
 	VOP_FSYNC(vp, MNT_WAIT, curthread);
 
 	error = nfsrpc_link(tdvp, vp, cnp->cn_nameptr, cnp->cn_namelen,
-	    cnp->cn_cred, curthread, &dnfsva, &nfsva, &attrflag,
-	    &dattrflag, NULL);
+	    cnp->cn_cred, curthread, &dnfsva, &nfsva, &attrflag, &dattrflag);
 	tdnp = VTONFS(tdvp);
 	NFSLOCKNODE(tdnp);
 	tdnp->n_flag |= NMODIFIED;
@@ -3845,7 +3844,7 @@ nfs_deallocate(struct vop_deallocate_args *ap)
 			vnode_pager_purge_range(vp, *ap->a_offset,
 			    *ap->a_offset + tlen);
 			error = nfsrpc_deallocate(vp, *ap->a_offset, tlen,
-			    &nfsva, &attrflag, ap->a_cred, td, NULL);
+			    &nfsva, &attrflag, ap->a_cred, td);
 			NFSCL_DEBUG(4, "dealloc: rpc=%d\n", error);
 		}
 		if (error == 0) {

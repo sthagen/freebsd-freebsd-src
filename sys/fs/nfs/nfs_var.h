@@ -473,18 +473,18 @@ int nfsrpc_write(vnode_t, struct uio *, int *, int *,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, int *, int, int);
 int nfsrpc_mknod(vnode_t, char *, int, struct vattr *, u_int32_t,
     enum vtype, struct ucred *, NFSPROC_T *, struct nfsvattr *,
-    struct nfsvattr *, struct nfsfh **, int *, int *, void *);
+    struct nfsvattr *, struct nfsfh **, int *, int *);
 int nfsrpc_create(vnode_t, char *, int, struct vattr *, nfsquad_t,
     int, struct ucred *, NFSPROC_T *, struct nfsvattr *, struct nfsvattr *,
-    struct nfsfh **, int *, int *, void *);
+    struct nfsfh **, int *, int *);
 int nfsrpc_remove(vnode_t, char *, int, vnode_t, struct ucred *, NFSPROC_T *,
-    struct nfsvattr *, int *, void *);
+    struct nfsvattr *, int *);
 int nfsrpc_rename(vnode_t, vnode_t, char *, int, vnode_t, vnode_t, char *, int,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, struct nfsvattr *,
-    int *, int *, void *, void *);
+    int *, int *);
 int nfsrpc_link(vnode_t, vnode_t, char *, int,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, struct nfsvattr *,
-    int *, int *, void *);
+    int *, int *);
 int nfsrpc_symlink(vnode_t, char *, int, const char *, struct vattr *,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, struct nfsvattr *,
     struct nfsfh **, int *, int *, void *);
@@ -551,7 +551,7 @@ void nfscl_freenfsclds(struct nfsclds *);
 int nfsrpc_allocate(vnode_t, off_t, off_t, struct nfsvattr *, int *,
     struct ucred *, NFSPROC_T *, void *);
 int nfsrpc_deallocate(vnode_t, off_t, off_t, struct nfsvattr *, int *,
-    struct ucred *, NFSPROC_T *, void *);
+    struct ucred *, NFSPROC_T *);
 int nfsrpc_copy_file_range(vnode_t, off_t *, vnode_t, off_t *, size_t *,
     unsigned int, int *, struct nfsvattr *, int *, struct nfsvattr *,
     struct ucred *, bool, bool *);
