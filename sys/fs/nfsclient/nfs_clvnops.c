@@ -2245,7 +2245,7 @@ nfs_symlink(struct vop_symlink_args *ap)
 	vap->va_type = VLNK;
 	error = nfsrpc_symlink(dvp, cnp->cn_nameptr, cnp->cn_namelen,
 	    ap->a_target, vap, cnp->cn_cred, curthread, &dnfsva,
-	    &nfsva, &nfhp, &attrflag, &dattrflag, NULL);
+	    &nfsva, &nfhp, &attrflag, &dattrflag);
 	if (nfhp) {
 		ret = nfscl_nget(dvp->v_mount, dvp, nfhp, cnp, curthread,
 		    &np, LK_EXCLUSIVE);
@@ -2328,7 +2328,7 @@ nfs_mkdir(struct vop_mkdir_args *ap)
 	vap->va_type = VDIR;
 	error = nfsrpc_mkdir(dvp, cnp->cn_nameptr, cnp->cn_namelen,
 	    vap, cnp->cn_cred, curthread, &dnfsva, &nfsva, &nfhp,
-	    &attrflag, &dattrflag, NULL);
+	    &attrflag, &dattrflag);
 	dnp = VTONFS(dvp);
 	NFSLOCKNODE(dnp);
 	dnp->n_flag |= NMODIFIED;
@@ -2405,7 +2405,7 @@ nfs_rmdir(struct vop_rmdir_args *ap)
 	if (dvp == vp)
 		return (EINVAL);
 	error = nfsrpc_rmdir(dvp, cnp->cn_nameptr, cnp->cn_namelen,
-	    cnp->cn_cred, curthread, &dnfsva, &dattrflag, NULL);
+	    cnp->cn_cred, curthread, &dnfsva, &dattrflag);
 	dnp = VTONFS(dvp);
 	NFSLOCKNODE(dnp);
 	dnp->n_flag |= NMODIFIED;
@@ -2536,7 +2536,7 @@ ncl_readdirrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred,
 		(void)ncl_fsinfo(nmp, vp, cred, td);
 
 	error = nfsrpc_readdir(vp, uiop, &cookie, cred, td, &nfsva,
-	    &attrflag, &eof, NULL);
+	    &attrflag, &eof);
 	if (attrflag)
 		(void) nfscl_loadattrcache(&vp, &nfsva, NULL, 0, 1);
 
@@ -2599,7 +2599,7 @@ ncl_readdirplusrpc(struct vnode *vp, struct uio *uiop, struct ucred *cred,
 	if (NFSHASNFSV3(nmp) && !NFSHASGOTFSINFO(nmp))
 		(void)ncl_fsinfo(nmp, vp, cred, td);
 	error = nfsrpc_readdirplus(vp, uiop, &cookie, cred, td, &nfsva,
-	    &attrflag, &eof, NULL);
+	    &attrflag, &eof);
 	if (attrflag)
 		(void) nfscl_loadattrcache(&vp, &nfsva, NULL, 0, 1);
 
@@ -2845,7 +2845,7 @@ ncl_commit(struct vnode *vp, u_quad_t offset, int cnt, struct ucred *cred,
 		}
 		mtx_unlock(&nmp->nm_mtx);
 		error = nfsrpc_commit(vp, offset, cnt, cred, td, &nfsva,
-		    &attrflag, NULL);
+		    &attrflag);
 	}
 	if (attrflag != 0)
 		(void) nfscl_loadattrcache(&vp, &nfsva, NULL, 0, 1);

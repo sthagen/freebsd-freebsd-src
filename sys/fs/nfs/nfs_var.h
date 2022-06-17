@@ -487,18 +487,18 @@ int nfsrpc_link(vnode_t, vnode_t, char *, int,
     int *, int *);
 int nfsrpc_symlink(vnode_t, char *, int, const char *, struct vattr *,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, struct nfsvattr *,
-    struct nfsfh **, int *, int *, void *);
+    struct nfsfh **, int *, int *);
 int nfsrpc_mkdir(vnode_t, char *, int, struct vattr *,
     struct ucred *, NFSPROC_T *, struct nfsvattr *, struct nfsvattr *,
-    struct nfsfh **, int *, int *, void *);
+    struct nfsfh **, int *, int *);
 int nfsrpc_rmdir(vnode_t, char *, int, struct ucred *, NFSPROC_T *,
-    struct nfsvattr *, int *, void *);
+    struct nfsvattr *, int *);
 int nfsrpc_readdir(vnode_t, struct uio *, nfsuint64 *, struct ucred *,
-    NFSPROC_T *, struct nfsvattr *, int *, int *, void *);
+    NFSPROC_T *, struct nfsvattr *, int *, int *);
 int nfsrpc_readdirplus(vnode_t, struct uio *, nfsuint64 *, 
-    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *, int *, void *);
+    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *, int *);
 int nfsrpc_commit(vnode_t, u_quad_t, int, struct ucred *,
-    NFSPROC_T *, struct nfsvattr *, int *, void *);
+    NFSPROC_T *, struct nfsvattr *, int *);
 int nfsrpc_advlock(vnode_t, off_t, int, struct flock *, int,
     struct ucred *, NFSPROC_T *, void *, int);
 int nfsrpc_lockt(struct nfsrv_descript *, vnode_t,
@@ -508,7 +508,7 @@ int nfsrpc_lock(struct nfsrv_descript *, struct nfsmount *, vnode_t,
     u_int8_t *, int, struct nfscllockowner *, int, int, u_int64_t,
     u_int64_t, short, struct ucred *, NFSPROC_T *, int);
 int nfsrpc_statfs(vnode_t, struct nfsstatfs *, struct nfsfsinfo *,
-    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *, void *);
+    struct ucred *, NFSPROC_T *, struct nfsvattr *, int *);
 int nfsrpc_fsinfo(vnode_t, struct nfsfsinfo *, struct ucred *,
     NFSPROC_T *, struct nfsvattr *, int *, void *);
 int nfsrpc_pathconf(vnode_t, struct nfsv3_pathconf *,

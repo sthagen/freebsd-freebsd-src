@@ -3012,7 +3012,7 @@ int
 nfsrpc_symlink(vnode_t dvp, char *name, int namelen, const char *target,
     struct vattr *vap, struct ucred *cred, NFSPROC_T *p, struct nfsvattr *dnap,
     struct nfsvattr *nnap, struct nfsfh **nfhpp, int *attrflagp,
-    int *dattrflagp, void *dstuff)
+    int *dattrflagp)
 {
 	u_int32_t *tl;
 	struct nfsrv_descript nfsd, *nd = &nfsd;
@@ -3073,7 +3073,7 @@ int
 nfsrpc_mkdir(vnode_t dvp, char *name, int namelen, struct vattr *vap,
     struct ucred *cred, NFSPROC_T *p, struct nfsvattr *dnap,
     struct nfsvattr *nnap, struct nfsfh **nfhpp, int *attrflagp,
-    int *dattrflagp, void *dstuff)
+    int *dattrflagp)
 {
 	u_int32_t *tl;
 	struct nfsrv_descript nfsd, *nd = &nfsd;
@@ -3153,7 +3153,7 @@ nfsmout:
  */
 int
 nfsrpc_rmdir(vnode_t dvp, char *name, int namelen, struct ucred *cred,
-    NFSPROC_T *p, struct nfsvattr *dnap, int *dattrflagp, void *dstuff)
+    NFSPROC_T *p, struct nfsvattr *dnap, int *dattrflagp)
 {
 	struct nfsrv_descript nfsd, *nd = &nfsd;
 	int error = 0;
@@ -3210,7 +3210,7 @@ nfsrpc_rmdir(vnode_t dvp, char *name, int namelen, struct ucred *cred,
 int
 nfsrpc_readdir(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
     struct ucred *cred, NFSPROC_T *p, struct nfsvattr *nap, int *attrflagp,
-    int *eofp, void *stuff)
+    int *eofp)
 {
 	int len, left;
 	struct dirent *dp = NULL;
@@ -3654,7 +3654,7 @@ nfsmout:
 int
 nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
     struct ucred *cred, NFSPROC_T *p, struct nfsvattr *nap, int *attrflagp,
-    int *eofp, void *stuff)
+    int *eofp)
 {
 	int len, left;
 	struct dirent *dp = NULL;
@@ -4188,7 +4188,7 @@ nfsmout:
  */
 int
 nfsrpc_commit(vnode_t vp, u_quad_t offset, int cnt, struct ucred *cred,
-    NFSPROC_T *p, struct nfsvattr *nap, int *attrflagp, void *stuff)
+    NFSPROC_T *p, struct nfsvattr *nap, int *attrflagp)
 {
 	u_int32_t *tl;
 	struct nfsrv_descript nfsd, *nd = &nfsd;
@@ -4620,8 +4620,7 @@ nfsmout:
  */
 int
 nfsrpc_statfs(vnode_t vp, struct nfsstatfs *sbp, struct nfsfsinfo *fsp,
-    struct ucred *cred, NFSPROC_T *p, struct nfsvattr *nap, int *attrflagp,
-    void *stuff)
+    struct ucred *cred, NFSPROC_T *p, struct nfsvattr *nap, int *attrflagp)
 {
 	u_int32_t *tl = NULL;
 	struct nfsrv_descript nfsd, *nd = &nfsd;
