@@ -398,16 +398,11 @@ iommu_gas_lowermatch(struct iommu_gas_match_args *a, struct iommu_map_entry *ent
 	 */
 	entry = first;
 	while (entry != NULL) {
-		if ((first = RB_LEFT(entry, rb_entry)) != NULL) {
-			if (first->last >= a->common->lowaddr) {
-				/* All remaining ranges >= lowaddr */
-				break;
-			}
-			if (iommu_gas_match_one(a, first->last, entry->start,
-			    a->common->lowaddr)) {
-				iommu_gas_match_insert(a);
-				return (0);
-			}
+		if ((first = RB_LEFT(entry, rb_entry)) != NULL &&
+		    iommu_gas_match_one(a, first->last, entry->start,
+		    a->common->lowaddr)) {
+			iommu_gas_match_insert(a);
+			return (0);
 		}
 		if (entry->end >= a->common->lowaddr) {
 			/* All remaining ranges >= lowaddr */
@@ -786,8 +781,10 @@ iommu_gas_reserve_region_extend(struct iommu_domain *domain,
 		if (entry_start != entry_end) {
 			error = iommu_gas_reserve_region_locked(domain,
 			    entry_start, entry_end, entry);
-			if (error != 0)
+			if (error != 0) {
+				IOMMU_DOMAIN_UNLOCK(domain);
 				break;
+			}
 			entry = NULL;
 		}
 		IOMMU_DOMAIN_UNLOCK(domain);
