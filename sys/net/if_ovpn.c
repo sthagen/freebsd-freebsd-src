@@ -531,6 +531,13 @@ ovpn_new_peer(struct ifnet *ifp, const nvlist_t *nvl)
 	free(name, M_SONAME);
 	name = NULL;
 
+	if (peer->local.ss_family == AF_INET6 &&
+	    IN6_IS_ADDR_V4MAPPED(&TO_IN6(&peer->remote)->sin6_addr)) {
+		/* V4 mapped address, so treat this as v4, not v6. */
+		in6_sin6_2_sin_in_sock((struct sockaddr *)&peer->local);
+		in6_sin6_2_sin_in_sock((struct sockaddr *)&peer->remote);
+	}
+
 #ifdef INET6
 	if (peer->local.ss_family == AF_INET6 &&
 	    IN6_IS_ADDR_UNSPECIFIED(&TO_IN6(&peer->local)->sin6_addr)) {
@@ -1434,6 +1441,10 @@ ovpn_finish_rx(struct ovpn_softc *sc, struct mbuf *m,
 
 	/* Ensure we can read the first byte. */
 	m = m_pullup(m, 1);
+	if (m == NULL) {
+		OVPN_COUNTER_ADD(sc, nomem_data_pkts_in, 1);
+		return;
+	}
 
 	/*
 	 * Check for address family, and disregard any control packets (e.g.
