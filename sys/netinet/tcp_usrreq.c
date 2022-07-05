@@ -1370,9 +1370,7 @@ tcp_usr_abort(struct socket *so)
 		TCP_PROBE2(debug__user, tp, PRU_ABORT);
 	}
 	if (!(inp->inp_flags & INP_DROPPED)) {
-		SOCK_LOCK(so);
-		so->so_state |= SS_PROTOREF;
-		SOCK_UNLOCK(so);
+		soref(so);
 		inp->inp_flags |= INP_SOCKREF;
 	}
 	INP_WUNLOCK(inp);
@@ -1406,15 +1404,14 @@ tcp_usr_close(struct socket *so)
 	if (!(inp->inp_flags & INP_TIMEWAIT) &&
 	    !(inp->inp_flags & INP_DROPPED)) {
 		tp = intotcpcb(inp);
+		tp->t_flags |= TF_CLOSED;
 		TCPDEBUG1();
 		tcp_disconnect(tp);
 		TCPDEBUG2(PRU_CLOSE);
 		TCP_PROBE2(debug__user, tp, PRU_CLOSE);
 	}
 	if (!(inp->inp_flags & INP_DROPPED)) {
-		SOCK_LOCK(so);
-		so->so_state |= SS_PROTOREF;
-		SOCK_UNLOCK(so);
+		soref(so);
 		inp->inp_flags |= INP_SOCKREF;
 	}
 	INP_WUNLOCK(inp);
