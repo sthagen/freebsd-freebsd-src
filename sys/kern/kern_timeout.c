@@ -391,7 +391,7 @@ start_softclock(void *dummy)
 		cc->cc_thread = td;
 		thread_lock(td);
 		sched_class(td, PRI_ITHD);
-		sched_prio(td, PI_SOFTCLOCK);
+		sched_ithread_prio(td, PI_SOFTCLOCK);
 		TD_SET_IWAIT(td);
 		thread_lock_set(td, (struct mtx *)&cc->cc_lock);
 		thread_unlock(td);
@@ -559,7 +559,7 @@ next:
 			thread_lock_block_wait(td);
 			THREAD_LOCK_ASSERT(td, MA_OWNED);
 			TD_CLR_IWAIT(td);
-			sched_add(td, SRQ_INTR);
+			sched_wakeup(td, SRQ_INTR);
 		} else
 			mtx_unlock_spin_flags(&cc->cc_lock, MTX_QUIET);
 	} else
