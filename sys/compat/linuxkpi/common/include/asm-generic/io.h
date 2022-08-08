@@ -1,10 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
- *
- * Copyright (c) 2020 The FreeBSD Foundation
- *
- * This software was developed by Björn Zeeb under sponsorship from
- * the FreeBSD Foundation.
+ * Copyright (c) 2022 Beckhoff Automation GmbH & Co. KG
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -18,7 +13,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -27,40 +22,19 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
  */
 
-#ifndef	_LINUXKPI_LINUX_PM_H
-#define	_LINUXKPI_LINUX_PM_H
+#ifndef _LINUXKPI_ASMGENERIC_IO_H_
+#define	_LINUXKPI_ASMGENERIC_IO_H_
 
-/* Needed but breaks linux_usb.c */
-/* #include <linux/completion.h> */
-/* #include <linux/wait.h> */
+#if defined(__i386__) || defined(__amd64__)
 
-typedef struct pm_message {
-	int event;
-} pm_message_t;
+#include <machine/cpufunc.h>
 
-struct dev_pm_domain {
-};
+#define	outb(a,b)	outb(b,a)
+#define	outw(a,b)	outw(b,a)
+#define	outl(a,b)	outl(b,a)
 
-#define	PM_EVENT_FREEZE		0x0001
-#define	PM_EVENT_SUSPEND	0x0002
-
-#ifdef CONFIG_PM_SLEEP
-#define	SIMPLE_DEV_PM_OPS(_name, _suspendfunc, _resumefunc)	\
-const struct dev_pm_ops _name = {				\
-        .suspend	= _suspendfunc,				\
-        .resume		= _resumefunc,				\
-        .freeze		= _suspendfunc,				\
-        .thaw		= _resumefunc,				\
-        .poweroff	= _suspendfunc,				\
-        .restore	= _resumefunc,				\
-}
-#else
-#define	SIMPLE_DEV_PM_OPS(_name, _suspendfunc, _resumefunc)	\
-const struct dev_pm_ops _name = {				\
-}
 #endif
 
-#endif	/* _LINUXKPI_LINUX_PM_H */
+#endif	/* _LINUXKPI_ASMGENERIC_IO_H_ */
