@@ -1080,12 +1080,12 @@ tryagain:
 						    }
 						    slot = nd->nd_slotid;
 						}
+						freeslot = slot;
 					} else if (slot != 0) {
 						printf("newnfs_request: Bad "
 						    "session slot=%d\n", slot);
 						slot = 0;
 					}
-					freeslot = slot;
 					if (retseq != sep->nfsess_slotseq[slot])
 						printf("retseq diff 0x%x\n",
 						    retseq);
@@ -1169,6 +1169,9 @@ tryagain:
 						*tl++ = txdr_unsigned(slotseq);
 						*tl++ = txdr_unsigned(slotpos);
 						*tl = txdr_unsigned(maxslot);
+						if ((nd->nd_flag &
+						    ND_HASSLOTID) != 0)
+							nd->nd_slotid = slotpos;
 					}
 					if (reterr == NFSERR_BADSESSION ||
 					    reterr == 0) {
