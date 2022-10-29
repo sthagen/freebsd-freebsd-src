@@ -15,6 +15,7 @@ MAN=	aac.4 \
 	${_acpi_panasonic.4} \
 	${_acpi_rapidstart.4} \
 	${_acpi_sony.4} \
+	acpi_ged.4 \
 	acpi_thermal.4 \
 	acpi_battery.4 \
 	${_acpi_toshiba.4} \
@@ -284,6 +285,7 @@ MAN=	aac.4 \
 	mac.4 \
 	mac_biba.4 \
 	mac_bsdextended.4 \
+	mac_ddb.4 \
 	mac_ifoff.4 \
 	mac_lomac.4 \
 	mac_mls.4 \
@@ -582,6 +584,7 @@ MAN=	aac.4 \
 	vtnet.4 \
 	watchdog.4 \
 	${_wbwd.4} \
+	wg.4 \
 	witness.4 \
 	wlan.4 \
 	wlan_acl.4 \
@@ -759,6 +762,7 @@ MLINKS+=vr.4 if_vr.4
 MLINKS+=vte.4 if_vte.4
 MLINKS+=vtnet.4 if_vtnet.4
 MLINKS+=watchdog.4 SW_WATCHDOG.4
+MLINKS+=wg.4 if_wg.4
 MLINKS+=${_wpi.4} ${_if_wpi.4}
 MLINKS+=xl.4 if_xl.4
 
