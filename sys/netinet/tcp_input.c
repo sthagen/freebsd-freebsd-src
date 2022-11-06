@@ -204,20 +204,6 @@ SYSCTL_INT(_net_inet_tcp, OID_AUTO, abc_l_var, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(tcp_abc_l_var), 2,
     "Cap the max cwnd increment during slow-start to this number of segments");
 
-static SYSCTL_NODE(_net_inet_tcp, OID_AUTO, ecn,
-    CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
-    "TCP ECN");
-
-VNET_DEFINE(int, tcp_do_ecn) = 2;
-SYSCTL_INT(_net_inet_tcp_ecn, OID_AUTO, enable, CTLFLAG_VNET | CTLFLAG_RW,
-    &VNET_NAME(tcp_do_ecn), 0,
-    "TCP ECN support");
-
-VNET_DEFINE(int, tcp_ecn_maxretries) = 1;
-SYSCTL_INT(_net_inet_tcp_ecn, OID_AUTO, maxretries, CTLFLAG_VNET | CTLFLAG_RW,
-    &VNET_NAME(tcp_ecn_maxretries), 0,
-    "Max retries before giving up on ECN");
-
 VNET_DEFINE(int, tcp_insecure_syn) = 0;
 SYSCTL_INT(_net_inet_tcp, OID_AUTO, insecure_syn, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(tcp_insecure_syn), 0,
@@ -1520,22 +1506,15 @@ tcp_input(struct mbuf **mp, int *offp, int proto)
 	return(tcp_input_with_port(mp, offp, proto, 0));
 }
 
-void
-tcp_handle_wakeup(struct tcpcb *tp, struct socket *so)
+static void
+tcp_handle_wakeup(struct tcpcb *tp)
 {
-	/*
-	 * Since tp might be gone if the session entered
-	 * the TIME_WAIT state before coming here, we need
-	 * to check if the socket is still connected.
-	 */
-	if (tp == NULL) {
-		return;
-	}
-	if (so == NULL) {
-		return;
-	}
-	INP_LOCK_ASSERT(tp->t_inpcb);
+
+	INP_WLOCK_ASSERT(tp->t_inpcb);
+
 	if (tp->t_flags & TF_WAKESOR) {
+		struct socket *so = tp->t_inpcb->inp_socket;
+
 		tp->t_flags &= ~TF_WAKESOR;
 		SOCKBUF_LOCK_ASSERT(&so->so_rcv);
 		sorwakeup_locked(so);
@@ -1634,7 +1613,9 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	/*
 	 * TCP ECN processing.
 	 */
-	if (tcp_ecn_input_segment(tp, thflags, iptos))
+	if (tcp_ecn_input_segment(tp, thflags, tlen,
+	    tcp_packets_this_ack(tp, th->th_ack),
+	    iptos))
 		cc_cong_signal(tp, th, CC_ECN);
 
 	/*
@@ -2521,7 +2502,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if (tlen == 0 && (thflags & TH_FIN) == 0) {
 			(void) tcp_reass(tp, (struct tcphdr *)0, NULL, 0,
 			    (struct mbuf *)0);
-			tcp_handle_wakeup(tp, so);
+			tcp_handle_wakeup(tp);
 		}
 		tp->snd_wl1 = th->th_seq - 1;
 		/* FALLTHROUGH */
@@ -3258,7 +3239,7 @@ dodata:							/* XXX */
 				    save_start + tlen);
 			}
 		}
-		tcp_handle_wakeup(tp, so);
+		tcp_handle_wakeup(tp);
 #if 0
 		/*
 		 * Note the amount of data that peer has sent into
