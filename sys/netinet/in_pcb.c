@@ -88,17 +88,12 @@ __FBSDID("$FreeBSD$");
 #include <netinet/in.h>
 #include <netinet/in_pcb.h>
 #include <netinet/in_pcb_var.h>
+#include <netinet/tcp.h>
 #ifdef INET
 #include <netinet/in_var.h>
 #include <netinet/in_fib.h>
 #endif
 #include <netinet/ip_var.h>
-#include <netinet/tcp_var.h>
-#ifdef TCPHPTS
-#include <netinet/tcp_hpts.h>
-#endif
-#include <netinet/udp.h>
-#include <netinet/udp_var.h>
 #ifdef INET6
 #include <netinet/ip6.h>
 #include <netinet6/in6_pcb.h>
@@ -639,13 +634,6 @@ in_pcballoc(struct socket *so, struct inpcbinfo *pcbinfo)
 	 * to be cleaned up.
 	 */
 	inp->inp_route.ro_flags = RT_LLE_CACHE;
-#ifdef TCPHPTS
-	/*
-	 * If using hpts lets drop a random number in so
-	 * not all new connections fall on the same CPU.
-	 */
-	inp->inp_hpts_cpu = hpts_random_cpu(inp);
-#endif
 	refcount_init(&inp->inp_refcount, 1);   /* Reference from socket. */
 	INP_WLOCK(inp);
 	INP_INFO_WLOCK(pcbinfo);
@@ -1536,15 +1524,15 @@ in_pcbrele(struct inpcb *inp, const inp_lookup_t lock)
 	    in_pcbrele_rlocked(inp) : in_pcbrele_wlocked(inp));
 }
 
-bool
-inp_smr_lock(struct inpcb *inp, const inp_lookup_t lock)
+static inline bool
+_inp_smr_lock(struct inpcb *inp, const inp_lookup_t lock, const int ignflags)
 {
 
 	MPASS(lock == INPLOOKUP_RLOCKPCB || lock == INPLOOKUP_WLOCKPCB);
 	SMR_ASSERT_ENTERED(inp->inp_pcbinfo->ipi_smr);
 
 	if (__predict_true(inp_trylock(inp, lock))) {
-		if (__predict_false(inp->inp_flags & INP_FREED)) {
+		if (__predict_false(inp->inp_flags & ignflags)) {
 			smr_exit(inp->inp_pcbinfo->ipi_smr);
 			inp_unlock(inp, lock);
 			return (false);
@@ -1564,7 +1552,7 @@ inp_smr_lock(struct inpcb *inp, const inp_lookup_t lock)
 		 * through in_pcbfree() and has another reference, that
 		 * prevented its release by our in_pcbrele().
 		 */
-		if (__predict_false(inp->inp_flags & INP_FREED)) {
+		if (__predict_false(inp->inp_flags & ignflags)) {
 			inp_unlock(inp, lock);
 			return (false);
 		}
@@ -1573,6 +1561,18 @@ inp_smr_lock(struct inpcb *inp, const inp_lookup_t lock)
 		smr_exit(inp->inp_pcbinfo->ipi_smr);
 		return (false);
 	}
+}
+
+bool
+inp_smr_lock(struct inpcb *inp, const inp_lookup_t lock)
+{
+
+	/*
+	 * in_pcblookup() family of functions ignore not only freed entries,
+	 * that may be found due to lockless access to the hash, but dropped
+	 * entries, too.
+	 */
+	return (_inp_smr_lock(inp, lock, INP_FREED | INP_DROPPED));
 }
 
 /*
@@ -1631,7 +1631,7 @@ inp_next(struct inpcb_iterator *ii)
 		    inp = II_LIST_NEXT(inp, hash)) {
 			if (match != NULL && (match)(inp, ctx) == false)
 				continue;
-			if (__predict_true(inp_smr_lock(inp, lock)))
+			if (__predict_true(_inp_smr_lock(inp, lock, INP_FREED)))
 				break;
 			else {
 				smr_enter(ipi->ipi_smr);
