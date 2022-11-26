@@ -1758,6 +1758,7 @@ nvme_feature_temperature(struct pci_nvme_softc *sc,
 	uint8_t		tmpsel; /* Threshold Temperature Select */
 	uint8_t		thsel;  /* Threshold Type Select */
 	bool		set_crit = false;
+	bool		report_crit;
 
 	tmpth  = command->cdw11 & 0xffff;
 	tmpsel = (command->cdw11 >> 16) & 0xf;
@@ -1785,10 +1786,12 @@ nvme_feature_temperature(struct pci_nvme_softc *sc,
 		    ~NVME_CRIT_WARN_ST_TEMPERATURE;
 	pthread_mutex_unlock(&sc->mtx);
 
-	if (set_crit)
+	report_crit = sc->feat[NVME_FEAT_ASYNC_EVENT_CONFIGURATION].cdw11 &
+	    NVME_CRIT_WARN_ST_TEMPERATURE;
+
+	if (set_crit && report_crit)
 		pci_nvme_aen_post(sc, PCI_NVME_AE_TYPE_SMART,
 		    sc->health_log.critical_warning);
-
 
 	DPRINTF("%s: set_crit=%c critical_warning=%#x status=%#x", __func__, set_crit ? 'T':'F', sc->health_log.critical_warning, compl->status);
 }
@@ -1849,7 +1852,8 @@ nvme_opc_set_features(struct pci_nvme_softc *sc, struct nvme_command *command,
 {
 	struct nvme_feature_obj *feat;
 	uint32_t nsid = command->nsid;
-	uint8_t fid = command->cdw10 & 0xFF;
+	uint8_t fid = NVMEV(NVME_FEAT_SET_FID, command->cdw10);
+	bool sv = NVMEV(NVME_FEAT_SET_SV, command->cdw10);
 
 	DPRINTF("%s: Feature ID 0x%x (%s)", __func__, fid, nvme_fid_to_name(fid));
 
@@ -1858,6 +1862,13 @@ nvme_opc_set_features(struct pci_nvme_softc *sc, struct nvme_command *command,
 		pci_nvme_status_genc(&compl->status, NVME_SC_INVALID_FIELD);
 		return (1);
 	}
+
+	if (sv) {
+		pci_nvme_status_tc(&compl->status, NVME_SCT_COMMAND_SPECIFIC,
+		    NVME_SC_FEATURE_NOT_SAVEABLE);
+		return (1);
+	}
+
 	feat = &sc->feat[fid];
 
 	if (feat->namespace_specific && (nsid == NVME_GLOBAL_NAMESPACE_TAG)) {
@@ -1877,6 +1888,11 @@ nvme_opc_set_features(struct pci_nvme_softc *sc, struct nvme_command *command,
 
 	if (feat->set)
 		feat->set(sc, feat, command, compl);
+	else {
+		pci_nvme_status_tc(&compl->status, NVME_SCT_COMMAND_SPECIFIC,
+		    NVME_SC_FEATURE_NOT_CHANGEABLE);
+		return (1);
+	}
 
 	DPRINTF("%s: status=%#x cdw11=%#x", __func__, compl->status, command->cdw11);
 	if (compl->status == NVME_SC_SUCCESS) {
