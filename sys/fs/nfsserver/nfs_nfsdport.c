@@ -1842,10 +1842,19 @@ nfsvno_open(struct nfsrv_descript *nd, struct nameidata *ndp,
 	u_quad_t tempsize;
 	struct nfsexstuff nes;
 	struct thread *p = curthread;
+	uint32_t oldrepstat;
 
-	if (ndp->ni_vp == NULL)
+	if (ndp->ni_vp == NULL) {
+		/*
+		 * If nfsrv_opencheck() sets nd_repstat, done_namei needs to be
+		 * set true, since cleanup after nfsvno_namei() is needed.
+		 */
+		oldrepstat = nd->nd_repstat;
 		nd->nd_repstat = nfsrv_opencheck(clientid,
 		    stateidp, stp, NULL, nd, p, nd->nd_repstat);
+		if (nd->nd_repstat != 0 && oldrepstat == 0)
+			done_namei = true;
+	}
 	if (!nd->nd_repstat) {
 		if (ndp->ni_vp == NULL) {
 			nd->nd_repstat = VOP_CREATE(ndp->ni_dvp,
@@ -1916,16 +1925,20 @@ nfsvno_open(struct nfsrv_descript *nd, struct nameidata *ndp,
 				    stateidp, stp, vp, nd, p, nd->nd_repstat);
 			}
 		}
-	} else {
+	} else if (done_namei) {
+		/*
+		 * done_namei is set when nfsvno_namei() has completed
+		 * successfully, but a subsequent error was set in
+		 * nd_repstat.  As such, cleanup of the nfsvno_namei()
+		 * results is required.
+		 */
 		nfsvno_relpathbuf(ndp);
-		if (done_namei && create == NFSV4OPEN_CREATE) {
-			if (ndp->ni_dvp == ndp->ni_vp)
-				vrele(ndp->ni_dvp);
-			else
-				vput(ndp->ni_dvp);
-			if (ndp->ni_vp)
-				vput(ndp->ni_vp);
-		}
+		if (ndp->ni_dvp == ndp->ni_vp)
+			vrele(ndp->ni_dvp);
+		else
+			vput(ndp->ni_dvp);
+		if (ndp->ni_vp)
+			vput(ndp->ni_vp);
 	}
 	*vpp = vp;
 
