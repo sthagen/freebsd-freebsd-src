@@ -411,9 +411,31 @@ OLD_FILES+=usr/tests/usr.bin/timeout/timeout_test
 
 # 20230124: rtalloc.9 removed
 OLD_FILES+=usr/share/man/man9/rtalloc.9.gz
+OLD_FILES+=usr/share/man/man9/rtalloc_fib.9.gz
+OLD_FILES+=usr/share/man/man9/rtalloc_ign.9.gz
+OLD_FILES+=usr/share/man/man9/rtalloc_ign_fib.9.gz
+OLD_FILES+=usr/share/man/man9/rtalloc1.9.gz
+OLD_FILES+=usr/share/man/man9/rtalloc1_fib.9.gz
+OLD_FILES+=usr/share/man/man9/rtfree.9.gz
+OLD_FILES+=usr/share/man/man9/RT_ADDREF.9.gz
+OLD_FILES+=usr/share/man/man9/RT_LOCK.9.gz
+OLD_FILES+=usr/share/man/man9/RT_REMREF.9.gz
+OLD_FILES+=usr/share/man/man9/RT_RTFREE.9.gz
+OLD_FILES+=usr/share/man/man9/RT_UNLOCK.9.gz
+OLD_FILES+=usr/share/man/man9/RTFREE.9.gz
+OLD_FILES+=usr/share/man/man9/RTFREE_LOCKED.9.gz
 
 # 20230123: PCBGROUP.9 removed
 OLD_FILES+=usr/share/man/man9/PCBGROUP.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_byhash.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_byinpcb.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_destroy.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_enabled.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_init.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_remove.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_update.9.gz
+OLD_FILES+=usr/share/man/man9/in_pcbgroup_update_mbuf.9.gz
+OLD_FILES+=usr/share/man/man9/in6_pcbgroup_byhash.9.gz
 
 # 20221214: TCPDEBUG removed
 OLD_FILES+=usr/include/netinet/tcp_debug.h
@@ -6382,7 +6404,6 @@ OLD_FILES+=usr/share/man/man9/sglist_count_mb_ext_pgs.9.gz
 OLD_FILES+=usr/include/opencsd/etmv4/trc_pkt_elem_etmv4d.h
 
 # 20200606: retire binutils build infrastructure
-.if !defined(WITH_PORT_BASE_BINUTILS)
 OLD_FILES+=usr/bin/as
 OLD_FILES+=usr/bin/ld.bfd
 OLD_FILES+=usr/share/man/man1/as.1.gz
@@ -6391,7 +6412,6 @@ OLD_FILES+=usr/share/man/man7/as.7.gz
 OLD_FILES+=usr/share/man/man7/ld.7.gz
 OLD_FILES+=usr/share/man/man7/ldint.7.gz
 OLD_FILES+=usr/share/man/man7/binutils.7.gz
-.endif
 OLD_FILES+=usr/libdata/ldscripts/armelf_fbsd.x
 OLD_FILES+=usr/libdata/ldscripts/armelf_fbsd.xbn
 OLD_FILES+=usr/libdata/ldscripts/armelf_fbsd.xc
@@ -7191,12 +7211,10 @@ OLD_FILES+=usr/share/man/man4/bktr.4.gz
 OLD_FILES+=usr/share/man/man4/brooktree.4.gz
 
 # 20200229: GCC 4.2.1 removed
-.if !defined(WITH_PORT_BASE_GCC)
 OLD_FILES+=usr/bin/g++
 OLD_FILES+=usr/bin/gcc
 OLD_FILES+=usr/share/man/man1/g++.1.gz
 OLD_FILES+=usr/share/man/man1/gcc.1.gz
-.endif
 OLD_FILES+=usr/bin/gcpp
 OLD_FILES+=usr/bin/gperf
 OLD_FILES+=usr/include/c++/4.2/algorithm
