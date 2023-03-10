@@ -95,7 +95,6 @@ __DEFAULT_YES_OPTIONS = \
     EFI \
     ELFTOOLCHAIN_BOOTSTRAP \
     EXAMPLES \
-    FDT \
     FILE \
     FINGER \
     FLOPPY \
@@ -144,7 +143,6 @@ __DEFAULT_YES_OPTIONS = \
     MAILWRAPPER \
     MAKE \
     MLX5TOOL \
-    NDIS \
     NETCAT \
     NETGRAPH \
     NLS_CATALOGS \
@@ -194,7 +192,6 @@ __DEFAULT_YES_OPTIONS = \
     ZONEINFO
 
 __DEFAULT_NO_OPTIONS = \
-    ATM \
     BEARSSL \
     BHYVE_SNAPSHOT \
     CLANG_EXTRAS \
@@ -283,6 +280,12 @@ __DEFAULT_NO_OPTIONS+=LLVM_TARGET_BPF LLVM_TARGET_MIPS
 
 .include <bsd.compiler.mk>
 
+.if ${__T} == "i386" || ${__T} == "amd64"
+__DEFAULT_NO_OPTIONS += FDT
+.else
+__DEFAULT_YES_OPTIONS += FDT
+.endif
+
 .if ${__T:Marm*} == "" && ${__T:Mriscv64*} == ""
 __DEFAULT_YES_OPTIONS+=LLDB
 .else
@@ -348,6 +351,15 @@ __DEFAULT_YES_OPTIONS+=OPENMP
 __DEFAULT_NO_OPTIONS+=OPENMP
 .endif
 
+.if ${__T:Marm*} != ""
+BROKEN_OPTIONS+= OFED
+.endif
+
+
+.if ${__T} == "powerpc"
+BROKEN_OPTIONS+= ZFS
+.endif
+
 .include <bsd.mkopt.mk>
 
 #
@@ -392,7 +404,6 @@ MK_DMAGENT:=	no
 .endif
 
 .if ${MK_NETGRAPH} == "no"
-MK_ATM:=	no
 MK_BLUETOOTH:=	no
 .endif
 
