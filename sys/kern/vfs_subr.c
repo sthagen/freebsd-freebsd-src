@@ -1800,6 +1800,10 @@ getnewvnode(const char *tag, struct mount *mp, struct vop_vector *vops,
 
 	KASSERT(vops->registered,
 	    ("%s: not registered vector op %p\n", __func__, vops));
+	if (mp != NULL && (mp->mnt_kern_flag & MNTK_FPLOOKUP) != 0) {
+		MPASS(vops->vop_fplookup_vexec != VOP_PANIC);
+		MPASS(vops->vop_fplookup_symlink != VOP_PANIC);
+	}
 
 	td = curthread;
 	if (td->td_vp_reserved != NULL) {
@@ -4979,14 +4983,16 @@ static int	sync_reclaim(struct  vop_reclaim_args *);
 
 static struct vop_vector sync_vnodeops = {
 	.vop_bypass =	VOP_EOPNOTSUPP,
-	.vop_close =	sync_close,		/* close */
-	.vop_fsync =	sync_fsync,		/* fsync */
-	.vop_inactive =	sync_inactive,	/* inactive */
-	.vop_need_inactive = vop_stdneed_inactive, /* need_inactive */
-	.vop_reclaim =	sync_reclaim,	/* reclaim */
-	.vop_lock1 =	vop_stdlock,	/* lock */
-	.vop_unlock =	vop_stdunlock,	/* unlock */
-	.vop_islocked =	vop_stdislocked,	/* islocked */
+	.vop_close =	sync_close,
+	.vop_fsync =	sync_fsync,
+	.vop_inactive =	sync_inactive,
+	.vop_need_inactive = vop_stdneed_inactive,
+	.vop_reclaim =	sync_reclaim,
+	.vop_lock1 =	vop_stdlock,
+	.vop_unlock =	vop_stdunlock,
+	.vop_islocked =	vop_stdislocked,
+	.vop_fplookup_vexec = VOP_EAGAIN,
+	.vop_fplookup_symlink = VOP_EAGAIN,
 };
 VFS_VOP_VECTOR_REGISTER(sync_vnodeops);
 
@@ -5543,10 +5549,17 @@ vop_fplookup_vexec_debugpre(void *ap __unused)
 }
 
 void
-vop_fplookup_vexec_debugpost(void *ap __unused, int rc __unused)
+vop_fplookup_vexec_debugpost(void *ap, int rc)
 {
+	struct vop_fplookup_vexec_args *a;
+	struct vnode *vp;
+
+	a = ap;
+	vp = a->a_vp;
 
 	VFS_SMR_ASSERT_ENTERED();
+	if (rc == EOPNOTSUPP)
+		VNPASS(VN_IS_DOOMED(vp), vp);
 }
 
 void
