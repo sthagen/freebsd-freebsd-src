@@ -1800,10 +1800,7 @@ getnewvnode(const char *tag, struct mount *mp, struct vop_vector *vops,
 
 	KASSERT(vops->registered,
 	    ("%s: not registered vector op %p\n", __func__, vops));
-	if (mp != NULL && (mp->mnt_kern_flag & MNTK_FPLOOKUP) != 0) {
-		MPASS(vops->vop_fplookup_vexec != VOP_PANIC);
-		MPASS(vops->vop_fplookup_symlink != VOP_PANIC);
-	}
+	cache_validate_vop_vector(mp, vops);
 
 	td = curthread;
 	if (td->td_vp_reserved != NULL) {
@@ -4215,7 +4212,8 @@ vn_printf(struct vnode *vp, const char *fmt, ...)
 	vprintf(fmt, ap);
 	va_end(ap);
 	printf("%p: ", (void *)vp);
-	printf("type %s state %s\n", vtypename[vp->v_type], vstatename[vp->v_state]);
+	printf("type %s state %s op %p\n", vtypename[vp->v_type],
+	    vstatename[vp->v_state], vp->v_op);
 	holdcnt = atomic_load_int(&vp->v_holdcnt);
 	printf("    usecount %d, writecount %d, refcount %d seqc users %d",
 	    vp->v_usecount, vp->v_writecount, holdcnt & ~VHOLD_ALL_FLAGS,
@@ -5454,13 +5452,16 @@ assert_vi_unlocked(struct vnode *vp, const char *str)
 void
 assert_vop_locked(struct vnode *vp, const char *str)
 {
-	int locked;
-
 	if (KERNEL_PANICKED() || vp == NULL)
 		return;
 
-	locked = VOP_ISLOCKED(vp);
+#ifdef WITNESS
+	if ((vp->v_irflag & VIRF_CROSSMP) == 0 &&
+	    witness_is_owned(&vp->v_vnlock->lock_object) == -1)
+#else
+	int locked = VOP_ISLOCKED(vp);
 	if (locked == 0 || locked == LK_EXCLOTHER)
+#endif
 		vfs_badlock("is not locked but should be", str, vp);
 }
 
@@ -5470,7 +5471,12 @@ assert_vop_unlocked(struct vnode *vp, const char *str)
 	if (KERNEL_PANICKED() || vp == NULL)
 		return;
 
+#ifdef WITNESS
+	if ((vp->v_irflag & VIRF_CROSSMP) == 0 &&
+	    witness_is_owned(&vp->v_vnlock->lock_object) == 1)
+#else
 	if (VOP_ISLOCKED(vp) == LK_EXCLUSIVE)
+#endif
 		vfs_badlock("is locked but should not be", str, vp);
 }
 

@@ -511,8 +511,7 @@ static void
 bbr_log_pacing_delay_calc(struct tcp_bbr *bbr, uint16_t gain, uint32_t len,
 			  uint32_t cts, uint32_t usecs, uint64_t bw,
 			  uint32_t override, int mod);
-static int
-bbr_ctloutput(struct inpcb *inp, struct sockopt *sopt);
+static int bbr_ctloutput(struct tcpcb *tp, struct sockopt *sopt);
 
 static inline uint8_t
 bbr_state_val(struct tcp_bbr *bbr)
@@ -9855,6 +9854,9 @@ bbr_stop_all_timers(struct tcpcb *tp, struct tcp_bbr *bbr)
 		/* We enter in persists, set the flag appropriately */
 		bbr->rc_in_persist = 1;
 	}
+	if (tcp_in_hpts(bbr->rc_inp)) {
+		tcp_hpts_remove(bbr->rc_inp);
+	}
 }
 
 static void
@@ -11261,11 +11263,12 @@ bbr_check_bbr_for_state(struct tcp_bbr *bbr, uint32_t cts, int32_t line, uint32_
 }
 
 static int
-bbr_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
-    struct tcpcb *tp, int32_t drop_hdrlen, int32_t tlen, uint8_t iptos,
-    int32_t nxt_pkt, struct timeval *tv)
+bbr_do_segment_nounlock(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+    int32_t drop_hdrlen, int32_t tlen, uint8_t iptos, int32_t nxt_pkt,
+    struct timeval *tv)
 {
 	struct inpcb *inp = tptoinpcb(tp);
+	struct socket *so = tptosocket(tp);
 	int32_t thflags, retval;
 	uint32_t cts, lcts;
 	uint32_t tiwin;
@@ -11428,7 +11431,7 @@ bbr_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		if ((tp->t_flags & TF_SACK_PERMIT) == 0) {
 			/* Bail */
 			tcp_switch_back_to_default(tp);
-			(*tp->t_fb->tfb_tcp_do_segment) (m, th, so, tp, drop_hdrlen,
+			(*tp->t_fb->tfb_tcp_do_segment)(tp, m, th, drop_hdrlen,
 			    tlen, iptos);
 			return (1);
 		}
@@ -11590,15 +11593,15 @@ done_with_input:
 }
 
 static void
-bbr_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
-    struct tcpcb *tp, int32_t drop_hdrlen, int32_t tlen, uint8_t iptos)
+bbr_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+    int32_t drop_hdrlen, int32_t tlen, uint8_t iptos)
 {
 	struct timeval tv;
 	int retval;
 
 	/* First lets see if we have old packets */
 	if (tp->t_in_pkt) {
-		if (ctf_do_queued_segments(so, tp, 1)) {
+		if (ctf_do_queued_segments(tp, 1)) {
 			m_freem(m);
 			return;
 		}
@@ -11609,8 +11612,8 @@ bbr_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 		/* Should not be should we kassert instead? */
 		tcp_get_usecs(&tv);
 	}
-	retval = bbr_do_segment_nounlock(m, th, so, tp,
-					 drop_hdrlen, tlen, iptos, 0, &tv);
+	retval = bbr_do_segment_nounlock(tp, m, th, drop_hdrlen, tlen, iptos,
+	    0, &tv);
 	if (retval == 0) {
 		INP_WUNLOCK(tptoinpcb(tp));
 	}
@@ -14133,17 +14136,17 @@ struct tcp_function_block __tcp_bbr = {
  * option.
  */
 static int
-bbr_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
+bbr_set_sockopt(struct tcpcb *tp, struct sockopt *sopt)
 {
 	struct epoch_tracker et;
-	struct tcpcb *tp;
+	struct inpcb *inp = tptoinpcb(tp);
 	struct tcp_bbr *bbr;
 	int32_t error = 0, optval;
 
 	switch (sopt->sopt_level) {
 	case IPPROTO_IPV6:
 	case IPPROTO_IP:
-		return (tcp_default_ctloutput(inp, sopt));
+		return (tcp_default_ctloutput(tp, sopt));
 	}
 
 	switch (sopt->sopt_name) {
@@ -14189,7 +14192,7 @@ bbr_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
 	case TCP_BBR_RETRAN_WTSO:
 		break;
 	default:
-		return (tcp_default_ctloutput(inp, sopt));
+		return (tcp_default_ctloutput(tp, sopt));
 		break;
 	}
 	INP_WUNLOCK(inp);
@@ -14201,7 +14204,6 @@ bbr_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		INP_WUNLOCK(inp);
 		return (ECONNRESET);
 	}
-	tp = intotcpcb(inp);
 	if (tp->t_fb != &__tcp_bbr) {
 		INP_WUNLOCK(inp);
 		return (ENOPROTOOPT);
@@ -14518,7 +14520,7 @@ bbr_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
 		}
 		break;
 	default:
-		return (tcp_default_ctloutput(inp, sopt));
+		return (tcp_default_ctloutput(tp, sopt));
 		break;
 	}
 	tcp_log_socket_option(tp, sopt->sopt_name, optval, error);
@@ -14530,13 +14532,12 @@ bbr_set_sockopt(struct inpcb *inp, struct sockopt *sopt)
  * return 0 on success, error-num on failure
  */
 static int
-bbr_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
+bbr_get_sockopt(struct tcpcb *tp, struct sockopt *sopt)
 {
-	struct tcpcb *tp;
+	struct inpcb *inp = tptoinpcb(tp);
 	struct tcp_bbr *bbr;
 	int32_t error, optval;
 
-	tp = intotcpcb(inp);
 	bbr = (struct tcp_bbr *)tp->t_fb_ptr;
 	if (bbr == NULL) {
 		INP_WUNLOCK(inp);
@@ -14675,7 +14676,7 @@ bbr_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
 			optval |= BBR_INCL_ENET_OH;
 		break;
 	default:
-		return (tcp_default_ctloutput(inp, sopt));
+		return (tcp_default_ctloutput(tp, sopt));
 		break;
 	}
 	INP_WUNLOCK(inp);
@@ -14687,12 +14688,12 @@ bbr_get_sockopt(struct inpcb *inp, struct sockopt *sopt)
  * return 0 on success, error-num on failure
  */
 static int
-bbr_ctloutput(struct inpcb *inp, struct sockopt *sopt)
+bbr_ctloutput(struct tcpcb *tp, struct sockopt *sopt)
 {
 	if (sopt->sopt_dir == SOPT_SET) {
-		return (bbr_set_sockopt(inp, sopt));
+		return (bbr_set_sockopt(tp, sopt));
 	} else if (sopt->sopt_dir == SOPT_GET) {
-		return (bbr_get_sockopt(inp, sopt));
+		return (bbr_get_sockopt(tp, sopt));
 	} else {
 		panic("%s: sopt_dir $%d", __func__, sopt->sopt_dir);
 	}

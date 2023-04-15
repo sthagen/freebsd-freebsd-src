@@ -323,8 +323,8 @@ ctf_get_enet_type(struct ifnet *ifp, struct mbuf *m)
  *     c) The push bit has been set by the peer
  */
 
-int
-ctf_process_inbound_raw(struct tcpcb *tp, struct socket *so, struct mbuf *m, int has_pkt)
+static int
+ctf_process_inbound_raw(struct tcpcb *tp, struct mbuf *m, int has_pkt)
 {
 	/*
 	 * We are passed a raw change of mbuf packets
@@ -334,13 +334,12 @@ ctf_process_inbound_raw(struct tcpcb *tp, struct socket *so, struct mbuf *m, int
 	 * We process each one by:
 	 * a) saving off the next
 	 * b) stripping off the ether-header
-	 * c) formulating the arguments for
-	 *    the tfb_tcp_hpts_do_segment
-	 * d) calling each mbuf to tfb_tcp_hpts_do_segment
+	 * c) formulating the arguments for tfb_do_segment_nounlock()
+	 * d) calling each mbuf to tfb_do_segment_nounlock()
 	 *    after adjusting the time to match the arrival time.
 	 * Note that the LRO code assures no IP options are present.
 	 *
-	 * The symantics for calling tfb_tcp_hpts_do_segment are the
+	 * The symantics for calling tfb_do_segment_nounlock() are the
 	 * following:
 	 * 1) It returns 0 if all went well and you (the caller) need
 	 *    to release the lock.
@@ -462,8 +461,8 @@ skip_vnet:
 			KMOD_TCPSTAT_INC(tcps_rcvtotal);
 		else
 			KMOD_TCPSTAT_ADD(tcps_rcvtotal, (m->m_len / sizeof(struct tcp_ackent)));
-		retval = (*tp->t_fb->tfb_do_segment_nounlock)(m, th, so, tp, drop_hdrlen, tlen,
-							      iptos, nxt_pkt, &tv);
+		retval = (*tp->t_fb->tfb_do_segment_nounlock)(tp, m, th,
+		    drop_hdrlen, tlen, iptos, nxt_pkt, &tv);
 		if (retval) {
 			/* We lost the lock and tcb probably */
 			m = m_save;
@@ -489,7 +488,7 @@ skipped_pkt:
 }
 
 int
-ctf_do_queued_segments(struct socket *so, struct tcpcb *tp, int have_pkt)
+ctf_do_queued_segments(struct tcpcb *tp, int have_pkt)
 {
 	struct mbuf *m;
 
@@ -498,7 +497,7 @@ ctf_do_queued_segments(struct socket *so, struct tcpcb *tp, int have_pkt)
 		m = tp->t_in_pkt;
 		tp->t_in_pkt = NULL;
 		tp->t_tail_pkt = NULL;
-		if (ctf_process_inbound_raw(tp, so, m, have_pkt)) {
+		if (ctf_process_inbound_raw(tp, m, have_pkt)) {
 			/* We lost the tcpcb (maybe a RST came in)? */
 			return(1);
 		}
