@@ -155,7 +155,6 @@ __DEFAULT_YES_OPTIONS = \
     PF \
     PKGBOOTSTRAP \
     PMC \
-    PORTSNAP \
     PPP \
     QUOTAS \
     RADIUS_SUPPORT \
@@ -238,8 +237,6 @@ __DEFAULT_DEPENDENT_OPTIONS= \
     WIRELESS
 __DEFAULT_DEPENDENT_OPTIONS+= ${var}_SUPPORT/${var}
 .endfor
-
-.-include <site.src.opts.mk>
 
 #
 # Default behaviour of some options depends on the architecture.  Unfortunately
@@ -358,12 +355,12 @@ BROKEN_OPTIONS+= OFED
 .endif
 
 .if ${__T} == "i386" || ${__T} == "amd64"
-__DEFAULT_YES_OPTIONS+=NETLINK
 __DEFAULT_YES_OPTIONS+=NETLINK_SUPPORT
 .else
-__DEFAULT_NO_OPTIONS+=NETLINK
 __DEFAULT_NO_OPTIONS+=NETLINK_SUPPORT
 .endif
+
+.-include <site.src.opts.mk>
 
 .include <bsd.mkopt.mk>
 
