@@ -88,3 +88,15 @@ META_MODE+=	missing-meta=yes
 .if empty(META_MODE:Mnofilemon)
 META_MODE+=	missing-filemon=yes
 .endif
+
+.if make(showconfig)
+# this does not need/want filemon
+UPDATE_DEPENDFILE= NO
+.endif
+
+.if ${MK_DIRDEPS_BUILD} == "yes"
+.if ${.MAKE.OS} != "FreeBSD" || ${_HOST_OSREL:R} < ${OS_REVISION:R}
+# a pseudo option to indicate we need libegacy for host
+MK_host_egacy= yes
+.endif
+.endif

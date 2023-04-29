@@ -208,6 +208,7 @@ CFLAGS.closefrom.c+=	-DSTDC_HEADERS -DHAVE_SYS_DIR_H -DHAVE_DIRENT_H \
 SRCS+=	progname.c
 # Stub implementations of fflagstostr/strtofflags
 SRCS+=	fflags.c
+
 .endif # ${MAKE.OS} == "Linux"
 
 .if ${.MAKE.OS} == "Darwin"
