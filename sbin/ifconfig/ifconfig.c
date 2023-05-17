@@ -108,20 +108,14 @@ int	exit_code = 0;
 /* Formatter Strings */
 char	*f_inet, *f_inet6, *f_ether, *f_addr;
 
-static	bool group_member(const char *ifname, const char *match,
-		const char *nomatch);
-static	int ifconfig(int argc, char *const *argv, int iscreate,
-		const struct afswtch *afp);
+static void list_interfaces_ioctl(struct ifconfig_args *args);
 static	void status(struct ifconfig_args *args, const struct sockaddr_dl *sdl,
 		struct ifaddrs *ifa);
-static	void tunnel_status(int s);
 static _Noreturn void usage(void);
 
 static int getifflags(const char *ifname, int us, bool err_ok);
 
 static struct afswtch *af_getbyname(const char *name);
-static struct afswtch *af_getbyfamily(int af);
-static void af_other_status(int);
 
 void printifnamemaybe(void);
 
@@ -403,7 +397,15 @@ void printifnamemaybe()
 		printf("%s\n", name);
 }
 
-static void list_interfaces(struct ifconfig_args *args);
+static void
+list_interfaces(struct ifconfig_args *args)
+{
+#ifdef WITHOUT_NETLINK
+	list_interfaces_ioctl(args);
+#else
+	list_interfaces_nl(args);
+#endif
+}
 
 int
 main(int argc, char *argv[])
@@ -611,6 +613,7 @@ main(int argc, char *argv[])
 	}
 
 	args.afp = afp;
+	args.allfamilies = afp == NULL;
 	args.argc = argc;
 	args.argv = argv;
 
@@ -622,8 +625,49 @@ done:
 	exit(exit_code);
 }
 
+bool
+match_ether(const struct sockaddr_dl *sdl)
+{
+	switch (sdl->sdl_type) {
+		case IFT_ETHER:
+		case IFT_L2VLAN:
+		case IFT_BRIDGE:
+			if (sdl->sdl_alen == ETHER_ADDR_LEN)
+				return (true);
+		default:
+			return (false);
+	}
+}
+
+static bool
+match_afp(const struct afswtch *afp, int sa_family, const struct sockaddr_dl *sdl)
+{
+	if (afp == NULL)
+		return (true);
+	/* special case for "ether" address family */
+	if (!strcmp(afp->af_name, "ether")) {
+		if (sdl == NULL && !match_ether(sdl))
+			return (false);
+		return (true);
+	}
+	return (afp->af_af == sa_family);
+}
+
+bool
+match_if_flags(struct ifconfig_args *args, int if_flags)
+{
+	if ((if_flags & IFF_CANTCONFIG) != 0)
+		return (false);
+	if (args->downonly && (if_flags & IFF_UP) != 0)
+		return (false);
+	if (args->uponly && (if_flags & IFF_UP) == 0)
+		return (false);
+	return (true);
+}
+
+#ifdef WITHOUT_NETLINK
 static void
-list_interfaces(struct ifconfig_args *args)
+list_interfaces_ioctl(struct ifconfig_args *args)
 {
 	struct ifa_queue q = TAILQ_HEAD_INITIALIZER(q);
 	struct ifaddrs *ifap, *sifap, *ifa;
@@ -672,11 +716,7 @@ list_interfaces(struct ifconfig_args *args)
 		}
 		cp = ifa->ifa_name;
 
-		if ((ifa->ifa_flags & IFF_CANTCONFIG) != 0)
-			continue;
-		if (args->downonly && (ifa->ifa_flags & IFF_UP) != 0)
-			continue;
-		if (args->uponly && (ifa->ifa_flags & IFF_UP) == 0)
+		if (!match_if_flags(args, ifa->ifa_flags))
 			continue;
 		if (!group_member(ifa->ifa_name, args->matchgroup, args->nogroup))
 			continue;
@@ -686,21 +726,8 @@ list_interfaces(struct ifconfig_args *args)
 		if (args->namesonly) {
 			if (namecp == cp)
 				continue;
-			if (args->afp != NULL) {
-				/* special case for "ether" address family */
-				if (!strcmp(args->afp->af_name, "ether")) {
-					if (sdl == NULL ||
-					    (sdl->sdl_type != IFT_ETHER &&
-					    sdl->sdl_type != IFT_L2VLAN &&
-					    sdl->sdl_type != IFT_BRIDGE) ||
-					    sdl->sdl_alen != ETHER_ADDR_LEN)
-						continue;
-				} else {
-					if (ifa->ifa_addr->sa_family 
-					    != args->afp->af_af)
-						continue;
-				}
-			}
+			if (!match_afp(args->afp, ifa->ifa_addr->sa_family, sdl))
+				continue;
 			namecp = cp;
 			ifindex++;
 			if (ifindex > 1)
@@ -719,13 +746,14 @@ list_interfaces(struct ifconfig_args *args)
 		printf("\n");
 	freeifaddrs(ifap);
 }
+#endif
 
 /*
  * Returns true if an interface should be listed because any its groups
  * matches shell pattern "match" and none of groups matches pattern "nomatch".
  * If any pattern is NULL, corresponding condition is skipped.
  */
-static bool
+bool
 group_member(const char *ifname, const char *match, const char *nomatch)
 {
 	static int		 sock = -1;
@@ -808,7 +836,7 @@ af_getbyname(const char *name)
 	return NULL;
 }
 
-static struct afswtch *
+struct afswtch *
 af_getbyfamily(int af)
 {
 	struct afswtch *afp;
@@ -819,7 +847,7 @@ af_getbyfamily(int af)
 	return NULL;
 }
 
-static void
+void
 af_other_status(int s)
 {
 	struct afswtch *afp;
@@ -909,7 +937,7 @@ static void setifdstaddr(const char *, int, int, const struct afswtch *);
 static const struct cmd setifdstaddr_cmd =
 	DEF_CMD("ifdstaddr", 0, setifdstaddr);
 
-static int
+int
 ifconfig(int argc, char *const *argv, int iscreate, const struct afswtch *uafp)
 {
 	const struct afswtch *afp, *nafp;
@@ -1432,44 +1460,111 @@ unsetifdescr(const char *val, int value, int s, const struct afswtch *afp)
 "\26RXCSUM_IPV6\27TXCSUM_IPV6\31TXRTLMT\32HWRXTSTMP\33NOMAP\34TXTLS4\35TXTLS6" \
 "\36VXLAN_HWCSUM\37VXLAN_HWTSO\40TXTLS_RTLMT"
 
-/*
- * Print the status of the interface.  If an address family was
- * specified, show only it; otherwise, show them all.
- */
 static void
-status(struct ifconfig_args *args, const struct sockaddr_dl *sdl,
-	struct ifaddrs *ifa)
+print_ifcap_nv(struct ifconfig_args *args, int s)
 {
-	struct ifaddrs *ift;
-	struct ifstat ifs;
 	nvlist_t *nvcap;
 	const char *nvname;
 	void *buf, *cookie;
-	int allfamilies, s, type;
 	bool first, val;
+	int type;
 
-	if (args->afp == NULL) {
-		allfamilies = 1;
-		ifr.ifr_addr.sa_family = AF_LOCAL;
-	} else {
-		allfamilies = 0;
-		ifr.ifr_addr.sa_family =
-		   args->afp->af_af == AF_LINK ? AF_LOCAL : args->afp->af_af;
+	buf = malloc(IFR_CAP_NV_MAXBUFSIZE);
+	if (buf == NULL)
+		Perror("malloc");
+	ifr.ifr_cap_nv.buffer = buf;
+	ifr.ifr_cap_nv.buf_length = IFR_CAP_NV_MAXBUFSIZE;
+	if (ioctl(s, SIOCGIFCAPNV, (caddr_t)&ifr) != 0)
+		Perror("ioctl (SIOCGIFCAPNV)");
+	nvcap = nvlist_unpack(ifr.ifr_cap_nv.buffer,
+	    ifr.ifr_cap_nv.length, 0);
+	if (nvcap == NULL)
+		Perror("nvlist_unpack");
+	printf("\toptions");
+	cookie = NULL;
+	for (first = true;; first = false) {
+		nvname = nvlist_next(nvcap, &type, &cookie);
+		if (nvname == NULL) {
+			printf("\n");
+			break;
+		}
+		if (type == NV_TYPE_BOOL) {
+			val = nvlist_get_bool(nvcap, nvname);
+			if (val) {
+				printf("%c%s",
+				    first ? ' ' : ',', nvname);
+			}
+		}
 	}
-	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+	if (args->supmedia) {
+		printf("\tcapabilities");
+		cookie = NULL;
+		for (first = true;; first = false) {
+			nvname = nvlist_next(nvcap, &type,
+			    &cookie);
+			if (nvname == NULL) {
+				printf("\n");
+				break;
+			}
+			if (type == NV_TYPE_BOOL)
+				printf("%c%s", first ? ' ' :
+				    ',', nvname);
+		}
+	}
+	nvlist_destroy(nvcap);
+	free(buf);
 
-	s = socket(ifr.ifr_addr.sa_family, SOCK_DGRAM, 0);
-	if (s < 0)
-		err(1, "socket(family %u,SOCK_DGRAM)", ifr.ifr_addr.sa_family);
+	if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) != 0)
+		Perror("ioctl (SIOCGIFCAP)");
+}
 
-	printf("%s: ", name);
-	printb("flags", ifa->ifa_flags, IFFBITS);
+void
+print_ifcap(struct ifconfig_args *args, int s)
+{
+	if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) != 0)
+		return;
+
+	if ((ifr.ifr_curcap & IFCAP_NV) != 0)
+		print_ifcap_nv(args, s);
+	else {
+		printb("\toptions", ifr.ifr_curcap, IFCAPBITS);
+		putchar('\n');
+		if (args->supmedia && ifr.ifr_reqcap != 0) {
+			printb("\tcapabilities", ifr.ifr_reqcap,
+			    IFCAPBITS);
+			putchar('\n');
+		}
+	}
+}
+
+void
+print_ifstatus(int s)
+{
+	struct ifstat ifs;
+
+	strlcpy(ifs.ifs_name, name, sizeof ifs.ifs_name);
+	if (ioctl(s, SIOCGIFSTATUS, &ifs) == 0)
+		printf("%s", ifs.ascii);
+}
+
+void
+print_metric(int s)
+{
 	if (ioctl(s, SIOCGIFMETRIC, &ifr) != -1)
 		printf(" metric %d", ifr.ifr_metric);
+}
+
+#ifdef WITHOUT_NETLINK
+static void
+print_mtu(int s)
+{
 	if (ioctl(s, SIOCGIFMTU, &ifr) != -1)
 		printf(" mtu %d", ifr.ifr_mtu);
-	putchar('\n');
+}
 
+static void
+print_description(int s)
+{
 	for (;;) {
 		if ((descr = reallocf(descr, descrlen)) != NULL) {
 			ifr.ifr_buffer.buffer = descr;
@@ -1489,66 +1584,40 @@ status(struct ifconfig_args *args, const struct sockaddr_dl *sdl,
 			    "description");
 		break;
 	}
+}
 
-	if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) == 0) {
-		if ((ifr.ifr_curcap & IFCAP_NV) != 0) {
-			buf = malloc(IFR_CAP_NV_MAXBUFSIZE);
-			if (buf == NULL)
-				Perror("malloc");
-			ifr.ifr_cap_nv.buffer = buf;
-			ifr.ifr_cap_nv.buf_length = IFR_CAP_NV_MAXBUFSIZE;
-			if (ioctl(s, SIOCGIFCAPNV, (caddr_t)&ifr) != 0)
-				Perror("ioctl (SIOCGIFCAPNV)");
-			nvcap = nvlist_unpack(ifr.ifr_cap_nv.buffer,
-			    ifr.ifr_cap_nv.length, 0);
-			if (nvcap == NULL)
-				Perror("nvlist_unpack");
-			printf("\toptions");
-			cookie = NULL;
-			for (first = true;; first = false) {
-				nvname = nvlist_next(nvcap, &type, &cookie);
-				if (nvname == NULL) {
-					printf("\n");
-					break;
-				}
-				if (type == NV_TYPE_BOOL) {
-					val = nvlist_get_bool(nvcap, nvname);
-					if (val) {
-						printf("%c%s",
-						    first ? ' ' : ',', nvname);
-					}
-				}
-			}
-			if (args->supmedia) {
-				printf("\tcapabilities");
-				cookie = NULL;
-				for (first = true;; first = false) {
-					nvname = nvlist_next(nvcap, &type,
-					    &cookie);
-					if (nvname == NULL) {
-						printf("\n");
-						break;
-					}
-					if (type == NV_TYPE_BOOL)
-						printf("%c%s", first ? ' ' :
-						    ',', nvname);
-				}
-			}
-			nvlist_destroy(nvcap);
-			free(buf);
+/*
+ * Print the status of the interface.  If an address family was
+ * specified, show only it; otherwise, show them all.
+ */
+static void
+status(struct ifconfig_args *args, const struct sockaddr_dl *sdl,
+	struct ifaddrs *ifa)
+{
+	struct ifaddrs *ift;
+	int s;
+	bool allfamilies = args->afp == NULL;
 
-			if (ioctl(s, SIOCGIFCAP, (caddr_t)&ifr) != 0)
-				Perror("ioctl (SIOCGIFCAP)");
-		} else if (ifr.ifr_curcap != 0) {
-			printb("\toptions", ifr.ifr_curcap, IFCAPBITS);
-			putchar('\n');
-			if (args->supmedia && ifr.ifr_reqcap != 0) {
-				printb("\tcapabilities", ifr.ifr_reqcap,
-				    IFCAPBITS);
-				putchar('\n');
-			}
-		}
-	}
+	if (args->afp == NULL)
+		ifr.ifr_addr.sa_family = AF_LOCAL;
+	else
+		ifr.ifr_addr.sa_family =
+		   args->afp->af_af == AF_LINK ? AF_LOCAL : args->afp->af_af;
+	strlcpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
+
+	s = socket(ifr.ifr_addr.sa_family, SOCK_DGRAM, 0);
+	if (s < 0)
+		err(1, "socket(family %u,SOCK_DGRAM)", ifr.ifr_addr.sa_family);
+
+	printf("%s: ", name);
+	printb("flags", ifa->ifa_flags, IFFBITS);
+	print_metric(s);
+	print_mtu(s);
+	putchar('\n');
+
+	print_description(s);
+
+	print_ifcap(args, s);
 
 	tunnel_status(s);
 
@@ -1587,18 +1656,16 @@ status(struct ifconfig_args *args, const struct sockaddr_dl *sdl,
 	else if (args->afp->af_other_status != NULL)
 		args->afp->af_other_status(s);
 
-	strlcpy(ifs.ifs_name, name, sizeof ifs.ifs_name);
-	if (ioctl(s, SIOCGIFSTATUS, &ifs) == 0) 
-		printf("%s", ifs.ascii);
-
+	print_ifstatus(s);
 	if (args->verbose > 0)
 		sfp_status(s, &ifr, args->verbose);
 
 	close(s);
 	return;
 }
+#endif
 
-static void
+void
 tunnel_status(int s)
 {
 	af_all_tunnel_status(s);
