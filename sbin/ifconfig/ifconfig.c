@@ -92,10 +92,10 @@ struct	ifreq ifr;
 char	name[IFNAMSIZ];
 char	*descr = NULL;
 size_t	descrlen = 64;
-int	setaddr;
-int	setmask;
-int	doalias;
-int	clearaddr;
+static int	setaddr;
+static int	setmask;
+static int	doalias;
+static int	clearaddr;
 int	newaddr = 1;
 int	verbose;
 int	printifname = 0;
@@ -407,14 +407,144 @@ list_interfaces(struct ifconfig_args *args)
 #endif
 }
 
-int
-main(int argc, char *argv[])
+static char *
+args_peek(struct ifconfig_args *args)
 {
-	int c;
-	const struct afswtch *afp = NULL;
-	int ifindex;
-	char options[1024], *envformat;
+	if (args->argc > 0)
+		return (args->argv[0]);
+	return (NULL);
+}
+
+static char *
+args_pop(struct ifconfig_args *args)
+{
+	if (args->argc == 0)
+		return (NULL);
+
+	char *arg = args->argv[0];
+
+	args->argc--;
+	args->argv++;
+
+	return (arg);
+}
+
+static void
+args_parse(struct ifconfig_args *args, int argc, char *argv[])
+{
+	char options[1024];
 	struct option *p;
+	int c;
+
+	/* Parse leading line options */
+	strlcpy(options, "G:adf:klmnuv", sizeof(options));
+	for (p = opts; p != NULL; p = p->next)
+		strlcat(options, p->opt, sizeof(options));
+	while ((c = getopt(argc, argv, options)) != -1) {
+		switch (c) {
+		case 'a':	/* scan all interfaces */
+			args->all = true;
+			break;
+		case 'd':	/* restrict scan to "down" interfaces */
+			args->downonly = true;
+			break;
+		case 'f':
+			if (optarg == NULL)
+				usage();
+			setformat(optarg);
+			break;
+		case 'G':
+			if (optarg == NULL || args->all == 0)
+				usage();
+			args->nogroup = optarg;
+			break;
+		case 'k':
+			args->printkeys = true;
+			break;
+		case 'l':	/* scan interface names only */
+			args->namesonly++;
+			break;
+		case 'm':	/* show media choices in status */
+			args->supmedia = true;
+			break;
+		case 'n':	/* suppress module loading */
+			args->noload = true;
+			break;
+		case 'u':	/* restrict scan to "up" interfaces */
+			args->uponly = true;
+			break;
+		case 'v':
+			args->verbose++;
+			break;
+		case 'g':
+			if (args->all) {
+				if (optarg == NULL)
+					usage();
+				args->matchgroup = optarg;
+				break;
+			}
+			/* FALLTHROUGH */
+		default:
+			for (p = opts; p != NULL; p = p->next)
+				if (p->opt[0] == c) {
+					p->cb(optarg);
+					break;
+				}
+			if (p == NULL)
+				usage();
+			break;
+		}
+	}
+	argc -= optind;
+	argv += optind;
+
+	/* -l cannot be used with -a or -m */
+	if (args->namesonly && (args->all || args->supmedia))
+		usage();
+
+	/* nonsense.. */
+	if (args->uponly && args->downonly)
+		usage();
+
+	/* no arguments is equivalent to '-a' */
+	if (!args->namesonly && argc < 1)
+		args->all = 1;
+
+	/* -a and -l allow an address family arg to limit the output */
+	if (args->all || args->namesonly) {
+		if (argc > 1)
+			usage();
+
+		if (argc == 1) {
+			const struct afswtch *afp = af_getbyname(*argv);
+
+			if (afp == NULL) {
+				warnx("Address family '%s' unknown.", *argv);
+				usage();
+			}
+			if (afp->af_name != NULL)
+				argc--, argv++;
+			/* leave with afp non-zero */
+			args->afp = afp;
+		}
+	} else {
+		/* not listing, need an argument */
+		if (argc < 1)
+			usage();
+	}
+
+	args->argc = argc;
+	args->argv = argv;
+
+	/* Sync global variables */
+	printkeys = args->printkeys;
+	verbose = args->verbose;
+}
+
+int
+main(int ac, char *av[])
+{
+	char *envformat;
 	size_t iflen;
 	int flags;
 
@@ -434,125 +564,29 @@ main(int argc, char *argv[])
 	 */
 	atexit(printifnamemaybe);
 
-	/* Parse leading line options */
-	strlcpy(options, "G:adf:klmnuv", sizeof(options));
-	for (p = opts; p != NULL; p = p->next)
-		strlcat(options, p->opt, sizeof(options));
-	while ((c = getopt(argc, argv, options)) != -1) {
-		switch (c) {
-		case 'a':	/* scan all interfaces */
-			args.all = true;
-			break;
-		case 'd':	/* restrict scan to "down" interfaces */
-			args.downonly = true;
-			break;
-		case 'f':
-			if (optarg == NULL)
-				usage();
-			setformat(optarg);
-			break;
-		case 'G':
-			if (optarg == NULL || args.all == 0)
-				usage();
-			args.nogroup = optarg;
-			break;
-		case 'k':
-			args.printkeys = true;
-			break;
-		case 'l':	/* scan interface names only */
-			args.namesonly++;
-			break;
-		case 'm':	/* show media choices in status */
-			args.supmedia = true;
-			break;
-		case 'n':	/* suppress module loading */
-			args.noload = true;
-			break;
-		case 'u':	/* restrict scan to "up" interfaces */
-			args.uponly = true;
-			break;
-		case 'v':
-			args.verbose++;
-			break;
-		case 'g':
-			if (args.all) {
-				if (optarg == NULL)
-					usage();
-				args.matchgroup = optarg;
-				break;
-			}
-			/* FALLTHROUGH */
-		default:
-			for (p = opts; p != NULL; p = p->next)
-				if (p->opt[0] == c) {
-					p->cb(optarg);
-					break;
-				}
-			if (p == NULL)
-				usage();
-			break;
-		}
-	}
-	argc -= optind;
-	argv += optind;
+	args_parse(&args, ac, av);
 
-	/* Sync global variables */
-	printkeys = args.printkeys;
-	verbose = args.verbose;
-
-	/* -l cannot be used with -a or -m */
-	if (args.namesonly && (args.all || args.supmedia))
-		usage();
-
-	/* nonsense.. */
-	if (args.uponly && args.downonly)
-		usage();
-
-	/* no arguments is equivalent to '-a' */
-	if (!args.namesonly && argc < 1)
-		args.all = 1;
-
-	/* -a and -l allow an address family arg to limit the output */
-	if (args.all || args.namesonly) {
-		if (argc > 1)
-			usage();
-
-		ifindex = 0;
-		if (argc == 1) {
-			afp = af_getbyname(*argv);
-			if (afp == NULL) {
-				warnx("Address family '%s' unknown.", *argv);
-				usage();
-			}
-			if (afp->af_name != NULL)
-				argc--, argv++;
-			/* leave with afp non-zero */
-		}
-	} else {
+	if (!args.all && !args.namesonly) {
 		/* not listing, need an argument */
-		if (argc < 1)
-			usage();
-
-		args.ifname = *argv;
-		argc--, argv++;
+		args.ifname = args_pop(&args);
 
 		/* check and maybe load support for this interface */
 		ifmaybeload(&args, args.ifname);
 
-		ifindex = if_nametoindex(args.ifname);
-		if (ifindex == 0) {
+		char *arg = args_peek(&args);
+		if (if_nametoindex(args.ifname) == 0) {
 			/*
 			 * NOTE:  We must special-case the `create' command
 			 * right here as we would otherwise fail when trying
 			 * to find the interface.
 			 */
-			if (argc > 0 && (strcmp(argv[0], "create") == 0 ||
-			    strcmp(argv[0], "plumb") == 0)) {
+			if (arg != NULL && (strcmp(arg, "create") == 0 ||
+			    strcmp(arg, "plumb") == 0)) {
 				iflen = strlcpy(name, args.ifname, sizeof(name));
 				if (iflen >= sizeof(name))
 					errx(1, "%s: cloning name too long",
 					    args.ifname);
-				ifconfig(argc, argv, 1, NULL);
+				ifconfig(args.argc, args.argv, 1, NULL);
 				exit(exit_code);
 			}
 #ifdef JAIL
@@ -561,12 +595,12 @@ main(int argc, char *argv[])
 			 * right here as we would otherwise fail when trying
 			 * to find the interface as it lives in another vnet.
 			 */
-			if (argc > 0 && (strcmp(argv[0], "-vnet") == 0)) {
+			if (arg != NULL && (strcmp(arg, "-vnet") == 0)) {
 				iflen = strlcpy(name, args.ifname, sizeof(name));
 				if (iflen >= sizeof(name))
 					errx(1, "%s: interface name too long",
 					    args.ifname);
-				ifconfig(argc, argv, 0, NULL);
+				ifconfig(args.argc, args.argv, 0, NULL);
 				exit(exit_code);
 			}
 #endif
@@ -576,21 +610,21 @@ main(int argc, char *argv[])
 			 * Do not allow use `create` command as hostname if
 			 * address family is not specified.
 			 */
-			if (argc > 0 && (strcmp(argv[0], "create") == 0 ||
-			    strcmp(argv[0], "plumb") == 0)) {
-				if (argc == 1)
+			if (arg != NULL && (strcmp(arg, "create") == 0 ||
+			    strcmp(arg, "plumb") == 0)) {
+				if (args.argc == 1)
 					errx(1, "interface %s already exists",
 					    args.ifname);
-				argc--, argv++;
+				args_pop(&args);
 			}
 		}
 	}
 
 	/* Check for address family */
-	if (argc > 0) {
-		afp = af_getbyname(*argv);
-		if (afp != NULL)
-			argc--, argv++;
+	if (args.argc > 0) {
+		args.afp = af_getbyname(args_peek(&args));
+		if (args.afp != NULL)
+			args_pop(&args);
 	}
 
 	/*
@@ -598,7 +632,7 @@ main(int argc, char *argv[])
 	 * which doesn't require building, sorting, and searching the entire
 	 * system address list
 	 */
-	if ((argc > 0) && (args.ifname != NULL)) {
+	if ((args.argc > 0) && (args.ifname != NULL)) {
 		iflen = strlcpy(name, args.ifname, sizeof(name));
 		if (iflen >= sizeof(name)) {
 			warnx("%s: interface name too long, skipping", args.ifname);
@@ -607,15 +641,12 @@ main(int argc, char *argv[])
 			if (!(((flags & IFF_CANTCONFIG) != 0) ||
 				(args.downonly && (flags & IFF_UP) != 0) ||
 				(args.uponly && (flags & IFF_UP) == 0)))
-				ifconfig(argc, argv, 0, afp);
+				ifconfig(args.argc, args.argv, 0, args.afp);
 		}
 		goto done;
 	}
 
-	args.afp = afp;
-	args.allfamilies = afp == NULL;
-	args.argc = argc;
-	args.argv = argv;
+	args.allfamilies = args.afp == NULL;
 
 	list_interfaces(&args);
 
@@ -937,6 +968,45 @@ static void setifdstaddr(const char *, int, int, const struct afswtch *);
 static const struct cmd setifdstaddr_cmd =
 	DEF_CMD("ifdstaddr", 0, setifdstaddr);
 
+static void
+delifaddr(int s, const struct afswtch *afp)
+{
+	if (afp->af_ridreq == NULL || afp->af_difaddr == 0) {
+		warnx("interface %s cannot change %s addresses!",
+		    name, afp->af_name);
+		clearaddr = 0;
+		return;
+	}
+
+	strlcpy(((struct ifreq *)afp->af_ridreq)->ifr_name, name,
+		sizeof ifr.ifr_name);
+	int ret = ioctl(s, afp->af_difaddr, afp->af_ridreq);
+	if (ret < 0) {
+		if (errno == EADDRNOTAVAIL && (doalias >= 0)) {
+			/* means no previous address for interface */
+		} else
+			Perror("ioctl (SIOCDIFADDR)");
+	}
+}
+
+static void
+addifaddr(int s, const struct afswtch *afp)
+{
+	if (afp->af_addreq == NULL || afp->af_aifaddr == 0) {
+		warnx("interface %s cannot change %s addresses!",
+		      name, afp->af_name);
+		newaddr = 0;
+		return;
+	}
+
+	if (setaddr || setmask) {
+		strlcpy(((struct ifreq *)afp->af_addreq)->ifr_name, name,
+			sizeof ifr.ifr_name);
+		if (ioctl(s, afp->af_aifaddr, afp->af_addreq) < 0)
+			Perror("ioctl (SIOCAIFADDR)");
+	}
+}
+
 int
 ifconfig(int argc, char *const *argv, int iscreate, const struct afswtch *uafp)
 {
@@ -1057,38 +1127,10 @@ top:
 	/*
 	 * Do deferred operations.
 	 */
-	if (clearaddr) {
-		if (afp->af_ridreq == NULL || afp->af_difaddr == 0) {
-			warnx("interface %s cannot change %s addresses!",
-			      name, afp->af_name);
-			clearaddr = 0;
-		}
-	}
-	if (clearaddr) {
-		int ret;
-		strlcpy(((struct ifreq *)afp->af_ridreq)->ifr_name, name,
-			sizeof ifr.ifr_name);
-		ret = ioctl(s, afp->af_difaddr, afp->af_ridreq);
-		if (ret < 0) {
-			if (errno == EADDRNOTAVAIL && (doalias >= 0)) {
-				/* means no previous address for interface */
-			} else
-				Perror("ioctl (SIOCDIFADDR)");
-		}
-	}
-	if (newaddr) {
-		if (afp->af_addreq == NULL || afp->af_aifaddr == 0) {
-			warnx("interface %s cannot change %s addresses!",
-			      name, afp->af_name);
-			newaddr = 0;
-		}
-	}
-	if (newaddr && (setaddr || setmask)) {
-		strlcpy(((struct ifreq *)afp->af_addreq)->ifr_name, name,
-			sizeof ifr.ifr_name);
-		if (ioctl(s, afp->af_aifaddr, afp->af_addreq) < 0)
-			Perror("ioctl (SIOCAIFADDR)");
-	}
+	if (clearaddr)
+		delifaddr(s, afp);
+	if (newaddr)
+		addifaddr(s, afp);
 
 	close(s);
 	return(0);
@@ -1752,11 +1794,13 @@ ifmaybeload(struct ifconfig_args *args, const char *name)
 
 	/* trim the interface number off the end */
 	strlcpy(ifname, name, sizeof(ifname));
-	for (dp = ifname; *dp != 0; dp++)
-		if (isdigit(*dp)) {
-			*dp = 0;
+	dp = ifname + strlen(ifname) - 1;
+	for (; dp > ifname; dp--) {
+		if (isdigit(*dp))
+			*dp = '\0';
+		else
 			break;
-		}
+	}
 
 	/* Either derive it from the map or guess otherwise */
 	*ifkind = '\0';
