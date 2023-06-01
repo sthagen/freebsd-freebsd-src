@@ -1,8 +1,7 @@
-# $FreeBSD$
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Copyright (c) 2018 Kristof Provost <kp@FreeBSD.org>
+# Copyright 2023 (C) Enji Cooper
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -25,49 +24,62 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-. $(atf_get_srcdir)/utils.subr
-
-atf_test_case "basic" "cleanup"
-basic_head()
+atf_test_case float_non_prime
+float_non_prime_head()
 {
-	atf_set descr 'Basic rdr test'
-	atf_set require.user root
+	atf_set "descr" "Test with a float non-prime number"
+}
+float_non_prime_body()
+{
+	atf_check -o inline:"1: 1\n" factor 1.44
 }
 
-basic_body()
+atf_test_case float_prime
+float_prime_head()
 {
-	pft_init
-
-	epair=$(vnet_mkepair)
-
-	vnet_mkjail alcatraz ${epair}b
-
-	ifconfig ${epair}a 192.0.2.2/24 up
-	route add -net 198.51.100.0/24 192.0.2.1
-
-	jexec alcatraz ifconfig ${epair}b 192.0.2.1/24 up
-	jexec alcatraz sysctl net.inet.ip.forwarding=1
-
-	# Enable pf!
-	jexec alcatraz pfctl -e
-	pft_set_rules alcatraz \
-		"rdr pass on ${epair}b proto tcp from any to 198.51.100.0/24 port 1234 -> 192.0.2.1 port 4321"
-
-	echo "foo" | jexec alcatraz nc -N -l 4321 &
-	sleep 1
-
-	result=$(nc -N -w 3 198.51.100.2 1234)
-	if [ "$result" != "foo" ]; then
-		atf_fail "Redirect failed"
-	fi
+	atf_set "descr" "Test with a float prime number"
+}
+float_prime_body()
+{
+	pi="3.141592653589793238462643383279502884197"
+	atf_check -o inline:"3: 3\n" factor $pi
 }
 
-basic_cleanup()
+atf_test_case int_non_prime
+int_non_prime_head()
 {
-	pft_cleanup
+	atf_set "descr" "Test with an integral prime number"
+}
+int_non_prime_body()
+{
+	atf_check -o inline:"8: 2 2 2\n" factor 8
+}
+
+atf_test_case int_prime
+int_prime_head()
+{
+	atf_set "descr" "Test with an integral prime number"
+}
+int_prime_body()
+{
+	atf_check -o inline:"31: 31\n" factor 31
+}
+
+atf_test_case negative_numbers_not_allowed
+negative_numbers_not_allowed_head()
+{
+	atf_set "descr" "Verify that negative numbers are not allowed."
+}
+negative_numbers_not_allowed_body()
+{
+	atf_check -s not-exit:0 -e inline:"factor: negative numbers aren't permitted.\n" factor -- -4
 }
 
 atf_init_test_cases()
 {
-	atf_add_test_case "basic"
+	atf_add_test_case float_non_prime
+	atf_add_test_case float_prime
+	atf_add_test_case int_non_prime
+	atf_add_test_case int_prime
+	atf_add_test_case negative_numbers_not_allowed
 }
