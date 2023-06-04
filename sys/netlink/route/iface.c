@@ -1277,9 +1277,7 @@ rtnl_handle_addr(struct nlmsghdr *hdr, struct nlpcb *nlp, struct nl_pstate *npt)
 		    attrs.ifa_index);
 		return (ENOENT);
 	}
-#ifdef INET6
 	int if_flags = if_getflags(ifp);
-#endif
 
 #if defined(INET) || defined(INET6)
 	bool new = hdr->nlmsg_type == NL_RTM_NEWADDR;
@@ -1312,10 +1310,8 @@ rtnl_handle_addr(struct nlmsghdr *hdr, struct nlpcb *nlp, struct nl_pstate *npt)
 		error = EAFNOSUPPORT;
 	}
 
-#ifdef INET6
 	if (error == 0 && !(if_flags & IFF_UP) && (if_getflags(ifp) & IFF_UP))
-		in6_if_up(ifp);
-#endif
+		if_up(ifp);
 
 	if_rele(ifp);
 
