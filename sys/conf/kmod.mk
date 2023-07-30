@@ -170,6 +170,13 @@ CFLAGS+=	-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer
 CFLAGS+=	-fPIC
 .endif
 
+.if ${MACHINE_CPUARCH} == "aarch64"
+# https://bugs.freebsd.org/264094
+# lld >= 14 and recent GNU ld can relax adrp+add and adrp+ldr instructions,
+# which breaks VNET.
+LDFLAGS+=	--no-relax
+.endif
+
 # Temporary workaround for PR 196407, which contains the fascinating details.
 # Don't allow clang to use fpu instructions or registers in kernel modules.
 .if ${MACHINE_CPUARCH} == arm
@@ -203,7 +210,7 @@ ${_firmw:C/\:.*$/.fwo/:T}:	${_firmw:C/\:.*$//} ${SYSDIR}/kern/firmw.S
 	@${ECHO} ${_firmw:C/\:.*$//} ${.ALLSRC:M*${_firmw:C/\:.*$//}}
 	${CC:N${CCACHE_BIN}} -c -x assembler-with-cpp -DLOCORE 	\
 	    ${CFLAGS} ${WERROR} 				\
-	    -DFIRMW_FILE="${.ALLSRC:M*${_firmw:C/\:.*$//}}" 	\
+	    -DFIRMW_FILE=\""${.ALLSRC:M*${_firmw:C/\:.*$//}}"\"	\
 	    -DFIRMW_SYMBOL="${_firmw:C/\:.*$//:C/[-.\/@]/_/g}"	\
 	    ${SYSDIR}/kern/firmw.S -o ${.TARGET}
 
