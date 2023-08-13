@@ -658,16 +658,17 @@ int
 sys_mprotect(struct thread *td, struct mprotect_args *uap)
 {
 
-	return (kern_mprotect(td, (uintptr_t)uap->addr, uap->len, uap->prot));
+	return (kern_mprotect(td, (uintptr_t)uap->addr, uap->len,
+	    uap->prot, 0));
 }
 
 int
-kern_mprotect(struct thread *td, uintptr_t addr0, size_t size, int prot)
+kern_mprotect(struct thread *td, uintptr_t addr0, size_t size, int prot,
+    int flags)
 {
 	vm_offset_t addr;
 	vm_size_t pageoff;
 	int vm_error, max_prot;
-	int flags;
 
 	addr = addr0;
 	if ((prot & ~(_PROT_ALL | PROT_MAX(_PROT_ALL))) != 0)
@@ -687,7 +688,7 @@ kern_mprotect(struct thread *td, uintptr_t addr0, size_t size, int prot)
 	if (addr + size < addr)
 		return (EINVAL);
 
-	flags = VM_MAP_PROTECT_SET_PROT;
+	flags |= VM_MAP_PROTECT_SET_PROT;
 	if (max_prot != 0)
 		flags |= VM_MAP_PROTECT_SET_MAXPROT;
 	vm_error = vm_map_protect(&td->td_proc->p_vmspace->vm_map,
@@ -1554,7 +1555,7 @@ vm_mmap_object(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
     vm_prot_t maxprot, int flags, vm_object_t object, vm_ooffset_t foff,
     boolean_t writecounted, struct thread *td)
 {
-	vm_offset_t max_addr;
+	vm_offset_t default_addr, max_addr;
 	int docow, error, findspace, rv;
 	bool curmap, fitit;
 
@@ -1629,10 +1630,16 @@ vm_mmap_object(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 			max_addr = MAP_32BIT_MAX_ADDR;
 #endif
 		if (curmap) {
-			rv = vm_map_find_min(map, object, foff, addr, size,
+			default_addr =
 			    round_page((vm_offset_t)td->td_proc->p_vmspace->
-			    vm_daddr + lim_max(td, RLIMIT_DATA)), max_addr,
-			    findspace, prot, maxprot, docow);
+			    vm_daddr + lim_max(td, RLIMIT_DATA));
+#ifdef MAP_32BIT
+			if ((flags & MAP_32BIT) != 0)
+				default_addr = 0;
+#endif
+			rv = vm_map_find_min(map, object, foff, addr, size,
+			    default_addr, max_addr, findspace, prot, maxprot,
+			    docow);
 		} else {
 			rv = vm_map_find(map, object, foff, addr, size,
 			    max_addr, findspace, prot, maxprot, docow);

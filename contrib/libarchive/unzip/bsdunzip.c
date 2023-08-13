@@ -79,8 +79,7 @@
 #endif
 #endif
 
-#include <archive.h>
-#include <archive_entry.h>
+#include "bsdunzip.h"
 #include "passphrase.h"
 #include "err.h"
 
@@ -90,19 +89,20 @@ static int		 C_opt;		/* match case-insensitively */
 static int		 c_opt;		/* extract to stdout */
 static const char	*d_arg;		/* directory */
 static int		 f_opt;		/* update existing files only */
-static char		*O_arg;		/* encoding */
+static const char	*O_arg;		/* encoding */
 static int		 j_opt;		/* junk directories */
 static int		 L_opt;		/* lowercase names */
 static int		 n_opt;		/* never overwrite */
 static int		 o_opt;		/* always overwrite */
 static int		 p_opt;		/* extract to stdout, quiet */
-static char		*P_arg;		/* passphrase */
+static const char	*P_arg;		/* passphrase */
 static int		 q_opt;		/* quiet */
 static int		 t_opt;		/* test */
 static int		 u_opt;		/* update */
 static int		 v_opt;		/* verbose/list */
 static const char	*y_str = "";	/* 4 digit year */
 static int		 Z1_opt;	/* zipinfo mode list files only */
+static int		 version_opt;	/* version string */
 
 /* debug flag */
 static int		 unzip_debug;
@@ -112,6 +112,11 @@ static int		 zipinfo_mode;
 
 /* running on tty? */
 static int		 tty;
+
+/* processing exclude list */
+static int		 unzip_exclude_mode = 0;
+
+int bsdunzip_optind;
 
 /* convenience macro */
 /* XXX should differentiate between ARCHIVE_{WARN,FAIL,RETRY} */
@@ -1089,20 +1094,31 @@ usage(void)
 	exit(EXIT_FAILURE);
 }
 
+static void
+version(void)
+{
+        printf("bsdunzip %s - %s \n",
+            BSDUNZIP_VERSION_STRING,
+            archive_version_details());
+        exit(0);
+}
+
 static int
 getopts(int argc, char *argv[])
 {
+	struct bsdunzip *bsdunzip, bsdunzip_storage;
 	int opt;
+	bsdunzip_optind = 1;
 
-	optind = 1;
-#ifdef HAVE_GETOPT_OPTRESET
-	optreset = 1;
-#endif
-	while ((opt = getopt(argc, argv, "aCcd:fI:jLlnO:opP:qtuvx:yZ1")) != -1)
+	bsdunzip = &bsdunzip_storage;
+	memset(bsdunzip, 0, sizeof(*bsdunzip));
+
+        bsdunzip->argv = argv;
+        bsdunzip->argc = argc;
+
+	while ((opt = bsdunzip_getopt(bsdunzip)) != -1) {
+		unzip_exclude_mode = 0;
 		switch (opt) {
-		case '1':
-			Z1_opt = 1;
-			break;
 		case 'a':
 			a_opt = 1;
 			break;
@@ -1113,14 +1129,14 @@ getopts(int argc, char *argv[])
 			c_opt = 1;
 			break;
 		case 'd':
-			d_arg = optarg;
+			d_arg = bsdunzip->argument;
 			break;
 		case 'f':
 			f_opt = 1;
 			break;
 		case 'I':
 		case 'O':
-			O_arg = optarg;
+			O_arg = bsdunzip->argument;
 			break;
 		case 'j':
 			j_opt = 1;
@@ -1143,7 +1159,7 @@ getopts(int argc, char *argv[])
 			p_opt = 1;
 			break;
 		case 'P':
-			P_arg = optarg;
+			P_arg = bsdunzip->argument;
 			break;
 		case 'q':
 			q_opt = 1;
@@ -1158,19 +1174,31 @@ getopts(int argc, char *argv[])
 			v_opt = 2;
 			break;
 		case 'x':
-			add_pattern(&exclude, optarg);
+			add_pattern(&exclude, bsdunzip->argument);
+			unzip_exclude_mode = 1;
 			break;
 		case 'y':
 			y_str = "  ";
 			break;
 		case 'Z':
 			zipinfo_mode = 1;
+			if (bsdunzip->argument != NULL &&
+			    strcmp(bsdunzip->argument, "1") == 0) {
+				Z1_opt = 1;
+			}
+			break;
+		case OPTION_VERSION:
+			version_opt = 1;
+			break;
+		case OPTION_NONE:
 			break;
 		default:
 			usage();
 		}
-
-	return (optind);
+		if (opt == OPTION_NONE)
+			break;
+	}
+	return (bsdunzip_optind);
 }
 
 int
@@ -1178,6 +1206,8 @@ main(int argc, char *argv[])
 {
 	const char *zipfile;
 	int nopts;
+
+	lafe_setprogname(*argv, "bsdunzip");
 
 	if (isatty(STDOUT_FILENO))
 		tty = 1;
@@ -1199,6 +1229,11 @@ main(int argc, char *argv[])
 	 */
 	nopts = getopts(argc, argv);
 
+	if (version_opt == 1) {
+		version();
+		exit(EXIT_SUCCESS);
+	}
+
 	/*
 	 * When more of the zipinfo mode options are implemented, this
 	 * will need to change.
@@ -1215,11 +1250,25 @@ main(int argc, char *argv[])
 	if (strcmp(zipfile, "-") == 0)
 		zipfile = NULL; /* STDIN */
 
+	unzip_exclude_mode = 0;
+
 	while (nopts < argc && *argv[nopts] != '-')
 		add_pattern(&include, argv[nopts++]);
 
 	nopts--; /* fake argv[0] */
 	nopts += getopts(argc - nopts, argv + nopts);
+
+	/*
+	 * For compatibility with Info-ZIP's unzip(1) we need to treat
+	 * non-option arguments following an -x after the zipfile as
+	 * exclude list members.
+	 */
+	if (unzip_exclude_mode) {
+		while (nopts < argc && *argv[nopts] != '-')
+			add_pattern(&exclude, argv[nopts++]);
+		nopts--; /* fake argv[0] */
+		nopts += getopts(argc - nopts, argv + nopts);
+	}
 
 	/* There may be residual arguments if we encountered -- */
 	while (nopts < argc)
