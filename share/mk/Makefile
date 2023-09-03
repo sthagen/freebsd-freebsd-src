@@ -1,4 +1,3 @@
-# $FreeBSD$
 #	@(#)Makefile	8.1 (Berkeley) 6/8/93
 
 # Only parse this if executing make in this directory, not in other places
@@ -61,8 +60,11 @@ FILES=	\
 	bsd.test.mk \
 	dirdeps.mk \
 	dirdeps-options.mk \
+	dirdeps-targets.mk \
 	gendirdeps.mk \
+	host-target.mk \
 	install-new.mk \
+	jobs.mk \
 	meta.autodep.mk \
 	meta.stage.mk \
 	meta.subdir.mk \
@@ -71,6 +73,7 @@ FILES=	\
 	stage-install.sh \
 	sys.mk \
 	sys.dependfile.mk \
+	sys.dirdeps.mk \
 	version_gen.awk
 
 FILESDIR=	${BINDIR}/mk

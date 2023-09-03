@@ -65,8 +65,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/elf.h>
@@ -1415,7 +1413,9 @@ vm_map_entry_link(vm_map_t map, vm_map_entry_t entry)
 		KASSERT(entry->end < root->end,
 		    ("%s: clip_start not within entry", __func__));
 		vm_map_splay_findprev(root, &llist);
-		root->offset += entry->end - root->start;
+		if ((root->eflags & (MAP_ENTRY_STACK_GAP_DN |
+		    MAP_ENTRY_STACK_GAP_UP)) == 0)
+			root->offset += entry->end - root->start;
 		root->start = entry->end;
 		max_free_left = vm_map_splay_merge_pred(header, entry, llist);
 		max_free_right = root->max_free = vm_size_max(
@@ -1431,7 +1431,9 @@ vm_map_entry_link(vm_map_t map, vm_map_entry_t entry)
 		KASSERT(entry->end == root->end,
 		    ("%s: clip_start not within entry", __func__));
 		vm_map_splay_findnext(root, &rlist);
-		entry->offset += entry->start - root->start;
+		if ((entry->eflags & (MAP_ENTRY_STACK_GAP_DN |
+		    MAP_ENTRY_STACK_GAP_UP)) == 0)
+			entry->offset += entry->start - root->start;
 		root->end = entry->start;
 		max_free_left = root->max_free = vm_size_max(
 		    vm_map_splay_merge_left(header, root, llist),
@@ -1465,6 +1467,8 @@ vm_map_entry_unlink(vm_map_t map, vm_map_entry_t entry,
 	vm_map_splay_findnext(root, &rlist);
 	if (op == UNLINK_MERGE_NEXT) {
 		rlist->start = root->start;
+		MPASS((rlist->eflags & (MAP_ENTRY_STACK_GAP_DN |
+		    MAP_ENTRY_STACK_GAP_UP)) == 0);
 		rlist->offset = root->offset;
 	}
 	if (llist != header) {
@@ -3105,7 +3109,8 @@ vm_map_madvise(
 		    entry = vm_map_entry_succ(entry)) {
 			vm_offset_t useEnd, useStart;
 
-			if ((entry->eflags & MAP_ENTRY_IS_SUB_MAP) != 0)
+			if ((entry->eflags & (MAP_ENTRY_IS_SUB_MAP |
+			    MAP_ENTRY_GUARD)) != 0)
 				continue;
 
 			/*

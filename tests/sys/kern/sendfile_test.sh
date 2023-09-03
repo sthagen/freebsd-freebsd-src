@@ -23,7 +23,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 #
-# $FreeBSD$
 
 #
 # These tests exercise a few basic cases for the sendfile() syscall:
@@ -125,6 +124,7 @@ alloc_md()
 {
 	local md
 
+	[ -c /dev/mdctl ] || atf_skip "no /dev/mdctl to create md devices"
 	md=$(mdconfig -a -t swap -s 256M) || atf_fail "mdconfig -a failed"
 	echo ${md} >> $MD_DEVS
 	echo ${md}

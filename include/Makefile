@@ -1,5 +1,4 @@
 #	@(#)Makefile	8.2 (Berkeley) 1/4/94
-# $FreeBSD$
 #
 # Doing a "make install" builds /usr/include.
 
@@ -68,7 +67,9 @@ LSUBDIRS=	dev/acpica dev/agp dev/ciss dev/filemon dev/firewire \
 	netinet/netdump \
 	netinet/tcp_stacks \
 	netlink/route \
-	security/mac_biba security/mac_bsdextended security/mac_lomac \
+	security/mac_biba security/mac_bsdextended \
+	security/mac_grantbylabel \
+	security/mac_lomac \
 	security/mac_mls security/mac_partition \
 	security/mac_veriexec \
 	sys/disk \

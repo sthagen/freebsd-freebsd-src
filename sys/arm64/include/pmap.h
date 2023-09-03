@@ -29,8 +29,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifdef __arm__
@@ -130,6 +128,8 @@ extern struct pmap	kernel_pmap_store;
 	KASSERT((asid) != -1, ("invalid ASID"));			\
 	(uint64_t)(asid) << TTBR_ASID_SHIFT;			\
 })
+
+#define	PMAP_WANT_ACTIVE_CPUS_NAIVE
 
 extern vm_offset_t virtual_avail;
 extern vm_offset_t virtual_end;
