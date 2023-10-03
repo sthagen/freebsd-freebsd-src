@@ -65,7 +65,6 @@
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_signal.h>
-#include <compat/linux/linux_sysproto.h>
 #include <compat/linux/linux_util.h>
 #include <compat/linux/linux_vdso.h>
 
@@ -159,7 +158,7 @@ linux_fetch_syscall_args(struct thread *td)
 
 	if (sa->code >= p->p_sysent->sv_size)
 		/* nosys */
-		sa->callp = &p->p_sysent->sv_table[p->p_sysent->sv_size - 1];
+		sa->callp = &nosys_sysent;
 	else
 		sa->callp = &p->p_sysent->sv_table[sa->code];
 
