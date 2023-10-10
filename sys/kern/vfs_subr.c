@@ -1427,6 +1427,14 @@ vnlru_free_locked(int count)
 	return (ret);
 }
 
+static int
+vnlru_free(int count)
+{
+
+	mtx_lock(&vnode_list_mtx);
+	return (vnlru_free_locked(count));
+}
+
 void
 vnlru_free_vfsops(int count, struct vfsops *mnt_op, struct vnode *mvp)
 {
@@ -1584,11 +1592,114 @@ static void
 vnlru_kick_cond(void)
 {
 
+	if (vnlru_read_freevnodes() > wantfreevnodes)
+		return;
+
 	if (vnlruproc_sig)
 		return;
 	mtx_lock(&vnode_list_mtx);
 	vnlru_kick_locked();
 	mtx_unlock(&vnode_list_mtx);
+}
+
+static void
+vnlru_proc_sleep(void)
+{
+
+	if (vnlruproc_sig) {
+		vnlruproc_sig = 0;
+		wakeup(&vnlruproc_sig);
+	}
+	msleep(vnlruproc, &vnode_list_mtx, PVFS|PDROP, "vlruwt", hz);
+}
+
+/*
+ * A lighter version of the machinery below.
+ *
+ * Tries to reach goals only by recycling free vnodes and does not invoke
+ * uma_reclaim(UMA_RECLAIM_DRAIN).
+ *
+ * This works around pathological behavior in vnlru in presence of tons of free
+ * vnodes, but without having to rewrite the machinery at this time. Said
+ * behavior boils down to continuously trying to reclaim all kinds of vnodes
+ * (cycling through all levels of "force") when the count is transiently above
+ * limit. This happens a lot when all vnodes are used up and vn_alloc
+ * speculatively increments the counter.
+ *
+ * Sample testcase: vnode limit 8388608, 20 separate directory trees each with
+ * 1 million files in total and 20 find(1) processes stating them in parallel
+ * (one per each tree).
+ *
+ * On a kernel with only stock machinery this needs anywhere between 60 and 120
+ * seconds to execute (time varies *wildly* between runs). With the workaround
+ * it consistently stays around 20 seconds.
+ *
+ * That is to say the entire thing needs a fundamental redesign (most notably
+ * to accommodate faster recycling), the above only tries to get it ouf the way.
+ *
+ * Return values are:
+ * -1 -- fallback to regular vnlru loop
+ *  0 -- do nothing, go to sleep
+ * >0 -- recycle this many vnodes
+ */
+static long
+vnlru_proc_light_pick(void)
+{
+	u_long rnumvnodes, rfreevnodes;
+
+	if (vstir || vnlruproc_sig == 1)
+		return (-1);
+
+	rnumvnodes = atomic_load_long(&numvnodes);
+	rfreevnodes = vnlru_read_freevnodes();
+
+	/*
+	 * vnode limit might have changed and now we may be at a significant
+	 * excess. Bail if we can't sort it out with free vnodes.
+	 */
+	if (rnumvnodes > desiredvnodes) {
+		if (rnumvnodes - rfreevnodes >= desiredvnodes ||
+		    rfreevnodes <= wantfreevnodes) {
+			return (-1);
+		}
+
+		return (rnumvnodes - desiredvnodes);
+	}
+
+	/*
+	 * Don't try to reach wantfreevnodes target if there are too few vnodes
+	 * to begin with.
+	 */
+	if (rnumvnodes < wantfreevnodes) {
+		return (0);
+	}
+
+	if (rfreevnodes < wantfreevnodes) {
+		return (-1);
+	}
+
+	return (0);
+}
+
+static bool
+vnlru_proc_light(void)
+{
+	long freecount;
+
+	mtx_assert(&vnode_list_mtx, MA_NOTOWNED);
+
+	freecount = vnlru_proc_light_pick();
+	if (freecount == -1)
+		return (false);
+
+	if (freecount != 0) {
+		vnlru_free(freecount);
+	}
+
+	mtx_lock(&vnode_list_mtx);
+	vnlru_proc_sleep();
+	mtx_assert(&vnode_list_mtx, MA_NOTOWNED);
+	return (true);
 }
 
 static void
@@ -1606,6 +1717,10 @@ vnlru_proc(void)
 	want_reread = false;
 	for (;;) {
 		kproc_suspend_check(vnlruproc);
+
+		if (force == 0 && vnlru_proc_light())
+			continue;
+
 		mtx_lock(&vnode_list_mtx);
 		rnumvnodes = atomic_load_long(&numvnodes);
 
@@ -1636,10 +1751,7 @@ vnlru_proc(void)
 			vstir = false;
 		}
 		if (force == 0 && !vnlru_under(rnumvnodes, vlowat)) {
-			vnlruproc_sig = 0;
-			wakeup(&vnlruproc_sig);
-			msleep(vnlruproc, &vnode_list_mtx,
-			    PVFS|PDROP, "vlruwt", hz);
+			vnlru_proc_sleep();
 			continue;
 		}
 		rfreevnodes = vnlru_read_freevnodes();
@@ -1674,7 +1786,12 @@ vnlru_proc(void)
 		target = target / 10 + 1;
 		done = vlrureclaim(reclaim_nc_src, trigger, target);
 		mtx_unlock(&vnode_list_mtx);
-		if (onumvnodes > desiredvnodes && numvnodes <= desiredvnodes)
+		/*
+		 * Total number of vnodes can transiently go slightly above the
+		 * limit (see vn_alloc_hard), no need to call uma_reclaim if
+		 * this happens.
+		 */
+		if (onumvnodes + 1000 > desiredvnodes && numvnodes <= desiredvnodes)
 			uma_reclaim(UMA_RECLAIM_DRAIN);
 		if (done == 0) {
 			if (force == 0 || force == 1) {
@@ -1802,11 +1919,19 @@ vn_alloc_hard(struct mount *mp)
 		mtx_unlock(&vnode_list_mtx);
 		goto alloc;
 	}
-	rfreevnodes = vnlru_read_freevnodes();
-	if (vn_alloc_cyclecount++ >= rfreevnodes) {
-		vn_alloc_cyclecount = 0;
-		vstir = true;
+
+	if (vn_alloc_cyclecount != 0) {
+		rfreevnodes = vnlru_read_freevnodes();
+		if (rfreevnodes < wantfreevnodes) {
+			if (vn_alloc_cyclecount++ >= rfreevnodes) {
+				vn_alloc_cyclecount = 0;
+				vstir = true;
+			}
+		} else {
+			vn_alloc_cyclecount = 0;
+		}
 	}
+
 	/*
 	 * Grow the vnode cache if it will not be above its target max
 	 * after growing.  Otherwise, if the free list is nonempty, try
@@ -1836,9 +1961,8 @@ vn_alloc_hard(struct mount *mp)
 	}
 alloc:
 	mtx_assert(&vnode_list_mtx, MA_NOTOWNED);
-	rnumvnodes = atomic_fetchadd_long(&numvnodes, 1) + 1;
-	if (vnlru_under(rnumvnodes, vlowat))
-		vnlru_kick_cond();
+	atomic_add_long(&numvnodes, 1);
+	vnlru_kick_cond();
 	return (uma_zalloc_smr(vnode_zone, M_WAITOK));
 }
 
