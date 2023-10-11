@@ -1306,9 +1306,11 @@ next_iter:
 	return (done);
 }
 
-static int max_vnlru_free = 10000; /* limit on vnode free requests per call */
-SYSCTL_INT(_debug, OID_AUTO, max_vnlru_free, CTLFLAG_RW, &max_vnlru_free,
-    0,
+static int max_free_per_call = 10000;
+SYSCTL_INT(_debug, OID_AUTO, max_vnlru_free, CTLFLAG_RW, &max_free_per_call, 0,
+    "limit on vnode free requests per call to the vnlru_free routine (legacy)");
+SYSCTL_INT(_vfs_vnode_vnlru, OID_AUTO, max_free_per_call, CTLFLAG_RW,
+    &max_free_per_call, 0,
     "limit on vnode free requests per call to the vnlru_free routine");
 
 /*
@@ -1323,8 +1325,8 @@ vnlru_free_impl(int count, struct vfsops *mnt_op, struct vnode *mvp)
 	bool retried;
 
 	mtx_assert(&vnode_list_mtx, MA_OWNED);
-	if (count > max_vnlru_free)
-		count = max_vnlru_free;
+	if (count > max_free_per_call)
+		count = max_free_per_call;
 	if (count == 0) {
 		mtx_unlock(&vnode_list_mtx);
 		return (0);
@@ -1490,6 +1492,8 @@ static u_long vnlruproc_kicks;
 SYSCTL_ULONG(_vfs_vnode_vnlru, OID_AUTO, kicks, CTLFLAG_RD, &vnlruproc_kicks, 0,
     "Number of times vnlru got woken up due to vnode shortage");
 
+#define VNLRU_COUNT_SLOP 100
+
 /*
  * The main freevnodes counter is only updated when a counter local to CPU
  * diverges from 0 by more than VNLRU_FREEVNODES_SLOP. CPUs are conditionally
@@ -1632,7 +1636,8 @@ vnlru_proc_sleep(void)
  *
  * On a kernel with only stock machinery this needs anywhere between 60 and 120
  * seconds to execute (time varies *wildly* between runs). With the workaround
- * it consistently stays around 20 seconds.
+ * it consistently stays around 20 seconds [it got further down with later
+ * changes].
  *
  * That is to say the entire thing needs a fundamental redesign (most notably
  * to accommodate faster recycling), the above only tries to get it ouf the way.
@@ -1656,8 +1661,12 @@ vnlru_proc_light_pick(void)
 	/*
 	 * vnode limit might have changed and now we may be at a significant
 	 * excess. Bail if we can't sort it out with free vnodes.
+	 *
+	 * Due to atomic updates the count can legitimately go above
+	 * the limit for a short period, don't bother doing anything in
+	 * that case.
 	 */
-	if (rnumvnodes > desiredvnodes) {
+	if (rnumvnodes > desiredvnodes + VNLRU_COUNT_SLOP + 10) {
 		if (rnumvnodes - rfreevnodes >= desiredvnodes ||
 		    rfreevnodes <= wantfreevnodes) {
 			return (-1);
@@ -1734,7 +1743,7 @@ vnlru_proc(void)
 		 * adjusted using its sysctl, or emergency growth), first
 		 * try to reduce it by discarding from the free list.
 		 */
-		if (rnumvnodes > desiredvnodes) {
+		if (rnumvnodes > desiredvnodes + 10) {
 			vnlru_free_locked(rnumvnodes - desiredvnodes);
 			mtx_lock(&vnode_list_mtx);
 			rnumvnodes = atomic_load_long(&numvnodes);
@@ -1791,7 +1800,8 @@ vnlru_proc(void)
 		 * limit (see vn_alloc_hard), no need to call uma_reclaim if
 		 * this happens.
 		 */
-		if (onumvnodes + 1000 > desiredvnodes && numvnodes <= desiredvnodes)
+		if (onumvnodes + VNLRU_COUNT_SLOP + 1000 > desiredvnodes &&
+		    numvnodes <= desiredvnodes)
 			uma_reclaim(UMA_RECLAIM_DRAIN);
 		if (done == 0) {
 			if (force == 0 || force == 1) {
@@ -1908,19 +1918,27 @@ SYSCTL_ULONG(_vfs_vnode_stats, OID_AUTO, alloc_sleeps, CTLFLAG_RD, &vn_alloc_sle
     "Number of times vnode allocation blocked waiting on vnlru");
 
 static struct vnode * __noinline
-vn_alloc_hard(struct mount *mp)
+vn_alloc_hard(struct mount *mp, u_long rnumvnodes, bool bumped)
 {
-	u_long rnumvnodes, rfreevnodes;
+	u_long rfreevnodes;
 
-	mtx_lock(&vnode_list_mtx);
-	rnumvnodes = atomic_load_long(&numvnodes);
-	if (rnumvnodes + 1 < desiredvnodes) {
-		vn_alloc_cyclecount = 0;
-		mtx_unlock(&vnode_list_mtx);
-		goto alloc;
+	if (bumped) {
+		if (rnumvnodes > desiredvnodes + VNLRU_COUNT_SLOP) {
+			atomic_subtract_long(&numvnodes, 1);
+			bumped = false;
+		}
 	}
 
+	mtx_lock(&vnode_list_mtx);
+
 	if (vn_alloc_cyclecount != 0) {
+		rnumvnodes = atomic_load_long(&numvnodes);
+		if (rnumvnodes + 1 < desiredvnodes) {
+			vn_alloc_cyclecount = 0;
+			mtx_unlock(&vnode_list_mtx);
+			goto alloc;
+		}
+
 		rfreevnodes = vnlru_read_freevnodes();
 		if (rfreevnodes < wantfreevnodes) {
 			if (vn_alloc_cyclecount++ >= rfreevnodes) {
@@ -1949,6 +1967,10 @@ vn_alloc_hard(struct mount *mp)
 		/*
 		 * Wait for space for a new vnode.
 		 */
+		if (bumped) {
+			atomic_subtract_long(&numvnodes, 1);
+			bumped = false;
+		}
 		mtx_lock(&vnode_list_mtx);
 		vnlru_kick_locked();
 		vn_alloc_sleeps++;
@@ -1961,7 +1983,8 @@ vn_alloc_hard(struct mount *mp)
 	}
 alloc:
 	mtx_assert(&vnode_list_mtx, MA_NOTOWNED);
-	atomic_add_long(&numvnodes, 1);
+	if (!bumped)
+		atomic_add_long(&numvnodes, 1);
 	vnlru_kick_cond();
 	return (uma_zalloc_smr(vnode_zone, M_WAITOK));
 }
@@ -1972,11 +1995,10 @@ vn_alloc(struct mount *mp)
 	u_long rnumvnodes;
 
 	if (__predict_false(vn_alloc_cyclecount != 0))
-		return (vn_alloc_hard(mp));
+		return (vn_alloc_hard(mp, 0, false));
 	rnumvnodes = atomic_fetchadd_long(&numvnodes, 1) + 1;
 	if (__predict_false(vnlru_under(rnumvnodes, vlowat))) {
-		atomic_subtract_long(&numvnodes, 1);
-		return (vn_alloc_hard(mp));
+		return (vn_alloc_hard(mp, rnumvnodes, true));
 	}
 
 	return (uma_zalloc_smr(vnode_zone, M_WAITOK));
