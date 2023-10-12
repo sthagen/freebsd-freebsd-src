@@ -35,10 +35,13 @@
 #include <netinet/in.h>
 
 #include <err.h>
+#include <math.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sysexits.h>
 #include <unistd.h>
 
 #include "main.h"
@@ -59,6 +62,28 @@
 #error At least one of INET and INET6 is required
 #endif
 
+/* various options */
+u_int options;
+
+char *hostname;
+
+/* counters */
+long nreceived;		/* # of packets we got back */
+long nrepeats;		/* number of duplicates */
+long ntransmitted;	/* sequence # for outbound packets = #sent */
+long nrcvtimeout = 0;	/* # of packets we got back after waittime */
+
+/* nonzero if we've been told to finish up */
+volatile sig_atomic_t seenint;
+volatile sig_atomic_t seeninfo;
+
+/* timing */
+int timing;		/* flag to do timing */
+double tmin = 999999999.0;	/* minimum round trip time */
+double tmax = 0.0;	/* maximum round trip time */
+double tsum = 0.0;	/* sum of all times, for doing average */
+double tsumsq = 0.0;	/* sum of all times squared, for std. dev. */
+
 int
 main(int argc, char *argv[])
 {
@@ -70,6 +95,7 @@ main(int argc, char *argv[])
 #endif
 #if defined(INET) && defined(INET6)
 	struct addrinfo hints, *res, *ai;
+	const char *target;
 	int error;
 #endif
 	int opt;
@@ -119,6 +145,7 @@ main(int argc, char *argv[])
 		usage();
 
 #if defined(INET) && defined(INET6)
+	target = argv[argc - 1];
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_socktype = SOCK_RAW;
 	if (feature_present("inet") && !feature_present("inet6"))
@@ -127,9 +154,10 @@ main(int argc, char *argv[])
 		hints.ai_family = AF_INET6;
 	else
 		hints.ai_family = AF_UNSPEC;
-	error = getaddrinfo(argv[argc - 1], NULL, &hints, &res);
+	error = getaddrinfo(target, NULL, &hints, &res);
 	if (res == NULL)
-		errx(1, "%s", gai_strerror(error));
+		errx(EX_NOHOST, "cannot resolve %s: %s",
+		    target, gai_strerror(error));
 	for (ai = res; ai != NULL; ai = ai->ai_next) {
 		if (ai->ai_family == AF_INET) {
 			freeaddrinfo(res);
@@ -141,7 +169,7 @@ main(int argc, char *argv[])
 		}
 	}
 	freeaddrinfo(res);
-	errx(1, "Unknown host");
+	errx(EX_NOHOST, "cannot resolve %s", target);
 #endif
 #ifdef INET
 ping4:
@@ -155,6 +183,65 @@ ping6:
 	optind = 1;
 	return ping6(argc, argv);
 #endif
+}
+
+/*
+ * onsignal --
+ *	Set the global bit that causes the main loop to quit.
+ */
+void
+onsignal(int sig)
+{
+	switch (sig) {
+	case SIGALRM:
+	case SIGINT:
+		/*
+		 * When doing reverse DNS lookups, the seenint flag might not
+		 * be noticed for a while.  Just exit if we get a second SIGINT.
+		 */
+		if (!(options & F_HOSTNAME) && seenint != 0)
+			_exit(nreceived ? 0 : 2);
+		seenint++;
+		break;
+	case SIGINFO:
+		seeninfo++;
+		break;
+	}
+}
+
+/*
+ * pr_summary --
+ *	Print out summary statistics to the given output stream.
+ */
+void
+pr_summary(FILE * restrict stream)
+{
+	fprintf(stream, "\n--- %s ping statistics ---\n", hostname);
+	fprintf(stream, "%ld packets transmitted, ", ntransmitted);
+	fprintf(stream, "%ld packets received, ", nreceived);
+	if (nrepeats)
+		fprintf(stream, "+%ld duplicates, ", nrepeats);
+	if (ntransmitted) {
+		if (nreceived > ntransmitted)
+			fprintf(stream, "-- somebody's duplicating packets!");
+		else
+			fprintf(stream, "%.1f%% packet loss",
+			    ((((double)ntransmitted - nreceived) * 100.0) /
+			    ntransmitted));
+	}
+	if (nrcvtimeout)
+		fprintf(stream, ", %ld packets out of wait time", nrcvtimeout);
+	fputc('\n', stream);
+	if (nreceived && timing) {
+		/* Only display average to microseconds */
+		double num = nreceived + nrepeats;
+		double avg = tsum / num;
+		double stddev = sqrt(fmax(0, tsumsq / num - avg * avg));
+		fprintf(stream,
+		    "round-trip min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
+		    tmin, avg, tmax, stddev);
+	}
+	fflush(stream);
 }
 
 void
