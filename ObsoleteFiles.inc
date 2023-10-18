@@ -51,6 +51,12 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20231018: Remove misspelled man page link
+OLD_FILES+=usr/share/man/man3/dbm_dirnfo.3.gz
+
+# 20231006: rename tcp6_v4unmapped_bind_test
+OLD_FILES+=usr/tests/sys/netinet/tcp6_v4unmapped_bind_test
+
 # 20231005: Remove man page link for now gone net80211 function.
 OLD_FILES+=usr/share/man/man9/ieee80211_unref_node.9.gz
 
