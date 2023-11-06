@@ -31,7 +31,6 @@
 
 #include "opt_printf.h"
 
-#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/bio.h>
 #include <sys/bus.h>
@@ -70,8 +69,6 @@
 #include <cam/scsi/scsi_pass.h>
 
 #include <machine/stdarg.h>	/* for xpt_print below */
-
-#include "opt_cam.h"
 
 /* Wild guess based on not wanting to grow the stack too much */
 #define XPT_PRINT_MAXLEN	512
