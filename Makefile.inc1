@@ -2635,9 +2635,10 @@ ${_bt}-usr.bin/grep: ${_bt}-lib/libbz2
 _other_bootstrap_tools+=lib/libz
 ${_bt}-lib/libdwarf: ${_bt}-lib/libz
 
-# libroken depends on libcrypt
+# libroken depends on libcrypt and libcrypto
 _other_bootstrap_tools+=lib/libcrypt
-${_bt}-lib/libroken: ${_bt}-lib/libcrypt
+_other_bootstrap_tools+=secure/lib/libcrypto
+${_bt}-lib/libroken: ${_bt}-lib/libcrypt ${_bt}-lib/libcrypto
 .else
 # All tools in _basic_bootstrap_tools have the same name as the subdirectory
 # so we can use :T to get the name of the symlinks that we need to create.
@@ -3139,6 +3140,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_cddl_lib_libctf} ${_cddl_lib_libzfsbootenv} \
 		lib/libufs \
 		lib/libutil lib/libpjdlog ${_lib_libypclnt} lib/libz lib/msun \
+		lib/libxo \
 		${_secure_lib_libcrypto} ${_secure_lib_libssl} \
 		${_lib_libldns} ${_secure_lib_libssh}
 
@@ -3194,6 +3196,7 @@ _generic_libs+= ${_DIR}
 .endfor
 
 lib/libtacplus__L: lib/libmd__L lib/libpam/libpam__L
+lib/libxo__L: lib/libutil__L
 
 .if ${MK_CDDL} != "no"
 _cddl_lib_libumem= cddl/lib/libumem
@@ -3234,6 +3237,7 @@ lib/libbe__L: cddl/lib/libzfs__L cddl/lib/libzfsbootenv__L
 _cddl_lib_libctf= cddl/lib/libctf
 _cddl_lib= cddl/lib
 cddl/lib/libctf__L: lib/libz__L cddl/lib/libspl__L
+cddl/lib/libdtrace__L: lib/libxo__L
 .endif
 # cddl/lib/libdtrace requires lib/libproc and lib/librtld_db
 _prebuild_libs+=	lib/libprocstat lib/libproc lib/librtld_db
@@ -3280,7 +3284,7 @@ kerberos5/lib/libkrb5__L: kerberos5/lib/libasn1__L lib/libcom_err__L \
     lib/libcrypt__L secure/lib/libcrypto__L kerberos5/lib/libhx509__L \
     kerberos5/lib/libroken__L kerberos5/lib/libwind__L \
     kerberos5/lib/libheimbase__L kerberos5/lib/libheimipcc__L
-kerberos5/lib/libroken__L: lib/libcrypt__L
+kerberos5/lib/libroken__L: lib/libcrypt__L secure/lib/libcrypto__L
 kerberos5/lib/libwind__L: kerberos5/lib/libroken__L lib/libcom_err__L
 kerberos5/lib/libheimbase__L: lib/libthr__L
 kerberos5/lib/libheimipcc__L: kerberos5/lib/libroken__L kerberos5/lib/libheimbase__L lib/libthr__L

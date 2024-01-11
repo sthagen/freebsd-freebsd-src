@@ -367,7 +367,7 @@ _DP_pam+=	ssh
 .if ${MK_NIS} != "no"
 _DP_pam+=	ypclnt
 .endif
-_DP_roken=	crypt
+_DP_roken=	crypt crypto
 _DP_kadm5clnt=	com_err krb5 roken
 _DP_kadm5srv=	com_err hdb krb5 roken
 _DP_heimntlm=	crypto com_err krb5 roken
@@ -387,7 +387,7 @@ _DP_ucl=	m
 _DP_vmmapi=	util
 _DP_opencsd=	cxxrt
 _DP_ctf=	spl z
-_DP_dtrace=	ctf elf proc pthread rtld_db
+_DP_dtrace=	ctf elf proc pthread rtld_db xo
 _DP_xo=		util
 _DP_ztest=	geom m nvpair umem zpool pthread avl zfs_core spl zutil zfs uutil icp
 # The libc dependencies are not strictly needed but are defined to make the
