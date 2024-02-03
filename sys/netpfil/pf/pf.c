@@ -3136,7 +3136,7 @@ pf_send_sctp_abort(sa_family_t af, struct pf_pdesc *pd,
 	off += sizeof(*chunk);
 	m->m_pkthdr.len = m->m_len = off;
 
-	pf_sctp_checksum(m, off - sizeof(*hdr) - sizeof(*chunk));;
+	pf_sctp_checksum(m, off - sizeof(*hdr) - sizeof(*chunk));
 
 	if (rtableid >= 0)
 		M_SETFIB(m, rtableid);
@@ -6123,7 +6123,7 @@ pf_sctp_multihome_delayed(struct pf_pdesc *pd, int off, struct pfi_kkif *kif,
 {
 	struct pf_sctp_multihome_job	*j, *tmp;
 	struct pf_sctp_source		*i;
-	int			 ret __unused;;
+	int			 ret __unused;
 	struct pf_kstate	*sm = NULL;
 	struct pf_krule		*ra = NULL;
 	struct pf_krule		*r = &V_pf_default_rule;
@@ -7360,6 +7360,12 @@ pf_route(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 		pf_sctp_checksum(m0, (uint32_t)(ip->ip_hl << 2));
 		m0->m_pkthdr.csum_flags &= ~CSUM_SCTP;
 	}
+
+	/*
+	 * Make sure dummynet gets the correct direction, in case it needs to
+	 * re-inject later.
+	 */
+	pd->dir = PF_OUT;
 
 	/*
 	 * If small enough for interface, or the interface will take
