@@ -130,7 +130,12 @@ _pam_xdg_open(pam_handle_t *pamh, int flags __unused,
 	}
 
 	/* Setup the environment variable */
-	asprintf(&runtime_dir, "XDG_RUNTIME_DIR=%s/%s", RUNTIME_DIR_PREFIX, user);
+	rv = asprintf(&runtime_dir, "XDG_RUNTIME_DIR=%s/%s", RUNTIME_DIR_PREFIX, user);
+	if (rv < 0) {
+		PAM_VERBOSE_ERROR("asprintf failed %d\n", rv);
+		rv = PAM_SESSION_ERR;
+		goto out;
+	}
 	rv = pam_putenv(pamh, runtime_dir);
 	if (rv != PAM_SUCCESS) {
 		PAM_VERBOSE_ERROR("pam_putenv: failed (%d)", rv);
@@ -140,8 +145,13 @@ _pam_xdg_open(pam_handle_t *pamh, int flags __unused,
 
 	/* Setup the session count file */
 	for (i = 0; i < XDG_MAX_SESSION; i++) {
-		asprintf(&xdg_session_file, "%s/xdg_session.%d", user, i);
-		printf("Trying to open %s\n", xdg_session_file);
+		rv = asprintf(&xdg_session_file, "%s/xdg_session.%d", user, i);
+		if (rv < 0) {
+			PAM_VERBOSE_ERROR("asprintf failed %d\n", rv);
+			rv = PAM_SESSION_ERR;
+			goto out;
+		}
+		rv = 0;
 		session_file = openat(rt_dir_prefix, xdg_session_file, O_CREAT | O_EXCL, RUNTIME_DIR_MODE);
 		free(xdg_session_file);
 		if (session_file >= 0)
@@ -257,7 +267,13 @@ _pam_xdg_close(pam_handle_t *pamh __unused, int flags __unused,
 
 	/* Get the last session file created */
 	for (i = XDG_MAX_SESSION; i >= 0; i--) {
-		asprintf(&xdg_session_file, "%s/xdg_session.%d", user, i);
+		rv = asprintf(&xdg_session_file, "%s/xdg_session.%d", user, i);
+		if (rv < 0) {
+			PAM_VERBOSE_ERROR("asprintf failed %d\n", rv);
+			rv = PAM_SESSION_ERR;
+			goto out;
+		}
+		rv = 0;
 		session_file = openat(rt_dir_prefix, xdg_session_file, 0);
 		if (session_file >= 0) {
 			unlinkat(rt_dir_prefix, xdg_session_file, 0);
