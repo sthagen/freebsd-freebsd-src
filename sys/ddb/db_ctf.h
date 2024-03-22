@@ -1,10 +1,7 @@
 /*-
- * Copyright (c) 2016 Michal Meloun <mmel@FreeBSD.org>
- * All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
  *
- * This software was developed by SRI International and the University of
- * Cambridge Computer Laboratory under DARPA/AFRL contract (FA8750-10-C-0237)
- * ("CTSRD"), as part of the DARPA CRASH research programme.
+ * Copyright (c) 2023 Bojan Novković <bnovkov@freebsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,19 +25,40 @@
  * SUCH DAMAGE.
  */
 
-#include "nvidia/tegra124-jetson-tk1.dts"
+#ifndef _DDB_DB_CTF_H_
+#define _DDB_DB_CTF_H_
 
-/ {
-	chosen {
-		stdin = &uartd;
-		stdout = &uartd;
-	};
+#include <sys/types.h>
+#include <sys/ctf.h>
+#include <sys/linker.h>
 
-	memory@80000000 {
-/*		reg = <0x0 0x80000000 0x0 0x80000000>; */
-		reg = <0x0 0x80000000 0x0 0x70000000>;
-	};
-	usb@70090000 {
-		freebsd,clock-xusb-gate = <&tegra_car 143>;
-	};
+#include <ddb/ddb.h>
+#include <ddb/db_sym.h>
+
+#define DB_CTF_INVALID_OFF 0xffffffff
+
+struct db_ctf_sym_data {
+	linker_ctf_t lc;
+	Elf_Sym *sym;
 };
+
+typedef struct db_ctf_sym_data *db_ctf_sym_data_t;
+
+/*
+ * Routines for finding symbols and CTF info accross all loaded linker files.
+ */
+int db_ctf_find_symbol(const char *name, db_ctf_sym_data_t sd);
+struct ctf_type_v3 *db_ctf_find_typename(db_ctf_sym_data_t sd,
+    const char *typename);
+bool db_ctf_lookup_typename(linker_ctf_t *lc, const char *typename);
+
+/*
+ * Routines for working with CTF data.
+ */
+struct ctf_type_v3 *db_ctf_sym_to_type(db_ctf_sym_data_t sd);
+const char *db_ctf_stroff_to_str(db_ctf_sym_data_t sd, uint32_t off);
+struct ctf_type_v3 *db_ctf_typename_to_type(linker_ctf_t *lc, const char *name);
+struct ctf_type_v3 *db_ctf_typeid_to_type(db_ctf_sym_data_t sd,
+    uint32_t typeid);
+
+#endif /* !_DDB_DB_CTF_H_ */
