@@ -149,7 +149,6 @@ __DEFAULT_YES_OPTIONS = \
     NS_CACHING \
     NTP \
     NUAGEINIT \
-    NVME \
     OFED \
     OPENSSL \
     PAM \
@@ -218,7 +217,6 @@ __DEFAULT_NO_OPTIONS = \
     ZONEINFO_LEAPSECONDS_SUPPORT \
 
 __REQUIRED_OPTIONS = \
-    CAPSICUM \
     CASPER
 
 # LEFT/RIGHT. Left options which default to "yes" unless their corresponding
@@ -383,10 +381,6 @@ BROKEN_OPTIONS+= TESTS
 # Force some options off if their dependencies are off.
 # Order is somewhat important.
 #
-.if ${MK_CAPSICUM} == "no"
-MK_CASPER:=	no
-.endif
-
 .if ${MK_SOURCELESS} == "no"
 MK_SOURCELESS_HOST:=	no
 MK_SOURCELESS_UCODE:= no
