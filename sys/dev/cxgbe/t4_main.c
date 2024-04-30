@@ -5317,9 +5317,13 @@ get_params__post_init(struct adapter *sc)
 	}
 
 	/*
-	 * MPSBGMAP is queried separately because only recent firmwares support
-	 * it as a parameter and we don't want the compound query above to fail
-	 * on older firmwares.
+	 * The parameters that follow may not be available on all firmwares.  We
+	 * query them individually rather than in a compound query because old
+	 * firmwares fail the entire query if an unknown parameter is queried.
+	 */
+
+	/*
+	 * MPS buffer group configuration.
 	 */
 	param[0] = FW_PARAM_DEV(MPSBGMAP);
 	val[0] = 0;
@@ -5327,11 +5331,10 @@ get_params__post_init(struct adapter *sc)
 	if (rc == 0)
 		sc->params.mps_bg_map = val[0];
 	else
-		sc->params.mps_bg_map = 0;
+		sc->params.mps_bg_map = UINT32_MAX;	/* Not a legal value. */
 
 	/*
 	 * Determine whether the firmware supports the filter2 work request.
-	 * This is queried separately for the same reason as MPSBGMAP above.
 	 */
 	param[0] = FW_PARAM_DEV(FILTER2_WR);
 	val[0] = 0;
@@ -5343,7 +5346,6 @@ get_params__post_init(struct adapter *sc)
 
 	/*
 	 * Find out whether we're allowed to use the ULPTX MEMWRITE DSGL.
-	 * This is queried separately for the same reason as other params above.
 	 */
 	param[0] = FW_PARAM_DEV(ULPTX_MEMWRITE_DSGL);
 	val[0] = 0;
@@ -6660,7 +6662,8 @@ adapter_full_init(struct adapter *sc)
 	if (rc != 0)
 		return (rc);
 
-	for (i = 0; i < nitems(sc->tq); i++) {
+	MPASS(sc->params.nports <= nitems(sc->tq));
+	for (i = 0; i < sc->params.nports; i++) {
 		if (sc->tq[i] != NULL)
 			continue;
 		sc->tq[i] = taskqueue_create("t4 taskq", M_NOWAIT,
@@ -6709,7 +6712,9 @@ adapter_full_uninit(struct adapter *sc)
 
 	t4_teardown_adapter_queues(sc);
 
-	for (i = 0; i < nitems(sc->tq) && sc->tq[i]; i++) {
+	for (i = 0; i < nitems(sc->tq); i++) {
+		if (sc->tq[i] == NULL)
+			continue;
 		taskqueue_free(sc->tq[i]);
 		sc->tq[i] = NULL;
 	}
