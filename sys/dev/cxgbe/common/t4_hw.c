@@ -6814,6 +6814,7 @@ const char *t4_get_port_type_description(enum fw_port_type port_type)
 		"CR2_QSFP",
 		"SFP28",
 		"KR_SFP28",
+		"KR_XLAUI",
 	};
 
 	if (port_type < ARRAY_SIZE(port_type_description))
@@ -7739,9 +7740,18 @@ int t4_query_params_rw(struct adapter *adap, unsigned int mbox, unsigned int pf,
 	}
 
 	ret = t4_wr_mbox(adap, mbox, &c, sizeof(c), &c);
-	if (ret == 0)
-		for (i = 0, p = &c.param[0].val; i < nparams; i++, p += 2)
-			*val++ = be32_to_cpu(*p);
+
+	/*
+	 * We always copy back the results, even if there's an error.  We'll
+	 * get an error if any of the parameters was unknown to the Firmware,
+	 * but there will be results for the others ...  (Older Firmware
+	 * stopped at the first unknown parameter; newer Firmware processes
+	 * them all and flags the unknown parameters with a return value of
+	 * ~0UL.)
+	 */
+	for (i = 0, p = &c.param[0].val; i < nparams; i++, p += 2)
+		*val++ = be32_to_cpu(*p);
+
 	return ret;
 }
 
