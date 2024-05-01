@@ -5333,6 +5333,14 @@ get_params__post_init(struct adapter *sc)
 	else
 		sc->params.mps_bg_map = UINT32_MAX;	/* Not a legal value. */
 
+	param[0] = FW_PARAM_DEV(TPCHMAP);
+	val[0] = 0;
+	rc = -t4_query_params(sc, sc->mbox, sc->pf, 0, 1, param, val);
+	if (rc == 0)
+		sc->params.tp_ch_map = val[0];
+	else
+		sc->params.tp_ch_map = UINT32_MAX;	/* Not a legal value. */
+
 	/*
 	 * Determine whether the firmware supports the filter2 work request.
 	 */
@@ -7972,8 +7980,10 @@ cxgbe_sysctls(struct port_info *pi)
 	    pi->mps_bg_map, "MPS buffer group map");
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "rx_e_chan_map", CTLFLAG_RD,
 	    NULL, pi->rx_e_chan_map, "TP rx e-channel map");
-	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "rx_c_chan", CTLFLAG_RD, NULL,
-	    pi->rx_c_chan, "TP rx c-channel");
+	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "tx_chan", CTLFLAG_RD, NULL,
+	    pi->tx_chan, "TP tx c-channel");
+	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "rx_chan", CTLFLAG_RD, NULL,
+	    pi->rx_chan, "TP rx c-channel");
 
 	if (sc->flags & IS_VF)
 		return;
