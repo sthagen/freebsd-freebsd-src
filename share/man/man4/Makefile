@@ -163,7 +163,6 @@ MAN=	aac.4 \
 	fwip.4 \
 	fwohci.4 \
 	fxp.4 \
-	gbde.4 \
 	gdb.4 \
 	gem.4 \
 	genet.4 \
@@ -494,6 +493,7 @@ MAN=	aac.4 \
 	send.4 \
 	ses.4 \
 	${_sfxge.4} \
+	sg.4 \
 	sge.4 \
 	siba.4 \
 	siftr.4 \
