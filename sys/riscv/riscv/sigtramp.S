@@ -1,10 +1,16 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2021 Andrew Turner
+ * Copyright (c) 2015 Ruslan Bukin <br@bsdpad.com>
+ * All rights reserved.
  *
- * This work was supported by Innovate UK project 105694, "Digital Security
- * by Design (DSbD) Technology Platform Prototype".
+ * Portions of this software were developed by SRI International and the
+ * University of Cambridge Computer Laboratory under DARPA/AFRL contract
+ * FA8750-10-C-0237 ("CTSRD"), as part of the DARPA CRASH research programme.
+ *
+ * Portions of this software were developed by the University of Cambridge
+ * Computer Laboratory as part of the CTSRD Project, with support from the
+ * UK Higher Education Innovation Fund (HEIF).
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,17 +34,38 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/elf_common.h>
+#include "assym.inc"
+
+#include <sys/syscall.h>
 
 #include <machine/asm.h>
-#include <machine/param.h>
 
-	.section .rodata
-	.align PAGE_SHIFT
-	.globl vmm_hyp_code
-vmm_hyp_code:
-	.incbin "vmm_hyp_blob.bin"
-	.globl vmm_hyp_code_end
-vmm_hyp_code_end:
+/*
+ * This code is copied to the user's stack for returning from signal handlers
+ * (see sendsig() and sigreturn()). We have to compute the address of the
+ * sigcontext struct for the sigreturn call.
+ */
+ENTRY(sigcode)
+	mv	a0, sp
+	addi	a0, a0, SF_UC
 
-GNU_PROPERTY_AARCH64_FEATURE_1_NOTE(GNU_PROPERTY_AARCH64_FEATURE_1_VAL)
+1:
+	li	t0, SYS_sigreturn
+	ecall
+
+	/* sigreturn failed, exit */
+	li	t0, SYS_exit
+	ecall
+
+	j	1b
+END(sigcode)
+
+	/* This may be copied to the stack, keep it 16-byte aligned */
+	.align	3
+esigcode:
+
+	.data
+	.align	3
+	.global	szsigcode
+szsigcode:
+	.quad	esigcode - sigcode
