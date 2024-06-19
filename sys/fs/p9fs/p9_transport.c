@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2007 Pawel Jakub Dawidek <pjd@FreeBSD.org>
+/*-
+ * Copyright (c) 2022-present Doug Rabson
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -11,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHORS AND CONTRIBUTORS ``AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -22,25 +22,49 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
-#ifndef _OPENSOLARIS_SYS_SDT_H_
-#define	_OPENSOLARIS_SYS_SDT_H_
+#include <sys/param.h>
+#include <sys/kernel.h>
+#include <sys/kassert.h>
+#include <sys/libkern.h>
 
-#include_next <sys/sdt.h>
-#ifdef KDTRACE_HOOKS
-/* BEGIN CSTYLED */
-SDT_PROBE_DECLARE(sdt, , , set__error);
+#include <fs/p9fs/p9_transport.h>
 
-#define	SET_ERROR(err)	({					\
-	SDT_PROBE1(sdt, , , set__error, (uintptr_t)err);	\
-	err;							\
-})
-/* END CSTYLED */
-#else
-#define	SET_ERROR(err) (err)
-#endif
+TAILQ_HEAD(, p9_trans_module) transports;
 
-#endif	/* _OPENSOLARIS_SYS_SDT_H_ */
+static void
+p9_transport_init(void)
+{
+
+        TAILQ_INIT(&transports);
+}
+
+SYSINIT(p9_transport, SI_SUB_DRIVERS, SI_ORDER_FIRST, p9_transport_init, NULL);
+
+void
+p9_register_trans(struct p9_trans_module *m)
+{
+
+        TAILQ_INSERT_TAIL(&transports, m, link);
+}
+        
+void
+p9_unregister_trans(struct p9_trans_module *m)
+{
+
+        TAILQ_REMOVE(&transports, m, link);
+}
+
+struct p9_trans_module *
+p9_get_trans_by_name(char *name)
+{
+        struct p9_trans_module *m;
+
+        TAILQ_FOREACH(m, &transports, link) {
+                if (strcmp(m->name, name) == 0)
+                        return (m);
+        }
+        return (NULL);
+}
+
