@@ -1,8 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2013 Juniper Networks, Inc.
- * All rights reserved.
+ * Copyright (c) 2024 Serenity Cyber Security, LLC.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,52 +25,9 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-#include "opt_platform.h"
+#ifndef _LINUXKPI_LINUX_GPF_H_
+#define	_LINUXKPI_LINUX_GPF_H_
 
-#include <sys/param.h>
-#include <sys/kernel.h>
-#include <sys/bus.h>
-#include <sys/linker.h>
+#include <linux/mmzone.h>
 
-#include <machine/metadata.h>
-#include <x86/fdt.h>
-
-#include <dev/fdt/fdt_common.h>
-#include <dev/ofw/openfirm.h>
-
-int
-x86_init_fdt(void)
-{
-	void *dtbp, *mdp;
-	int error;
-
-	if (!OF_install(OFW_FDT, 0)) {
-		error = ENXIO;
-		goto out;
-	}
-
-	mdp = preload_search_by_type("elf kernel");
-	if (mdp == NULL)
-		mdp = preload_search_by_type("elf32 kernel");
-	dtbp = MD_FETCH(mdp, MODINFOMD_DTBP, void *);
-
-#if defined(FDT_DTB_STATIC)
-	/*
-	 * In case the device tree blob was not retrieved (from metadata) try
-	 * to use the statically embedded one.
-	 */
-	if (dtbp == NULL)
-		dtbp = &fdt_static_dtb;
-#endif
-
-	if (dtbp == NULL) {
-		error = ENOENT;
-		goto out;
-	}
-
-	error = OF_init(dtbp) ? ENXIO : 0;
-
- out:
-	return (error);
-}
+#endif /* _LINUXKPI_LINUX_GPF_H_ */
