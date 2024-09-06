@@ -1,4 +1,7 @@
-.\" Copyright (c) 2022 Takanori Watanabe
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2024, Baptiste Daroussin <bapt@FreeBSD.org>
 .\"
 .\" Redistribution and use in source and binary forms, with or without
 .\" modification, are permitted provided that the following conditions
@@ -21,42 +24,44 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 18, 2022
-.Dt ACPI_GED 4
+.Dd September 6, 2024
+.Dt FREEBSD.SYS.LINKER 3lua
 .Os
 .Sh NAME
-.Nm acpi_ged
-.Nd "ACPI Generic Event Device"
+.Nm freebsd.sys.linker
+.Nd Lua binding to
+.Fx 's
+Linker functions
 .Sh SYNOPSIS
-To compile this driver into the kernel,
-place the following line in your
-kernel configuration file:
-.Bd -ragged -offset indent
-.Cd "device acpi_ged"
+.Bd -literal
+local linker = require('freebsd.sys.linker')
 .Ed
 .Pp
-Alternatively, to load the driver as a
-module at boot time, place the following line in
-.Xr loader.conf 5 :
-.Bd -literal -offset indent
-acpi_ged_load="YES"
-.Ed
+.Bl -tag -width XXXX -compact
+.It Dv fileid, err, errno = linker.kldload(name)
+.It Dv ok, err, errno = linker.kldunload(fileid|name)
+.El
 .Sh DESCRIPTION
 The
 .Nm
-driver provides support for generic events interface.
-This handles interrupts and evaluates the specific ACPI method.
-This may generate optionally ACPI notify for another device.
+module is a binding to the
+.Fx 's
+linker functions.
+List of functions:
+.Bl -tag -width XXXX
+.It Dv fileid, err = freebsd.sys.linker.kldload(name)
+Load the kernel module named
+.Fa name
+and return the identifier
+.Pq fileid
+as an interger.
+.It Dv ok, err, errno = freebsd.sys.linker.kldunload(fileid|name)
+Unload the kernel module identifier either by
+.Fa name
+as a string, or
+.Fa fileid
+as an integer.
+.El
 .Sh SEE ALSO
-.Xr acpi 4
-.Sh HISTORY
-The
-.Nm
-device driver first appeared in
-.Fx 13.3 .
-.Sh AUTHORS
-.An -nosplit
-The
-.Nm
-driver was written by
-.An Takanori Watanabe Aq Mt takawata@FreeBSD.org
+.Xr kldload 2 ,
+.Xr kldunload 2
