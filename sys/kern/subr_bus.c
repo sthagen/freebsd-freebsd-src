@@ -1121,7 +1121,8 @@ devclass_get_maxunit(devclass_t dc)
  * @brief Find a free unit number in a devclass
  *
  * This function searches for the first unused unit number greater
- * that or equal to @p unit.
+ * that or equal to @p unit. Note: This can return INT_MAX which
+ * may be rejected elsewhere.
  *
  * @param dc		the devclass to examine
  * @param unit		the first unit number to check
@@ -1188,6 +1189,7 @@ devclass_get_sysctl_tree(devclass_t dc)
  * @retval 0		success
  * @retval EEXIST	the requested unit number is already allocated
  * @retval ENOMEM	memory allocation failure
+ * @retval EINVAL	unit is negative or we've run out of units
  */
 static int
 devclass_alloc_unit(devclass_t dc, device_t dev, int *unitp)
@@ -1202,10 +1204,13 @@ devclass_alloc_unit(devclass_t dc, device_t dev, int *unitp)
 		BUS_HINT_DEVICE_UNIT(device_get_parent(dev), dev, dc->name,
 		    &unit);
 
+	/* Unit numbers are either DEVICE_UNIT_ANY or in [0,INT_MAX) */
+	if ((unit < 0 && unit != DEVICE_UNIT_ANY) || unit == INT_MAX)
+		return (EINVAL);
+
 	/* If we were given a wired unit number, check for existing device */
 	if (unit != DEVICE_UNIT_ANY) {
-		if (unit >= 0 && unit < dc->maxunit &&
-		    dc->devices[unit] != NULL) {
+		if (unit < dc->maxunit && dc->devices[unit] != NULL) {
 			if (bootverbose)
 				printf("%s: %s%d already exists; skipping it\n",
 				    dc->name, dc->name, *unitp);
@@ -1214,7 +1219,7 @@ devclass_alloc_unit(devclass_t dc, device_t dev, int *unitp)
 	} else {
 		/* Unwired device, find the next available slot for it */
 		unit = 0;
-		for (unit = 0;; unit++) {
+		for (unit = 0; unit < INT_MAX; unit++) {
 			/* If this device slot is already in use, skip it. */
 			if (unit < dc->maxunit && dc->devices[unit] != NULL)
 				continue;
@@ -1229,28 +1234,27 @@ devclass_alloc_unit(devclass_t dc, device_t dev, int *unitp)
 	}
 
 	/*
-	 * We've selected a unit beyond the length of the table, so let's
-	 * extend the table to make room for all units up to and including
-	 * this one.
+	 * Unit numbers must be in the range [0, INT_MAX), so exclude INT_MAX as
+	 * too large. We constrain maxunit below to be <= INT_MAX. This means we
+	 * can treat unit and maxunit as normal integers with normal math
+	 * everywhere and we only have to flag INT_MAX as invalid.
+	 */
+	if (unit == INT_MAX)
+		return (EINVAL);
+
+	/*
+	 * We've selected a unit beyond the length of the table, so let's extend
+	 * the table to make room for all units up to and including this one.
 	 */
 	if (unit >= dc->maxunit) {
-		device_t *newlist, *oldlist;
 		int newsize;
 
-		oldlist = dc->devices;
-		newsize = roundup((unit + 1),
-		    MAX(1, MINALLOCSIZE / sizeof(device_t)));
-		newlist = malloc(sizeof(device_t) * newsize, M_BUS, M_NOWAIT);
-		if (!newlist)
-			return (ENOMEM);
-		if (oldlist != NULL)
-			bcopy(oldlist, newlist, sizeof(device_t) * dc->maxunit);
-		bzero(newlist + dc->maxunit,
+		newsize = unit + 1;
+		dc->devices = reallocf(dc->devices,
+		    newsize * sizeof(*dc->devices), M_BUS, M_WAITOK);
+		memset(dc->devices + dc->maxunit, 0,
 		    sizeof(device_t) * (newsize - dc->maxunit));
-		dc->devices = newlist;
 		dc->maxunit = newsize;
-		if (oldlist != NULL)
-			free(oldlist, M_BUS);
 	}
 	PDEBUG(("now: unit %d in devclass %s", unit, DEVCLANAME(dc)));
 
@@ -1273,6 +1277,7 @@ devclass_alloc_unit(devclass_t dc, device_t dev, int *unitp)
  * @retval 0		success
  * @retval EEXIST	the requested unit number is already allocated
  * @retval ENOMEM	memory allocation failure
+ * @retval EINVAL	Unit number invalid or too many units
  */
 static int
 devclass_add_device(devclass_t dc, device_t dev)
