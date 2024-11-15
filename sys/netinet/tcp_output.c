@@ -292,7 +292,8 @@ again:
 	len = 0;
 	p = NULL;
 	if ((tp->t_flags & TF_SACK_PERMIT) &&
-	    (IN_FASTRECOVERY(tp->t_flags) || SEQ_LT(tp->snd_nxt, tp->snd_max)) &&
+	    (IN_FASTRECOVERY(tp->t_flags) ||
+	     (SEQ_LT(tp->snd_nxt, tp->snd_max) && (tp->t_dupacks >= tcprexmtthresh))) &&
 	    (p = tcp_sack_output(tp, &sack_bytes_rxmt))) {
 		int32_t cwin;
 
@@ -513,8 +514,8 @@ after_sack_rexmit:
 	 * hardware).
 	 *
 	 * TSO may only be used if we are in a pure bulk sending state.  The
-	 * presence of TCP-MD5, SACK retransmits, SACK advertizements and
-	 * IP options prevent using TSO.  With TSO the TCP header is the same
+	 * presence of TCP-MD5, IP options (IPsec), and possibly SACK
+	 * retransmits prevent using TSO.  With TSO the TCP header is the same
 	 * (except for the sequence number) for all generated packets.  This
 	 * makes it impossible to transmit any options which vary per generated
 	 * segment or packet.
@@ -556,9 +557,9 @@ after_sack_rexmit:
 	if ((tp->t_flags & TF_TSO) && V_tcp_do_tso && len > tp->t_maxseg &&
 	    (tp->t_port == 0) &&
 	    ((tp->t_flags & TF_SIGNATURE) == 0) &&
-	    tp->rcv_numsacks == 0 && ((sack_rxmit == 0) || V_tcp_sack_tso) &&
+	    ((sack_rxmit == 0) || V_tcp_sack_tso) &&
 	    (ipoptlen == 0 || (ipoptlen == ipsec_optlen &&
-	    (tp->t_flags2 & TF2_IPSEC_TSO) != 0)) &&
+	     (tp->t_flags2 & TF2_IPSEC_TSO) != 0)) &&
 	    !(flags & TH_SYN))
 		tso = 1;
 
@@ -1695,7 +1696,7 @@ timer:
 			return (error);
 		case ENOBUFS:
 			TCP_XMIT_TIMER_ASSERT(tp, len, flags);
-			tp->snd_cwnd = tp->t_maxseg;
+			tp->snd_cwnd = tcp_maxseg(tp);
 			return (0);
 		case EMSGSIZE:
 			/*
