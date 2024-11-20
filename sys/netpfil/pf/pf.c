@@ -8091,7 +8091,7 @@ pf_route6(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 		md = m0;
 		pf_dummynet_route(pd, s, r, ifp, sintosa(&dst), &md);
 		if (md != NULL) {
-			int ret;
+			int ret __sdt_used;
 			ret = nd6_output_ifp(ifp, ifp, md, &dst, NULL);
 			SDT_PROBE2(pf, ip6, route_to, output, ifp, ret);
 		}
@@ -9043,8 +9043,10 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 
 	if (__predict_false(! M_WRITABLE(*m0))) {
 		*m0 = m_unshare(*m0, M_NOWAIT);
-		if (*m0 == NULL)
+		if (*m0 == NULL) {
+			PF_RULES_RUNLOCK();
 			return (PF_DROP);
+		}
 	}
 
 	pf_init_pdesc(&pd, *m0);
