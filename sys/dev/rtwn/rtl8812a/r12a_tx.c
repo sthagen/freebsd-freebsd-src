@@ -199,16 +199,23 @@ static void
 r12a_tx_set_sgi(struct rtwn_softc *sc, void *buf, struct ieee80211_node *ni)
 {
 	struct r12a_tx_desc *txd = (struct r12a_tx_desc *)buf;
-	struct ieee80211vap *vap = ni->ni_vap;
 
-	if ((vap->iv_flags_ht & IEEE80211_FHT_SHORTGI20) &&	/* HT20 */
-	    (ni->ni_htcap & IEEE80211_HTCAP_SHORTGI20))
-		txd->txdw5 |= htole32(R12A_TXDW5_DATA_SHORT);
-	else if (ni->ni_chan != IEEE80211_CHAN_ANYC &&		/* HT40 */
-	    IEEE80211_IS_CHAN_HT40(ni->ni_chan) &&
-	    (ni->ni_htcap & IEEE80211_HTCAP_SHORTGI40) &&
-	    (vap->iv_flags_ht & IEEE80211_FHT_SHORTGI40))
-		txd->txdw5 |= htole32(R12A_TXDW5_DATA_SHORT);
+	/* TODO: VHT 20/40/80 checks */
+
+	/*
+	 * Only enable short-GI if we're transmitting in that
+	 * width to that node.
+	 *
+	 * Specifically, do not enable shortgi for 20MHz if
+	 * we're attempting to transmit at 40MHz.
+	 */
+	if (ieee80211_ht_check_tx_ht40(ni)) {
+		if (ieee80211_ht_check_tx_shortgi_40(ni))
+			txd->txdw5 |= htole32(R12A_TXDW5_DATA_SHORT);
+	} else if (ieee80211_ht_check_tx_ht(ni)) {
+		if (ieee80211_ht_check_tx_shortgi_20(ni))
+			txd->txdw5 |= htole32(R12A_TXDW5_DATA_SHORT);
+	}
 }
 
 static void

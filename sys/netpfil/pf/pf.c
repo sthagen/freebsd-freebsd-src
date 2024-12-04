@@ -6592,12 +6592,6 @@ again:
 			j->pd.sctp_flags |= PFDESC_SCTP_ADD_IP;
 			PF_RULES_RLOCK();
 			sm = NULL;
-			/*
-			 * New connections need to be floating, because
-			 * we cannot know what interfaces it will use.
-			 * That's why we pass V_pfi_all rather than kif.
-			 */
-			j->pd.kif = V_pfi_all;
 			ret = pf_test_rule(&r, &sm,
 			    &j->pd, &ra, &rs, NULL);
 			PF_RULES_RUNLOCK();
@@ -8039,10 +8033,9 @@ pf_route6(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 			s->kif = kif;
 			s->orig_kif = oifp->if_pf_kif;
 		}
-	}
 
-	if (s)
 		PF_STATE_UNLOCK(s);
+	}
 
 	if (ifp == NULL) {
 		SDT_PROBE1(pf, ip6, route_to, drop, __LINE__);
