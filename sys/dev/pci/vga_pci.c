@@ -366,11 +366,11 @@ static int
 vga_pci_attach(device_t dev)
 {
 
-	bus_generic_probe(dev);
+	bus_identify_children(dev);
 
 	/* Always create a drmn child for now to make it easier on drm. */
 	device_add_child(dev, "drmn", DEVICE_UNIT_ANY);
-	bus_generic_attach(dev);
+	bus_attach_children(dev);
 
 	if (vga_pci_is_boot_display(dev))
 		device_printf(dev, "Boot video device\n");

@@ -1624,11 +1624,7 @@ t4_attach(device_t dev)
 		goto done;
 	}
 
-	rc = bus_generic_probe(dev);
-	if (rc != 0) {
-		device_printf(dev, "failed to probe child drivers: %d\n", rc);
-		goto done;
-	}
+	bus_identify_children(dev);
 
 	/*
 	 * Ensure thread-safe mailbox access (in debug builds).
@@ -1639,12 +1635,7 @@ t4_attach(device_t dev)
 	 */
 	sc->flags |= CHK_MBOX_ACCESS;
 
-	rc = bus_generic_attach(dev);
-	if (rc != 0) {
-		device_printf(dev,
-		    "failed to attach all child ports: %d\n", rc);
-		goto done;
-	}
+	bus_attach_children(dev);
 	t4_calibration_start(sc);
 
 	device_printf(dev,
@@ -2779,7 +2770,7 @@ cxgbe_attach(device_t dev)
 
 	cxgbe_sysctls(pi);
 
-	bus_generic_attach(dev);
+	bus_attach_children(dev);
 
 	return (0);
 }
