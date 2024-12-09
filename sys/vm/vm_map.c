@@ -292,9 +292,7 @@ vmspace_zinit(void *mem, int size, int flags)
 	vm = (struct vmspace *)mem;
 	map = &vm->vm_map;
 
-	memset(map, 0, sizeof(*map));
-	mtx_init(&map->system_mtx, "vm map (system)", NULL,
-	    MTX_DEF | MTX_DUPOK);
+	memset(map, 0, sizeof(*map));	/* set MAP_SYSTEM_MAP to false */
 	sx_init(&map->lock, "vm map (user)");
 	PMAP_LOCK_INIT(vmspace_pmap(vm));
 	return (0);
@@ -525,7 +523,7 @@ void
 _vm_map_lock(vm_map_t map, const char *file, int line)
 {
 
-	if (map->system_map)
+	if (vm_map_is_system(map))
 		mtx_lock_flags_(&map->system_mtx, 0, file, line);
 	else
 		sx_xlock_(&map->lock, file, line);
@@ -616,7 +614,7 @@ static void
 _vm_map_assert_locked(vm_map_t map, const char *file, int line)
 {
 
-	if (map->system_map)
+	if (vm_map_is_system(map))
 		mtx_assert_(&map->system_mtx, MA_OWNED, file, line);
 	else
 		sx_assert_(&map->lock, SA_XLOCKED, file, line);
@@ -659,7 +657,7 @@ _vm_map_unlock(vm_map_t map, const char *file, int line)
 {
 
 	VM_MAP_UNLOCK_CONSISTENT(map);
-	if (map->system_map) {
+	if (vm_map_is_system(map)) {
 #ifndef UMA_USE_DMAP
 		if (map == kernel_map && (map->flags & MAP_REPLENISH) != 0) {
 			uma_prealloc(kmapentzone, 1);
@@ -677,7 +675,7 @@ void
 _vm_map_lock_read(vm_map_t map, const char *file, int line)
 {
 
-	if (map->system_map)
+	if (vm_map_is_system(map))
 		mtx_lock_flags_(&map->system_mtx, 0, file, line);
 	else
 		sx_slock_(&map->lock, file, line);
@@ -687,7 +685,7 @@ void
 _vm_map_unlock_read(vm_map_t map, const char *file, int line)
 {
 
-	if (map->system_map) {
+	if (vm_map_is_system(map)) {
 		KASSERT((map->flags & MAP_REPLENISH) == 0,
 		    ("%s: MAP_REPLENISH leaked", __func__));
 		mtx_unlock_flags_(&map->system_mtx, 0, file, line);
@@ -702,7 +700,7 @@ _vm_map_trylock(vm_map_t map, const char *file, int line)
 {
 	int error;
 
-	error = map->system_map ?
+	error = vm_map_is_system(map) ?
 	    !mtx_trylock_flags_(&map->system_mtx, 0, file, line) :
 	    !sx_try_xlock_(&map->lock, file, line);
 	if (error == 0)
@@ -715,7 +713,7 @@ _vm_map_trylock_read(vm_map_t map, const char *file, int line)
 {
 	int error;
 
-	error = map->system_map ?
+	error = vm_map_is_system(map) ?
 	    !mtx_trylock_flags_(&map->system_mtx, 0, file, line) :
 	    !sx_try_slock_(&map->lock, file, line);
 	return (error == 0);
@@ -736,7 +734,7 @@ _vm_map_lock_upgrade(vm_map_t map, const char *file, int line)
 {
 	unsigned int last_timestamp;
 
-	if (map->system_map) {
+	if (vm_map_is_system(map)) {
 		mtx_assert_(&map->system_mtx, MA_OWNED, file, line);
 	} else {
 		if (!sx_try_upgrade_(&map->lock, file, line)) {
@@ -762,7 +760,7 @@ void
 _vm_map_lock_downgrade(vm_map_t map, const char *file, int line)
 {
 
-	if (map->system_map) {
+	if (vm_map_is_system(map)) {
 		KASSERT((map->flags & MAP_REPLENISH) == 0,
 		    ("%s: MAP_REPLENISH leaked", __func__));
 		mtx_assert_(&map->system_mtx, MA_OWNED, file, line);
@@ -782,10 +780,9 @@ int
 vm_map_locked(vm_map_t map)
 {
 
-	if (map->system_map)
+	if (vm_map_is_system(map))
 		return (mtx_owned(&map->system_mtx));
-	else
-		return (sx_xlocked(&map->lock));
+	return (sx_xlocked(&map->lock));
 }
 
 /*
@@ -808,7 +805,7 @@ _vm_map_unlock_and_wait(vm_map_t map, int timo, const char *file, int line)
 
 	VM_MAP_UNLOCK_CONSISTENT(map);
 	mtx_lock(&map_sleep_mtx);
-	if (map->system_map) {
+	if (vm_map_is_system(map)) {
 		KASSERT((map->flags & MAP_REPLENISH) == 0,
 		    ("%s: MAP_REPLENISH leaked", __func__));
 		mtx_unlock_flags_(&map->system_mtx, 0, file, line);
@@ -866,7 +863,7 @@ vm_map_wait_busy(vm_map_t map)
 	VM_MAP_ASSERT_LOCKED(map);
 	while (map->busy) {
 		vm_map_modflags(map, MAP_BUSY_WAKEUP, 0);
-		if (map->system_map)
+		if (vm_map_is_system(map))
 			msleep(&map->busy, &map->system_mtx, 0, "mbusy", 0);
 		else
 			sx_sleep(&map->busy, &map->lock, 0, "mbusy", 0);
@@ -889,8 +886,6 @@ _vm_map_init(vm_map_t map, pmap_t pmap, vm_offset_t min, vm_offset_t max)
 {
 
 	map->header.eflags = MAP_ENTRY_HEADER;
-	map->needs_wakeup = FALSE;
-	map->system_map = 0;
 	map->pmap = pmap;
 	map->header.end = min;
 	map->header.start = max;
@@ -908,11 +903,17 @@ _vm_map_init(vm_map_t map, pmap_t pmap, vm_offset_t min, vm_offset_t max)
 void
 vm_map_init(vm_map_t map, pmap_t pmap, vm_offset_t min, vm_offset_t max)
 {
-
 	_vm_map_init(map, pmap, min, max);
-	mtx_init(&map->system_mtx, "vm map (system)", NULL,
-	    MTX_DEF | MTX_DUPOK);
 	sx_init(&map->lock, "vm map (user)");
+}
+
+void
+vm_map_init_system(vm_map_t map, pmap_t pmap, vm_offset_t min, vm_offset_t max)
+{
+	_vm_map_init(map, pmap, min, max);
+	vm_map_modflags(map, MAP_SYSTEM_MAP, 0);
+	mtx_init(&map->system_mtx, "vm map (system)", NULL, MTX_DEF |
+	    MTX_DUPOK);
 }
 
 /*
@@ -923,7 +924,7 @@ vm_map_init(vm_map_t map, pmap_t pmap, vm_offset_t min, vm_offset_t max)
 static void
 vm_map_entry_dispose(vm_map_t map, vm_map_entry_t entry)
 {
-	uma_zfree(map->system_map ? kmapentzone : mapentzone, entry);
+	uma_zfree(vm_map_is_system(map) ? kmapentzone : mapentzone, entry);
 }
 
 /*
@@ -957,7 +958,7 @@ vm_map_entry_create(vm_map_t map)
 		}
 	} else
 #endif
-	if (map->system_map) {
+	if (vm_map_is_system(map)) {
 		new_entry = uma_zalloc(kmapentzone, M_NOWAIT);
 	} else {
 		new_entry = uma_zalloc(mapentzone, M_WAITOK);
@@ -2424,7 +2425,7 @@ vm_map_entry_charge_object(vm_map_t map, vm_map_entry_t entry)
 	VM_MAP_ASSERT_LOCKED(map);
 	KASSERT((entry->eflags & MAP_ENTRY_IS_SUB_MAP) == 0,
 	    ("map entry %p is a submap", entry));
-	if (entry->object.vm_object == NULL && !map->system_map &&
+	if (entry->object.vm_object == NULL && !vm_map_is_system(map) &&
 	    (entry->eflags & MAP_ENTRY_GUARD) == 0)
 		vm_map_entry_back(entry);
 	else if (entry->object.vm_object != NULL &&
@@ -2489,7 +2490,7 @@ vm_map_clip_start(vm_map_t map, vm_map_entry_t entry, vm_offset_t startaddr)
 	vm_map_entry_t new_entry;
 	int bdry_idx;
 
-	if (!map->system_map)
+	if (!vm_map_is_system(map))
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 		    "%s: map %p entry %p start 0x%jx", __func__, map, entry,
 		    (uintmax_t)startaddr);
@@ -2532,7 +2533,7 @@ vm_map_lookup_clip_start(vm_map_t map, vm_offset_t start,
 	vm_map_entry_t entry;
 	int rv;
 
-	if (!map->system_map)
+	if (!vm_map_is_system(map))
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 		    "%s: map %p start 0x%jx prev %p", __func__, map,
 		    (uintmax_t)start, prev_entry);
@@ -2562,7 +2563,7 @@ vm_map_clip_end(vm_map_t map, vm_map_entry_t entry, vm_offset_t endaddr)
 	vm_map_entry_t new_entry;
 	int bdry_idx;
 
-	if (!map->system_map)
+	if (!vm_map_is_system(map))
 		WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 		    "%s: map %p entry %p end 0x%jx", __func__, map, entry,
 		    (uintmax_t)endaddr);
@@ -3932,7 +3933,7 @@ vm_map_entry_delete(vm_map_t map, vm_map_entry_t entry)
 		MPASS(entry->cred == NULL);
 		MPASS((entry->eflags & MAP_ENTRY_IS_SUB_MAP) == 0);
 		MPASS(object == NULL);
-		vm_map_entry_deallocate(entry, map->system_map);
+		vm_map_entry_deallocate(entry, vm_map_is_system(map));
 		return;
 	}
 
@@ -3983,7 +3984,7 @@ vm_map_entry_delete(vm_map_t map, vm_map_entry_t entry)
 		}
 		VM_OBJECT_WUNLOCK(object);
 	}
-	if (map->system_map)
+	if (vm_map_is_system(map))
 		vm_map_entry_deallocate(entry, TRUE);
 	else {
 		entry->defer_next = curthread->td_map_def_user;
@@ -4706,7 +4707,7 @@ vm_map_growstack(vm_map_t map, vm_offset_t addr, vm_map_entry_t gap_entry)
 	    p->p_textvp == NULL))
 		return (KERN_FAILURE);
 
-	MPASS(!map->system_map);
+	MPASS(!vm_map_is_system(map));
 
 	lmemlim = lim_cur(curthread, RLIMIT_MEMLOCK);
 	stacklim = lim_cur(curthread, RLIMIT_STACK);
@@ -5114,7 +5115,7 @@ RetryLookupLocked:
 	/*
 	 * Create an object if necessary.
 	 */
-	if (entry->object.vm_object == NULL && !map->system_map) {
+	if (entry->object.vm_object == NULL && !vm_map_is_system(map)) {
 		if (vm_map_lock_upgrade(map))
 			goto RetryLookup;
 		entry->object.vm_object = vm_object_allocate_anon(atop(size),
@@ -5202,7 +5203,7 @@ vm_map_lookup_locked(vm_map_t *var_map,		/* IN/OUT */
 	/*
 	 * Fail if an object should be created.
 	 */
-	if (entry->object.vm_object == NULL && !map->system_map)
+	if (entry->object.vm_object == NULL && !vm_map_is_system(map))
 		return (KERN_FAILURE);
 
 	/*
