@@ -1477,11 +1477,13 @@ keyattach:
 					s->timeout = PFTM_UNLINKED;
 					PF_HASHROW_UNLOCK(ih);
 					KEYS_UNLOCK();
-					uma_zfree(V_pf_state_key_z, skw);
-					if (skw != sks)
-						uma_zfree(V_pf_state_key_z, sks);
-					if (idx == PF_SK_STACK)
+					if (idx == PF_SK_WIRE) {
+						uma_zfree(V_pf_state_key_z, skw);
+						if (skw != sks)
+							uma_zfree(V_pf_state_key_z, sks);
+					} else {
 						pf_detach_state(s);
+					}
 					return (EEXIST); /* collision! */
 				}
 			}
@@ -7179,14 +7181,14 @@ pf_test_state_sctp(struct pf_kstate **state, struct pf_pdesc *pd,
 			(*state)->timeout = PFTM_SCTP_ESTABLISHED;
 		}
 	}
-	if (pd->sctp_flags & (PFDESC_SCTP_SHUTDOWN | PFDESC_SCTP_ABORT |
+	if (pd->sctp_flags & (PFDESC_SCTP_SHUTDOWN |
 	    PFDESC_SCTP_SHUTDOWN_COMPLETE)) {
 		if (src->state < SCTP_SHUTDOWN_PENDING) {
 			pf_set_protostate(*state, psrc, SCTP_SHUTDOWN_PENDING);
 			(*state)->timeout = PFTM_SCTP_CLOSING;
 		}
 	}
-	if (pd->sctp_flags & (PFDESC_SCTP_SHUTDOWN_COMPLETE)) {
+	if (pd->sctp_flags & (PFDESC_SCTP_SHUTDOWN_COMPLETE | PFDESC_SCTP_ABORT)) {
 		pf_set_protostate(*state, psrc, SCTP_CLOSED);
 		(*state)->timeout = PFTM_SCTP_CLOSED;
 	}
