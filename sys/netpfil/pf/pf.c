@@ -774,7 +774,7 @@ pf_set_protostate(struct pf_kstate *s, int which, u_int8_t newstate)
 
 #ifdef INET6
 void
-pf_addrcpy(struct pf_addr *dst, struct pf_addr *src, sa_family_t af)
+pf_addrcpy(struct pf_addr *dst, const struct pf_addr *src, sa_family_t af)
 {
 	switch (af) {
 #ifdef INET
@@ -1706,12 +1706,10 @@ pf_state_key_setup(struct pf_pdesc *pd, u_int16_t sport, u_int16_t dport,
 		bzero(&(*nk)->addr[0], sizeof((*nk)->addr[0]));
 		bzero(&(*nk)->addr[1], sizeof((*nk)->addr[1]));
 
-		PF_ACPY(&(*nk)->addr[pd->af == pd->naf ? pd->sidx : pd->didx],
-		    &pd->nsaddr, pd->naf);
-		PF_ACPY(&(*nk)->addr[pd->af == pd->naf ? pd->didx : pd->sidx],
-		    &pd->ndaddr, pd->naf);
-		(*nk)->port[pd->af == pd->naf ? pd->sidx : pd->didx] = pd->nsport;
-		(*nk)->port[pd->af == pd->naf ? pd->didx : pd->sidx] = pd->ndport;
+		PF_ACPY(&(*nk)->addr[pd->didx], &pd->nsaddr, pd->naf);
+		PF_ACPY(&(*nk)->addr[pd->sidx], &pd->ndaddr, pd->naf);
+		(*nk)->port[pd->didx] = pd->nsport;
+		(*nk)->port[pd->sidx] = pd->ndport;
 		switch (pd->proto) {
 		case IPPROTO_ICMP:
 			(*nk)->proto = IPPROTO_ICMPV6;
@@ -4367,8 +4365,8 @@ pf_send_icmp(struct mbuf *m, u_int8_t type, u_int8_t code, sa_family_t af,
  * are different.
  */
 int
-pf_match_addr(u_int8_t n, struct pf_addr *a, struct pf_addr *m,
-    struct pf_addr *b, sa_family_t af)
+pf_match_addr(u_int8_t n, const struct pf_addr *a, const struct pf_addr *m,
+    const struct pf_addr *b, sa_family_t af)
 {
 	int	match = 0;
 
@@ -4403,8 +4401,8 @@ pf_match_addr(u_int8_t n, struct pf_addr *a, struct pf_addr *m,
  * Return 1 if b <= a <= e, otherwise return 0.
  */
 int
-pf_match_addr_range(struct pf_addr *b, struct pf_addr *e,
-    struct pf_addr *a, sa_family_t af)
+pf_match_addr_range(const struct pf_addr *b, const struct pf_addr *e,
+    const struct pf_addr *a, sa_family_t af)
 {
 	switch (af) {
 #ifdef INET
@@ -10308,28 +10306,16 @@ pf_test(sa_family_t af, int dir, int pflags, struct ifnet *ifp, struct mbuf **m0
 		break;
 	}
 
-	case IPPROTO_ICMP: {
-		if (af != AF_INET) {
+	case IPPROTO_ICMP:
+	case IPPROTO_ICMPV6: {
+		if (pd.virtual_proto == IPPROTO_ICMP && af != AF_INET) {
 			action = PF_DROP;
 			REASON_SET(&reason, PFRES_NORM);
 			DPFPRINTF(PF_DEBUG_MISC,
 			    ("dropping IPv6 packet with ICMPv4 payload"));
 			goto done;
 		}
-		action = pf_test_state_icmp(&s, &pd, &reason);
-		if (action == PF_PASS || action == PF_AFRT) {
-			if (V_pfsync_update_state_ptr != NULL)
-				V_pfsync_update_state_ptr(s);
-			r = s->rule;
-			a = s->anchor;
-		} else if (s == NULL)
-			action = pf_test_rule(&r, &s, &pd,
-			    &a, &ruleset, inp);
-		break;
-	}
-
-	case IPPROTO_ICMPV6: {
-		if (af != AF_INET6) {
+		if (pd.virtual_proto == IPPROTO_ICMPV6 && af != AF_INET6) {
 			action = PF_DROP;
 			REASON_SET(&reason, PFRES_NORM);
 			DPFPRINTF(PF_DEBUG_MISC,
