@@ -178,6 +178,7 @@ struct rtwn_softc {
 	int			sc_hwcrypto;
 	int			sc_ratectl_sysctl;
 	int			sc_ratectl;
+	uint32_t		sc_reg_addr;
 
 	uint8_t			sc_detached;
 	uint8_t			sc_flags;
@@ -400,6 +401,7 @@ struct rtwn_softc {
 	uint16_t			rx_dma_size;
 
 	int				macid_limit;
+	int				macid_rpt2_max_num;
 	int				cam_entry_limit;
 	int				fwsize_limit;
 	int				temp_delta;
