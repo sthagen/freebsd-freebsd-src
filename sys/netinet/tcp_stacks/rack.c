@@ -18877,7 +18877,7 @@ rack_fast_rsm_output(struct tcpcb *tp, struct tcp_rack *rack, struct rack_sendma
 		log.u_bbr.pkts_out = tp->t_maxseg;
 		log.u_bbr.timeStamp = cts;
 		log.u_bbr.inflight = ctf_flight_size(rack->rc_tp, rack->r_ctl.rc_sacked);
-		if (rsm && (rsm->r_rtr_cnt > 0)) {
+		if (rsm->r_rtr_cnt > 0) {
 			/*
 			 * When we have a retransmit we want to log the
 			 * burst at send and flight at send from before.
@@ -19994,7 +19994,8 @@ rack_output(struct tcpcb *tp)
 				rack_exit_probertt(rack, cts);
 			}
 		}
-	}
+	} else
+		tot_idle = 0;
 	if (rack_use_fsb &&
 	    (rack->r_ctl.fsb.tcp_ip_hdr) &&
 	    (rack->r_fsb_inited == 0) &&

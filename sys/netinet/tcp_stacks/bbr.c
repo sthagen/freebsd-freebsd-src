@@ -607,7 +607,7 @@ activate_rxt:
 			TCPT_RANGESET_NOSLOP(to, tov,
 			    (bbr->r_ctl.rc_min_rto_ms * MS_IN_USEC),
 			    (bbr->rc_max_rto_sec * USECS_IN_SECOND));
-			bbr_log_timer_var(bbr, 2, cts, 0, srtt, 0, to);
+			bbr_log_timer_var(bbr, 2, cts, 0, bbr_get_rtt(bbr, BBR_SRTT), 0, to);
 			return (to);
 		}
 		return (0);
@@ -6329,8 +6329,6 @@ tcp_bbr_xmit_timer_commit(struct tcp_bbr *bbr, struct tcpcb *tp, uint32_t cts)
 	}
 	/* Round it up */
 	rtt_ticks = USEC_2_TICKS((rtt + (USECS_IN_MSEC - 1)));
-	if (rtt_ticks == 0)
-		rtt_ticks = 1;
 	if (tp->t_srtt != 0) {
 		/*
 		 * srtt is stored as fixed point with 5 bits after the
