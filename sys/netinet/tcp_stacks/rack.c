@@ -19943,10 +19943,11 @@ rack_output(struct tcpcb *tp)
 	     (tp->t_state == TCPS_SYN_SENT)) &&
 	    SEQ_GT(tp->snd_max, tp->snd_una) && /* initial SYN or SYN|ACK sent */
 	    (tp->t_rxtshift == 0)) {              /* not a retransmit */
-		cwnd_to_use = rack->r_ctl.cwnd_to_use = tp->snd_cwnd;
-		so = inp->inp_socket;
-		sb = &so->so_snd;
-		goto just_return_nolock;
+		rack_start_hpts_timer(rack, tp, cts, 0, 0, 0);
+#ifdef TCP_ACCOUNTING
+		sched_unpin();
+#endif
+		return (0);
 	}
 	/*
 	 * Determine length of data that should be transmitted, and flags
@@ -24485,15 +24486,29 @@ rack_get_sockopt(struct tcpcb *tp, struct sockopt *sopt)
 	 * when you exit recovery.
 	 */
 	case TCP_RACK_PACING_BETA:
+		if (strcmp(tp->t_cc->name, CCALGONAME_NEWRENO) != 0)
+			error = EINVAL;
+		else if (rack->rc_pacing_cc_set == 0)
+			optval = rack->r_ctl.rc_saved_beta.beta;
+		else {
+			/*
+			 * Reach out into the CC data and report back what
+			 * I have previously set. Yeah it looks hackish but
+			 * we don't want to report the saved values.
+			 */
+			if (tp->t_ccv.cc_data)
+				optval = ((struct newreno *)tp->t_ccv.cc_data)->beta;
+			else
+				error = EINVAL;
+		}
 		break;
-		/*
-		 * Beta_ecn is the congestion control value for NewReno that influences how
-		 * much of a backoff happens when a ECN mark is detected. It is normally set
-		 * to 80 for 80% i.e. the cwnd is reduced by 20% of its previous value when
-		 * you exit recovery. Note that classic ECN has a beta of 50, it is only
-		 * ABE Ecn that uses this "less" value, but we do too with pacing :)
-		 */
-
+	/*
+	 * Beta_ecn is the congestion control value for NewReno that influences how
+	 * much of a backoff happens when a ECN mark is detected. It is normally set
+	 * to 80 for 80% i.e. the cwnd is reduced by 20% of its previous value when
+	 * you exit recovery. Note that classic ECN has a beta of 50, it is only
+	 * ABE Ecn that uses this "less" value, but we do too with pacing :)
+	 */
 	case TCP_RACK_PACING_BETA_ECN:
 		if (strcmp(tp->t_cc->name, CCALGONAME_NEWRENO) != 0)
 			error = EINVAL;
