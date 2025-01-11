@@ -3932,6 +3932,7 @@ kern/subr_stack.c		optional ddb | stack | ktr
 kern/subr_stats.c		optional stats
 kern/subr_taskqueue.c		standard
 kern/subr_terminal.c		optional vt
+kern/subr_ticks.S		standard
 kern/subr_trap.c		standard
 kern/subr_turnstile.c		standard
 kern/subr_uio.c			standard
@@ -4480,7 +4481,6 @@ netipsec/xform_ipcomp.c		optional ipsec inet | ipsec inet6
 netipsec/xform_tcp.c		optional ipsec inet tcp_signature | \
 	 ipsec inet6 tcp_signature | ipsec_support inet tcp_signature | \
 	 ipsec_support inet6 tcp_signature
-netlink/netlink_generic_kpi.c	standard
 netlink/netlink_glue.c		standard
 netlink/netlink_message_parser.c	standard
 netlink/netlink_domain.c	optional netlink
