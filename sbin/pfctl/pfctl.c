@@ -1234,7 +1234,7 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 	if (anchorname[0] == '/') {
 		if ((npath = calloc(1, MAXPATHLEN)) == NULL)
 			errx(1, "pfctl_rules: calloc");
-		snprintf(npath, MAXPATHLEN, "%s", anchorname);
+		strlcpy(npath, anchorname, MAXPATHLEN);
 	} else {
 		if (path[0])
 			snprintf(&path[len], MAXPATHLEN - len, "/%s", anchorname);
@@ -2571,11 +2571,11 @@ pfctl_load_logif(struct pfctl *pf, char *ifname)
 	return (pfctl_set_statusif(pfh, ifname ? ifname : ""));
 }
 
-int
+void
 pfctl_set_hostid(struct pfctl *pf, u_int32_t hostid)
 {
 	if ((loadopt & PFCTL_FLAG_OPTION) == 0)
-		return (0);
+		return;
 
 	HTONL(hostid);
 
@@ -2584,8 +2584,6 @@ pfctl_set_hostid(struct pfctl *pf, u_int32_t hostid)
 
 	if (pf->opts & PF_OPT_VERBOSE)
 		printf("set hostid 0x%08x\n", ntohl(hostid));
-
-	return (0);
 }
 
 int
@@ -3219,7 +3217,7 @@ main(int argc, char *argv[])
 			pfctl_flush_eth_rules(dev, opts, anchorname);
 			pfctl_flush_rules(dev, opts, anchorname);
 			pfctl_flush_nat(dev, opts, anchorname);
-			pfctl_clear_tables(anchorname, opts);
+			pfctl_do_clear_tables(anchorname, opts);
 			if (!*anchorname) {
 				pfctl_clear_altq(dev, opts);
 				pfctl_clear_iface_states(dev, ifaceopt, opts);
@@ -3233,7 +3231,7 @@ main(int argc, char *argv[])
 			pfctl_clear_fingerprints(dev, opts);
 			break;
 		case 'T':
-			pfctl_clear_tables(anchorname, opts);
+			pfctl_do_clear_tables(anchorname, opts);
 			break;
 		}
 	}
