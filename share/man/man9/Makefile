@@ -47,6 +47,7 @@ MAN=	accept_filter.9 \
 	BUS_GET_CPUS.9 \
 	BUS_GET_PROPERTY.9 \
 	bus_get_resource.9 \
+	BUS_HINTED_CHILD.9 \
 	bus_map_resource.9 \
 	BUS_NEW_PASS.9 \
 	BUS_PRINT_CHILD.9 \
@@ -673,6 +674,7 @@ MLINKS+=buf_ring.9 buf_ring_alloc.9 \
 MLINKS+=bus_activate_resource.9 bus_deactivate_resource.9
 MLINKS+=bus_alloc_resource.9 bus_alloc_resource_any.9
 MLINKS+=BUS_BIND_INTR.9 bus_bind_intr.9
+MLINKS+=BUS_CONFIG_INTR.9 bus_config_intr.9
 MLINKS+=BUS_DESCRIBE_INTR.9 bus_describe_intr.9
 MLINKS+=bus_dma.9 busdma.9 \
 	bus_dma.9 bus_dmamap_create.9 \
@@ -691,6 +693,8 @@ MLINKS+=bus_dma.9 busdma.9 \
 	bus_dma.9 bus_dmamem_free.9 \
 	bus_dma.9 bus_dma_tag_create.9 \
 	bus_dma.9 bus_dma_tag_destroy.9
+MLINKS+=bus_generic_print_child.9 bus_print_child_footer.9 \
+	bus_generic_print_child.9 bus_print_child_header.9
 MLINKS+=bus_generic_read_ivar.9 bus_generic_write_ivar.9
 MLINKS+=BUS_GET_CPUS.9 bus_get_cpus.9
 MLINKS+=bus_map_resource.9 bus_unmap_resource.9 \

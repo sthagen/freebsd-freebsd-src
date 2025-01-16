@@ -132,6 +132,7 @@ struct snl_field_parser {
 	uint16_t		off_out;
 	snl_parse_field_f	*cb;
 };
+static const struct snl_field_parser snl_f_p_empty[] = {};
 
 typedef bool snl_parse_attr_f(struct snl_state *ss, struct nlattr *attr,
     const void *arg, void *target);
@@ -1261,9 +1262,13 @@ snl_end_attr_nested(const struct snl_writer *nw, int off)
 static inline struct nlmsghdr *
 snl_create_msg_request(struct snl_writer *nw, int nlmsg_type)
 {
+	struct nlmsghdr *hdr;
+
 	assert(nw->hdr == NULL);
 
-	struct nlmsghdr *hdr = snl_reserve_msg_object(nw, struct nlmsghdr);
+	if (__predict_false((hdr =
+	    snl_reserve_msg_object(nw, struct nlmsghdr)) == NULL))
+		return (NULL);
 	hdr->nlmsg_type = nlmsg_type;
 	hdr->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 	nw->hdr = hdr;

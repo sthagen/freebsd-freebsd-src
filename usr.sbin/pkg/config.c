@@ -476,20 +476,35 @@ read_conf_file(const char *confpath, const char *requested_repo,
 {
 	struct ucl_parser *p;
 	ucl_object_t *obj = NULL;
-	const char *abi = pkg_get_myabi();
+	char *abi = pkg_get_myabi(), *major, *minor;
+	struct utsname uts;
+	int ret;
+
+	if (uname(&uts))
+		err(EXIT_FAILURE, "uname");
 	if (abi == NULL)
 		errx(EXIT_FAILURE, "Failed to determine ABI");
 
 	p = ucl_parser_new(0);
+	asprintf(&major, "%d",  __FreeBSD_version/100000);
+	if (major == NULL)
+		err(EXIT_FAILURE, "asprintf");
+	asprintf(&minor, "%d",  (__FreeBSD_version / 1000) % 100);
+	if (minor == NULL)
+		err(EXIT_FAILURE, "asprintf");
 	ucl_parser_register_variable(p, "ABI", abi);
+	ucl_parser_register_variable(p, "OSNAME", uts.sysname);
+	ucl_parser_register_variable(p, "RELEASE", major);
+	ucl_parser_register_variable(p, "VERSION_MAJOR", major);
+	ucl_parser_register_variable(p, "VERSION_MINOR", minor);
 
 	if (!ucl_parser_add_file(p, confpath)) {
 		if (errno != ENOENT)
 			errx(EXIT_FAILURE, "Unable to parse configuration "
 			    "file %s: %s", confpath, ucl_parser_get_error(p));
-		ucl_parser_free(p);
 		/* no configuration present */
-		return (1);
+		ret = 1;
+		goto out;
 	}
 
 	obj = ucl_parser_get_object(p);
@@ -502,11 +517,16 @@ read_conf_file(const char *confpath, const char *requested_repo,
 		else if (conftype == CONFFILE_REPO)
 			parse_repo_file(obj, requested_repo);
 	}
-
 	ucl_object_unref(obj);
-	ucl_parser_free(p);
 
-	return (0);
+	ret = 0;
+out:
+	ucl_parser_free(p);
+	free(abi);
+	free(major);
+	free(minor);
+
+	return (ret);
 }
 
 static void
@@ -657,7 +677,7 @@ config_get_repositories(void)
 {
 	if (STAILQ_EMPTY(&repositories)) {
 		/* Fall back to PACKAGESITE - deprecated - */
-		struct repository *r = calloc(1, sizeof(r));
+		struct repository *r = calloc(1, sizeof(*r));
 		if (r == NULL)
 			err(EXIT_FAILURE, "calloc");
 		r->name = strdup("fallback");
