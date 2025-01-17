@@ -234,12 +234,8 @@ clnt_vc_create(
 	 */
 	xdrmem_create(&xdrs, ct->ct_mcallc, MCALL_MSG_SIZE,
 	    XDR_ENCODE);
-	if (! xdr_callhdr(&xdrs, &call_msg)) {
-		if (ct->ct_closeit) {
-			soclose(ct->ct_socket);
-		}
+	if (! xdr_callhdr(&xdrs, &call_msg))
 		goto err;
-	}
 	ct->ct_mpos = XDR_GETPOS(&xdrs);
 	XDR_DESTROY(&xdrs);
 	ct->ct_waitchan = "rpcrecv";
@@ -252,12 +248,8 @@ clnt_vc_create(
 	sendsz = __rpc_get_t_size(si.si_af, si.si_proto, (int)sendsz);
 	recvsz = __rpc_get_t_size(si.si_af, si.si_proto, (int)recvsz);
 	error = soreserve(ct->ct_socket, sendsz, recvsz);
-	if (error != 0) {
-		if (ct->ct_closeit) {
-			soclose(ct->ct_socket);
-		}
+	if (error != 0)
 		goto err;
-	}
 	cl->cl_refs = 1;
 	cl->cl_ops = &clnt_vc_ops;
 	cl->cl_private = ct;
@@ -857,7 +849,7 @@ static void
 clnt_vc_destroy(CLIENT *cl)
 {
 	struct ct_data *ct = (struct ct_data *) cl->cl_private;
-	struct socket *so = NULL;
+	struct socket *so;
 	SVCXPRT *xprt;
 	uint32_t reterr;
 
@@ -875,19 +867,14 @@ clnt_vc_destroy(CLIENT *cl)
 		SVC_RELEASE(xprt);
 	}
 
-	if (ct->ct_socket) {
-		if (ct->ct_closeit) {
-			so = ct->ct_socket;
-		}
-	}
-
 	/* Wait for the upcall kthread to terminate. */
 	while ((ct->ct_rcvstate & RPCRCVSTATE_UPCALLTHREAD) != 0)
 		msleep(&ct->ct_sslrefno, &ct->ct_lock, 0,
 		    "clntvccl", hz);
 	mtx_unlock(&ct->ct_lock);
-
 	mtx_destroy(&ct->ct_lock);
+
+	so = ct->ct_closeit ? ct->ct_socket : NULL;
 	if (so) {
 		if (ct->ct_sslrefno != 0) {
 			/*
@@ -1278,6 +1265,7 @@ clnt_vc_dotlsupcall(void *data)
 	enum clnt_stat ret;
 	uint32_t reterr;
 
+	CURVNET_SET(ct->ct_socket->so_vnet);
 	mtx_lock(&ct->ct_lock);
 	ct->ct_rcvstate |= RPCRCVSTATE_UPCALLTHREAD;
 	while (!ct->ct_closed) {
@@ -1313,4 +1301,5 @@ clnt_vc_dotlsupcall(void *data)
 	mtx_unlock(&ct->ct_lock);
 	CLNT_RELEASE(cl);
 	kthread_exit();
+	CURVNET_RESTORE();
 }
