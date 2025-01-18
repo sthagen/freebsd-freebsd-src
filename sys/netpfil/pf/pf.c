@@ -464,6 +464,14 @@ BOUND_IFACE(struct pf_kstate *st, struct pf_pdesc *pd)
 	if (st->rule->rt == PF_REPLYTO || (pd->af != pd->naf))
 		return (V_pfi_all);
 
+	/*
+	 * If this state is created based on another state (e.g. SCTP
+	 * multihome) always set it floating initially. We can't know for sure
+	 * what interface the actual traffic for this state will come in on.
+	 */
+	if (pd->related_rule)
+		return (V_pfi_all);
+
 	/* Don't overrule the interface for states created on incoming packets. */
 	if (st->direction == PF_IN)
 		return (k);
@@ -5702,6 +5710,10 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 	}
 
 	while (r != NULL) {
+		if (pd->related_rule) {
+			*rm = pd->related_rule;
+			break;
+		}
 		pf_counter_u64_add(&r->evaluations, 1);
 		PF_TEST_ATTRIB(pfi_kkif_match(r->kif, pd->kif) == r->ifnot,
 			r->skip[PF_SKIP_IFP]);
@@ -7149,6 +7161,9 @@ pf_test_state_sctp(struct pf_kstate **state, struct pf_pdesc *pd,
 		return (PF_DROP);
 	}
 
+	if (pf_sctp_track(*state, pd, reason) != PF_PASS)
+		return (PF_DROP);
+
 	/* Track state. */
 	if (pd->sctp_flags & PFDESC_SCTP_INIT) {
 		if (src->state < SCTP_COOKIE_WAIT) {
@@ -7161,6 +7176,15 @@ pf_test_state_sctp(struct pf_kstate **state, struct pf_pdesc *pd,
 		if (dst->scrub->pfss_v_tag == 0)
 			dst->scrub->pfss_v_tag = pd->sctp_initiate_tag;
 	}
+
+	/*
+	 * Bind to the correct interface if we're if-bound. For multihomed
+	 * extra associations we don't know which interface that will be until
+	 * here, so we've inserted the state on V_pf_all. Fix that now.
+	 */
+	if ((*state)->kif == V_pfi_all &&
+	    (*state)->rule->rule_flag & PFRULE_IFBOUND)
+		(*state)->kif = pd->kif;
 
 	if (pd->sctp_flags & (PFDESC_SCTP_COOKIE | PFDESC_SCTP_HEARTBEAT_ACK)) {
 		if (src->state < SCTP_ESTABLISHED) {
@@ -7179,9 +7203,6 @@ pf_test_state_sctp(struct pf_kstate **state, struct pf_pdesc *pd,
 		pf_set_protostate(*state, psrc, SCTP_CLOSED);
 		(*state)->timeout = PFTM_SCTP_CLOSED;
 	}
-
-	if (pf_sctp_track(*state, pd, reason) != PF_PASS)
-		return (PF_DROP);
 
 	(*state)->expire = pf_get_uptime();
 
@@ -7378,6 +7399,9 @@ again:
 			j->pd.sctp_flags |= PFDESC_SCTP_ADD_IP;
 			PF_RULES_RLOCK();
 			sm = NULL;
+			if (s->rule->rule_flag & PFRULE_ALLOW_RELATED) {
+				j->pd.related_rule = s->rule;
+			}
 			ret = pf_test_rule(&r, &sm,
 			    &j->pd, &ra, &rs, NULL);
 			PF_RULES_RUNLOCK();
@@ -9894,12 +9918,13 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 			return (-1);
 		}
 
-		if (pf_normalize_ip(m0, reason, pd) != PF_PASS) {
+		if (pf_normalize_ip(reason, pd) != PF_PASS) {
 			/* We do IP header normalization and packet reassembly here */
+			*m0 = pd->m;
 			*action = PF_DROP;
 			return (-1);
 		}
-		pd->m = *m0;
+		*m0 = pd->m;
 
 		h = mtod(pd->m, struct ip *);
 		pd->off = h->ip_hl << 2;
@@ -9970,12 +9995,13 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		}
 
 		/* We do IP header normalization and packet reassembly here */
-		if (pf_normalize_ip6(m0, pd->fragoff, reason, pd) !=
+		if (pf_normalize_ip6(pd->fragoff, reason, pd) !=
 		    PF_PASS) {
+			*m0 = pd->m;
 			*action = PF_DROP;
 			return (-1);
 		}
-		pd->m = *m0;
+		*m0 = pd->m;
 		if (pd->m == NULL) {
 			/* packet sits in reassembly queue, no error */
 			*action = PF_PASS;
