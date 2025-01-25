@@ -32,6 +32,7 @@ arm64/arm64/busdma_machdep.c			standard
 arm64/arm64/clock.c				standard
 arm64/arm64/copyinout.S				standard
 arm64/arm64/cpu_errata.c			standard
+arm64/arm64/cpu_feat.c				standard
 arm64/arm64/cpufunc_asm.S			standard
 arm64/arm64/db_disasm.c				optional ddb
 arm64/arm64/db_interface.c			optional ddb
@@ -420,6 +421,7 @@ dev/pci/pci_dw_if.m				optional pci fdt
 
 dev/psci/psci.c					standard
 dev/psci/smccc_arm64.S				standard
+dev/psci/smccc_errata.c				standard
 dev/psci/smccc_trng.c				standard
 dev/psci/smccc.c				standard
 

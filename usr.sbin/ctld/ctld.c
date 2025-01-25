@@ -1072,106 +1072,6 @@ portal_group_set_redirection(struct portal_group *pg, const char *addr)
 	return (0);
 }
 
-static bool
-valid_hex(const char ch)
-{
-	switch (ch) {
-	case '0':
-	case '1':
-	case '2':
-	case '3':
-	case '4':
-	case '5':
-	case '6':
-	case '7':
-	case '8':
-	case '9':
-	case 'a':
-	case 'A':
-	case 'b':
-	case 'B':
-	case 'c':
-	case 'C':
-	case 'd':
-	case 'D':
-	case 'e':
-	case 'E':
-	case 'f':
-	case 'F':
-		return (true);
-	default:
-		return (false);
-	}
-}
-
-bool
-valid_iscsi_name(const char *name)
-{
-	int i;
-
-	if (strlen(name) >= MAX_NAME_LEN) {
-		log_warnx("overlong name for target \"%s\"; max length allowed "
-		    "by iSCSI specification is %d characters",
-		    name, MAX_NAME_LEN);
-		return (false);
-	}
-
-	/*
-	 * In the cases below, we don't return an error, just in case the admin
-	 * was right, and we're wrong.
-	 */
-	if (strncasecmp(name, "iqn.", strlen("iqn.")) == 0) {
-		for (i = strlen("iqn."); name[i] != '\0'; i++) {
-			/*
-			 * XXX: We should verify UTF-8 normalisation, as defined
-			 *      by 3.2.6.2: iSCSI Name Encoding.
-			 */
-			if (isalnum(name[i]))
-				continue;
-			if (name[i] == '-' || name[i] == '.' || name[i] == ':')
-				continue;
-			log_warnx("invalid character \"%c\" in target name "
-			    "\"%s\"; allowed characters are letters, digits, "
-			    "'-', '.', and ':'", name[i], name);
-			break;
-		}
-		/*
-		 * XXX: Check more stuff: valid date and a valid reversed domain.
-		 */
-	} else if (strncasecmp(name, "eui.", strlen("eui.")) == 0) {
-		if (strlen(name) != strlen("eui.") + 16)
-			log_warnx("invalid target name \"%s\"; the \"eui.\" "
-			    "should be followed by exactly 16 hexadecimal "
-			    "digits", name);
-		for (i = strlen("eui."); name[i] != '\0'; i++) {
-			if (!valid_hex(name[i])) {
-				log_warnx("invalid character \"%c\" in target "
-				    "name \"%s\"; allowed characters are 1-9 "
-				    "and A-F", name[i], name);
-				break;
-			}
-		}
-	} else if (strncasecmp(name, "naa.", strlen("naa.")) == 0) {
-		if (strlen(name) > strlen("naa.") + 32)
-			log_warnx("invalid target name \"%s\"; the \"naa.\" "
-			    "should be followed by at most 32 hexadecimal "
-			    "digits", name);
-		for (i = strlen("naa."); name[i] != '\0'; i++) {
-			if (!valid_hex(name[i])) {
-				log_warnx("invalid character \"%c\" in target "
-				    "name \"%s\"; allowed characters are 1-9 "
-				    "and A-F", name[i], name);
-				break;
-			}
-		}
-	} else {
-		log_warnx("invalid target name \"%s\"; should start with "
-		    "either \"iqn.\", \"eui.\", or \"naa.\"",
-		    name);
-	}
-	return (true);
-}
-
 struct pport *
 pport_new(struct kports *kports, const char *name, uint32_t ctl_port)
 {
@@ -1389,8 +1289,7 @@ target_new(struct conf *conf, const char *name)
 		log_warnx("duplicated target \"%s\"", name);
 		return (NULL);
 	}
-	if (valid_iscsi_name(name) == false) {
-		log_warnx("target name \"%s\" is invalid", name);
+	if (valid_iscsi_name(name, log_warnx) == false) {
 		return (NULL);
 	}
 	targ = calloc(1, sizeof(*targ));
@@ -1907,6 +1806,98 @@ conf_verify(struct conf *conf)
 	return (0);
 }
 
+static bool
+portal_init_socket(struct portal *p)
+{
+	struct portal_group *pg = p->p_portal_group;
+	int error, sockbuf;
+	int one = 1;
+
+	log_debugx("listening on %s, portal-group \"%s\"",
+	    p->p_listen, pg->pg_name);
+	p->p_socket = socket(p->p_ai->ai_family, p->p_ai->ai_socktype,
+	    p->p_ai->ai_protocol);
+	if (p->p_socket < 0) {
+		log_warn("socket(2) failed for %s",
+		    p->p_listen);
+		return (false);
+	}
+
+	sockbuf = SOCKBUF_SIZE;
+	if (setsockopt(p->p_socket, SOL_SOCKET, SO_RCVBUF, &sockbuf,
+	    sizeof(sockbuf)) == -1)
+		log_warn("setsockopt(SO_RCVBUF) failed for %s",
+		    p->p_listen);
+	sockbuf = SOCKBUF_SIZE;
+	if (setsockopt(p->p_socket, SOL_SOCKET, SO_SNDBUF, &sockbuf,
+	    sizeof(sockbuf)) == -1)
+		log_warn("setsockopt(SO_SNDBUF) failed for %s", p->p_listen);
+	if (setsockopt(p->p_socket, SOL_SOCKET, SO_NO_DDP, &one,
+	    sizeof(one)) == -1)
+		log_warn("setsockopt(SO_NO_DDP) failed for %s", p->p_listen);
+	error = setsockopt(p->p_socket, SOL_SOCKET, SO_REUSEADDR, &one,
+	    sizeof(one));
+	if (error != 0) {
+		log_warn("setsockopt(SO_REUSEADDR) failed for %s", p->p_listen);
+		close(p->p_socket);
+		p->p_socket = 0;
+		return (false);
+	}
+
+	if (pg->pg_dscp != -1) {
+		/* Only allow the 6-bit DSCP field to be modified */
+		int tos = pg->pg_dscp << 2;
+		switch (p->p_ai->ai_family) {
+		case AF_INET:
+			if (setsockopt(p->p_socket, IPPROTO_IP, IP_TOS,
+			    &tos, sizeof(tos)) == -1)
+				log_warn("setsockopt(IP_TOS) failed for %s",
+				    p->p_listen);
+			break;
+		case AF_INET6:
+			if (setsockopt(p->p_socket, IPPROTO_IPV6, IPV6_TCLASS,
+			    &tos, sizeof(tos)) == -1)
+				log_warn("setsockopt(IPV6_TCLASS) failed for %s",
+				    p->p_listen);
+			break;
+		}
+	}
+	if (pg->pg_pcp != -1) {
+		int pcp = pg->pg_pcp;
+		switch (p->p_ai->ai_family) {
+		case AF_INET:
+			if (setsockopt(p->p_socket, IPPROTO_IP, IP_VLAN_PCP,
+			    &pcp, sizeof(pcp)) == -1)
+				log_warn("setsockopt(IP_VLAN_PCP) failed for %s",
+				    p->p_listen);
+			break;
+		case AF_INET6:
+			if (setsockopt(p->p_socket, IPPROTO_IPV6, IPV6_VLAN_PCP,
+			    &pcp, sizeof(pcp)) == -1)
+				log_warn("setsockopt(IPV6_VLAN_PCP) failed for %s",
+				    p->p_listen);
+			break;
+		}
+	}
+
+	error = bind(p->p_socket, p->p_ai->ai_addr,
+	    p->p_ai->ai_addrlen);
+	if (error != 0) {
+		log_warn("bind(2) failed for %s", p->p_listen);
+		close(p->p_socket);
+		p->p_socket = 0;
+		return (false);
+	}
+	error = listen(p->p_socket, -1);
+	if (error != 0) {
+		log_warn("listen(2) failed for %s", p->p_listen);
+		close(p->p_socket);
+		p->p_socket = 0;
+		return (false);
+	}
+	return (true);
+}
+
 static int
 conf_apply(struct conf *oldconf, struct conf *newconf)
 {
@@ -1915,8 +1906,7 @@ conf_apply(struct conf *oldconf, struct conf *newconf)
 	struct portal *oldp, *newp;
 	struct port *oldport, *newport, *tmpport;
 	struct isns *oldns, *newns;
-	int changed, cumulated_error = 0, error, sockbuf;
-	int one = 1;
+	int changed, cumulated_error = 0, error;
 
 	if (oldconf->conf_debug != newconf->conf_debug) {
 		log_debugx("changing debug level to %d", newconf->conf_debug);
@@ -2183,109 +2173,7 @@ conf_apply(struct conf *oldconf, struct conf *newconf)
 			assert(proxy_mode == false);
 			assert(newp->p_iser == false);
 
-			log_debugx("listening on %s, portal-group \"%s\"",
-			    newp->p_listen, newpg->pg_name);
-			newp->p_socket = socket(newp->p_ai->ai_family,
-			    newp->p_ai->ai_socktype,
-			    newp->p_ai->ai_protocol);
-			if (newp->p_socket < 0) {
-				log_warn("socket(2) failed for %s",
-				    newp->p_listen);
-				cumulated_error++;
-				continue;
-			}
-			sockbuf = SOCKBUF_SIZE;
-			if (setsockopt(newp->p_socket, SOL_SOCKET, SO_RCVBUF,
-			    &sockbuf, sizeof(sockbuf)) == -1)
-				log_warn("setsockopt(SO_RCVBUF) failed "
-				    "for %s", newp->p_listen);
-			sockbuf = SOCKBUF_SIZE;
-			if (setsockopt(newp->p_socket, SOL_SOCKET, SO_SNDBUF,
-			    &sockbuf, sizeof(sockbuf)) == -1)
-				log_warn("setsockopt(SO_SNDBUF) failed "
-				    "for %s", newp->p_listen);
-			if (setsockopt(newp->p_socket, SOL_SOCKET, SO_NO_DDP,
-			    &one, sizeof(one)) == -1)
-				log_warn("setsockopt(SO_NO_DDP) failed "
-				    "for %s", newp->p_listen);
-			error = setsockopt(newp->p_socket, SOL_SOCKET,
-			    SO_REUSEADDR, &one, sizeof(one));
-			if (error != 0) {
-				log_warn("setsockopt(SO_REUSEADDR) failed "
-				    "for %s", newp->p_listen);
-				close(newp->p_socket);
-				newp->p_socket = 0;
-				cumulated_error++;
-				continue;
-			}
-			if (newpg->pg_dscp != -1) {
-				struct sockaddr sa;
-				int len = sizeof(sa);
-				getsockname(newp->p_socket, &sa, &len);
-				/*
-				 * Only allow the 6-bit DSCP
-				 * field to be modified
-				 */
-				int tos = newpg->pg_dscp << 2;
-				if (sa.sa_family == AF_INET) {
-					if (setsockopt(newp->p_socket,
-					    IPPROTO_IP, IP_TOS,
-					    &tos, sizeof(tos)) == -1)
-						log_warn("setsockopt(IP_TOS) "
-						    "failed for %s",
-						    newp->p_listen);
-				} else
-				if (sa.sa_family == AF_INET6) {
-					if (setsockopt(newp->p_socket,
-					    IPPROTO_IPV6, IPV6_TCLASS,
-					    &tos, sizeof(tos)) == -1)
-						log_warn("setsockopt(IPV6_TCLASS) "
-						    "failed for %s",
-						    newp->p_listen);
-				}
-			}
-			if (newpg->pg_pcp != -1) {
-				struct sockaddr sa;
-				int len = sizeof(sa);
-				getsockname(newp->p_socket, &sa, &len);
-				/*
-				 * Only allow the 6-bit DSCP
-				 * field to be modified
-				 */
-				int pcp = newpg->pg_pcp;
-				if (sa.sa_family == AF_INET) {
-					if (setsockopt(newp->p_socket,
-					    IPPROTO_IP, IP_VLAN_PCP,
-					    &pcp, sizeof(pcp)) == -1)
-						log_warn("setsockopt(IP_VLAN_PCP) "
-						    "failed for %s",
-						    newp->p_listen);
-				} else
-				if (sa.sa_family == AF_INET6) {
-					if (setsockopt(newp->p_socket,
-					    IPPROTO_IPV6, IPV6_VLAN_PCP,
-					    &pcp, sizeof(pcp)) == -1)
-						log_warn("setsockopt(IPV6_VLAN_PCP) "
-						    "failed for %s",
-						    newp->p_listen);
-				}
-			}
-			error = bind(newp->p_socket, newp->p_ai->ai_addr,
-			    newp->p_ai->ai_addrlen);
-			if (error != 0) {
-				log_warn("bind(2) failed for %s",
-				    newp->p_listen);
-				close(newp->p_socket);
-				newp->p_socket = 0;
-				cumulated_error++;
-				continue;
-			}
-			error = listen(newp->p_socket, -1);
-			if (error != 0) {
-				log_warn("listen(2) failed for %s",
-				    newp->p_listen);
-				close(newp->p_socket);
-				newp->p_socket = 0;
+			if (!portal_init_socket(newp)) {
 				cumulated_error++;
 				continue;
 			}

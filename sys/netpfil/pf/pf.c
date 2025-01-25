@@ -164,7 +164,7 @@ SDT_PROBE_DEFINE2(pf, purge, state, rowcount, "int", "size_t");
 
 /* state tables */
 VNET_DEFINE(struct pf_altqqueue,	 pf_altqs[4]);
-VNET_DEFINE(struct pf_kpalist,		 pf_pabuf[2]);
+VNET_DEFINE(struct pf_kpalist,		 pf_pabuf[3]);
 VNET_DEFINE(struct pf_altqqueue *,	 pf_altqs_active);
 VNET_DEFINE(struct pf_altqqueue *,	 pf_altq_ifs_active);
 VNET_DEFINE(struct pf_altqqueue *,	 pf_altqs_inactive);
@@ -1267,6 +1267,7 @@ pf_initialize(void)
 	TAILQ_INIT(&V_pf_altqs[3]);
 	TAILQ_INIT(&V_pf_pabuf[0]);
 	TAILQ_INIT(&V_pf_pabuf[1]);
+	TAILQ_INIT(&V_pf_pabuf[2]);
 	V_pf_altqs_active = &V_pf_altqs[0];
 	V_pf_altq_ifs_active = &V_pf_altqs[1];
 	V_pf_altqs_inactive = &V_pf_altqs[2];
@@ -5900,6 +5901,12 @@ nextrule:
 	if (r->rt) {
 		struct pf_ksrc_node	*sn = NULL;
 		struct pf_srchash	*snh = NULL;
+		struct pf_kpool		*pool = &r->route;
+
+		/* Backwards compatibility. */
+		if (TAILQ_EMPTY(&pool->list))
+			pool = &r->rdr;
+
 		/*
 		 * Set act.rt here instead of in pf_rule_to_actions() because
 		 * it is applied only from the last pass rule.
@@ -5907,7 +5914,7 @@ nextrule:
 		pd->act.rt = r->rt;
 		/* Don't use REASON_SET, pf_map_addr increases the reason counters */
 		reason = pf_map_addr_sn(pd->af, r, pd->src, &pd->act.rt_addr,
-		    &pd->act.rt_kif, NULL, &sn, &snh, &r->rdr);
+		    &pd->act.rt_kif, NULL, &sn, &snh, pool);
 		if (reason != 0)
 			goto cleanup;
 	}
@@ -8884,6 +8891,7 @@ pf_route(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 	uint16_t		 ip_len, ip_off;
 	uint16_t		 tmp;
 	int			 r_dir;
+	bool			 skip_test = false;
 
 	KASSERT(m && *m && r && oifp, ("%s: invalid parameters", __func__));
 
@@ -8935,10 +8943,30 @@ pf_route(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 		}
 	} else {
 		if ((pd->act.rt == PF_REPLYTO) == (r_dir == pd->dir)) {
-			pf_dummynet(pd, s, r, m);
-			if (s)
-				PF_STATE_UNLOCK(s);
-			return;
+			if (pd->af == pd->naf) {
+				pf_dummynet(pd, s, r, m);
+				if (s)
+					PF_STATE_UNLOCK(s);
+				return;
+			} else {
+				skip_test = true;
+			}
+		}
+
+		/*
+		 * If we're actually doing route-to and af-to and are in the
+		 * reply direction.
+		 */
+		if (pd->act.rt_kif && pd->act.rt_kif->pfik_ifp &&
+		    pd->af != pd->naf) {
+			if (pd->act.rt == PF_ROUTETO && r->naf != AF_INET) {
+				/* Un-set ifp so we do a plain route lookup. */
+				ifp = NULL;
+			}
+			if (pd->act.rt == PF_REPLYTO && r->naf != AF_INET6) {
+				/* Un-set ifp so we do a plain route lookup. */
+				ifp = NULL;
+			}
 		}
 		m0 = *m;
 	}
@@ -8952,13 +8980,6 @@ pf_route(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 	dst.sin_addr.s_addr = pd->act.rt_addr.v4.s_addr;
 
 	if (s != NULL){
-		if (r->rule_flag & PFRULE_IFBOUND &&
-		    pd->act.rt == PF_REPLYTO &&
-		    s->kif == V_pfi_all) {
-			s->kif = pd->act.rt_kif;
-			s->orig_kif = oifp->if_pf_kif;
-		}
-
 		if (ifp == NULL && (pd->af != pd->naf)) {
 			/* We're in the AFTO case. Do a route lookup. */
 			const struct nhop_object *nh;
@@ -8984,6 +9005,13 @@ pf_route(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 			}
 		}
 
+		if (r->rule_flag & PFRULE_IFBOUND &&
+		    pd->act.rt == PF_REPLYTO &&
+		    s->kif == V_pfi_all) {
+			s->kif = pd->act.rt_kif;
+			s->orig_kif = oifp->if_pf_kif;
+		}
+
 		PF_STATE_UNLOCK(s);
 	}
 
@@ -8994,7 +9022,7 @@ pf_route(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 		goto bad;
 	}
 
-	if (pd->dir == PF_IN) {
+	if (pd->dir == PF_IN && !skip_test) {
 		if (pf_test(AF_INET, PF_OUT, PFIL_FWD, ifp, &m0, inp,
 		    &pd->act) != PF_PASS) {
 			SDT_PROBE1(pf, ip, route_to, drop, __LINE__);
@@ -9144,6 +9172,7 @@ pf_route6(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 	struct ip6_hdr		*ip6;
 	struct ifnet		*ifp = NULL;
 	int			 r_dir;
+	bool			 skip_test = false;
 
 	KASSERT(m && *m && r && oifp, ("%s: invalid parameters", __func__));
 
@@ -9195,10 +9224,30 @@ pf_route6(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 		}
 	} else {
 		if ((pd->act.rt == PF_REPLYTO) == (r_dir == pd->dir)) {
-			pf_dummynet(pd, s, r, m);
-			if (s)
-				PF_STATE_UNLOCK(s);
-			return;
+			if (pd->af == pd->naf) {
+				pf_dummynet(pd, s, r, m);
+				if (s)
+					PF_STATE_UNLOCK(s);
+				return;
+			} else {
+				skip_test = true;
+			}
+		}
+
+		/*
+		 * If we're actually doing route-to and af-to and are in the
+		 * reply direction.
+		 */
+		if (pd->act.rt_kif && pd->act.rt_kif->pfik_ifp &&
+		    pd->af != pd->naf) {
+			if (pd->act.rt == PF_ROUTETO && r->naf != AF_INET6) {
+				/* Un-set ifp so we do a plain route lookup. */
+				ifp = NULL;
+			}
+			if (pd->act.rt == PF_REPLYTO && r->naf != AF_INET) {
+				/* Un-set ifp so we do a plain route lookup. */
+				ifp = NULL;
+			}
 		}
 		m0 = *m;
 	}
@@ -9212,13 +9261,6 @@ pf_route6(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 	PF_ACPY((struct pf_addr *)&dst.sin6_addr, &pd->act.rt_addr, AF_INET6);
 
 	if (s != NULL) {
-		if (r->rule_flag & PFRULE_IFBOUND &&
-		    pd->act.rt == PF_REPLYTO &&
-		    s->kif == V_pfi_all) {
-			s->kif = pd->act.rt_kif;
-			s->orig_kif = oifp->if_pf_kif;
-		}
-
 		if (ifp == NULL && (pd->af != pd->naf)) {
 			const struct nhop_object *nh;
 			nh = fib6_lookup(M_GETFIB(*m), &ip6->ip6_dst, 0, NHR_NONE, 0);
@@ -9244,6 +9286,13 @@ pf_route6(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 			}
 		}
 
+		if (r->rule_flag & PFRULE_IFBOUND &&
+		    pd->act.rt == PF_REPLYTO &&
+		    s->kif == V_pfi_all) {
+			s->kif = pd->act.rt_kif;
+			s->orig_kif = oifp->if_pf_kif;
+		}
+
 		PF_STATE_UNLOCK(s);
 	}
 
@@ -9264,7 +9313,7 @@ pf_route6(struct mbuf **m, struct pf_krule *r, struct ifnet *oifp,
 		goto bad;
 	}
 
-	if (pd->dir == PF_IN) {
+	if (pd->dir == PF_IN && !skip_test) {
 		if (pf_test(AF_INET6, PF_OUT, PFIL_FWD | PF_PFIL_NOREFRAGMENT,
 		    ifp, &m0, inp, &pd->act) != PF_PASS) {
 			SDT_PROBE1(pf, ip6, route_to, drop, __LINE__);
@@ -9937,7 +9986,7 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		pd->dst = (struct pf_addr *)&h->ip_dst;
 		pd->ip_sum = &h->ip_sum;
 		pd->virtual_proto = pd->proto = h->ip_p;
-		pd->tos = h->ip_tos;
+		pd->tos = h->ip_tos & ~IPTOS_ECN_MASK;
 		pd->ttl = h->ip_ttl;
 		pd->tot_len = ntohs(h->ip_len);
 		pd->act.rtableid = -1;

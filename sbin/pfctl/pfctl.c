@@ -1302,12 +1302,16 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 			goto error;
 		}
 
-		if (pfctl_get_pool(dev, &rule.rpool,
+		if (pfctl_get_pool(dev, &rule.rdr,
 		    nr, ri.ticket, PF_SCRUB, path, PF_RDR) != 0)
 			goto error;
 
 		if (pfctl_get_pool(dev, &rule.nat,
 		    nr, ri.ticket, PF_SCRUB, path, PF_NAT) != 0)
+			goto error;
+
+		if (pfctl_get_pool(dev, &rule.route,
+		    nr, ri.ticket, PF_SCRUB, path, PF_RT) != 0)
 			goto error;
 
 		switch (format) {
@@ -1323,7 +1327,9 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 		case PFCTL_SHOW_NOTHING:
 			break;
 		}
-		pfctl_clear_pool(&rule.rpool);
+		pfctl_clear_pool(&rule.rdr);
+		pfctl_clear_pool(&rule.nat);
+		pfctl_clear_pool(&rule.route);
 	}
 	ret = pfctl_get_rules_info_h(pfh, &ri, PF_PASS, path);
 	if (ret != 0) {
@@ -1337,12 +1343,16 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 			goto error;
 		}
 
-		if (pfctl_get_pool(dev, &rule.rpool,
+		if (pfctl_get_pool(dev, &rule.rdr,
 		    nr, ri.ticket, PF_PASS, path, PF_RDR) != 0)
 			goto error;
 
 		if (pfctl_get_pool(dev, &rule.nat,
 		    nr, ri.ticket, PF_PASS, path, PF_NAT) != 0)
+			goto error;
+
+		if (pfctl_get_pool(dev, &rule.route,
+		    nr, ri.ticket, PF_PASS, path, PF_RT) != 0)
 			goto error;
 
 		switch (format) {
@@ -1409,7 +1419,8 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 		case PFCTL_SHOW_NOTHING:
 			break;
 		}
-		pfctl_clear_pool(&rule.rpool);
+		pfctl_clear_pool(&rule.rdr);
+		pfctl_clear_pool(&rule.nat);
 	}
 
  error:
@@ -1498,11 +1509,14 @@ pfctl_show_nat(int dev, char *path, int opts, char *anchorname, int depth,
 				warnc(ret, "DIOCGETRULE");
 				return (-1);
 			}
-			if (pfctl_get_pool(dev, &rule.rpool, nr,
+			if (pfctl_get_pool(dev, &rule.rdr, nr,
 			    ri.ticket, nattype[i], path, PF_RDR) != 0)
 				return (-1);
 			if (pfctl_get_pool(dev, &rule.nat, nr,
 			    ri.ticket, nattype[i], path, PF_NAT) != 0)
+				return (-1);
+			if (pfctl_get_pool(dev, &rule.route, nr,
+			    ri.ticket, nattype[i], path, PF_RT) != 0)
 				return (-1);
 
 			if (dotitle) {
@@ -1755,8 +1769,12 @@ pfctl_append_rule(struct pfctl *pf, struct pfctl_rule *r,
 	if ((rule = calloc(1, sizeof(*rule))) == NULL)
 		err(1, "calloc");
 	bcopy(r, rule, sizeof(*rule));
-	TAILQ_INIT(&rule->rpool.list);
-	pfctl_move_pool(&r->rpool, &rule->rpool);
+	TAILQ_INIT(&rule->rdr.list);
+	pfctl_move_pool(&r->rdr, &rule->rdr);
+	TAILQ_INIT(&rule->nat.list);
+	pfctl_move_pool(&r->nat, &rule->nat);
+	TAILQ_INIT(&rule->route.list);
+	pfctl_move_pool(&r->route, &rule->route);
 
 	TAILQ_INSERT_TAIL(rs->rules[rs_num].active.ptr, rule, entries);
 	return (0);
@@ -2057,9 +2075,11 @@ pfctl_load_rule(struct pfctl *pf, char *path, struct pfctl_rule *r, int depth)
 				errc(1, error, "DIOCBEGINADDRS");
 		}
 
-		if (pfctl_add_pool(pf, &r->rpool, r->af, PF_RDR))
+		if (pfctl_add_pool(pf, &r->rdr, r->af, PF_RDR))
 			return (1);
 		if (pfctl_add_pool(pf, &r->nat, r->naf ? r->naf : r->af, PF_NAT))
+			return (1);
+		if (pfctl_add_pool(pf, &r->route, r->af, PF_RT))
 			return (1);
 		error = pfctl_add_rule_h(pf->h, r, anchor, name, ticket,
 		    pf->paddr.ticket);
@@ -2085,7 +2105,8 @@ pfctl_load_rule(struct pfctl *pf, char *path, struct pfctl_rule *r, int depth)
 			printf(" -- rule was already present");
 	}
 	path[len] = '\0';
-	pfctl_clear_pool(&r->rpool);
+	pfctl_clear_pool(&r->rdr);
+	pfctl_clear_pool(&r->nat);
 	return (0);
 }
 
