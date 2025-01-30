@@ -30,6 +30,8 @@
  */
 
 #include <sys/types.h>
+#include <sys/event.h>
+#include <sys/nv.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -64,6 +66,7 @@ static volatile bool sighup_received = false;
 static volatile bool sigterm_received = false;
 static volatile bool sigalrm_received = false;
 
+static int kqfd;
 static int nchildren = 0;
 static uint16_t last_portal_group_tag = 0xff;
 
@@ -618,7 +621,7 @@ portal_group_new(struct conf *conf, const char *name)
 	if (pg == NULL)
 		log_err(1, "calloc");
 	pg->pg_name = checked_strdup(name);
-	TAILQ_INIT(&pg->pg_options);
+	pg->pg_options = nvlist_create(0);
 	TAILQ_INIT(&pg->pg_portals);
 	TAILQ_INIT(&pg->pg_ports);
 	pg->pg_conf = conf;
@@ -635,7 +638,6 @@ portal_group_delete(struct portal_group *pg)
 {
 	struct portal *portal, *tmp;
 	struct port *port, *tport;
-	struct option *o, *otmp;
 
 	TAILQ_FOREACH_SAFE(port, &pg->pg_ports, p_pgs, tport)
 		port_delete(port);
@@ -643,8 +645,7 @@ portal_group_delete(struct portal_group *pg)
 
 	TAILQ_FOREACH_SAFE(portal, &pg->pg_portals, p_next, tmp)
 		portal_delete(portal);
-	TAILQ_FOREACH_SAFE(o, &pg->pg_options, o_next, otmp)
-		option_delete(&pg->pg_options, o);
+	nvlist_destroy(pg->pg_options);
 	free(pg->pg_name);
 	free(pg->pg_offload);
 	free(pg->pg_redirection);
@@ -1371,7 +1372,7 @@ lun_new(struct conf *conf, const char *name)
 		log_err(1, "calloc");
 	lun->l_conf = conf;
 	lun->l_name = checked_strdup(name);
-	TAILQ_INIT(&lun->l_options);
+	lun->l_options = nvlist_create(0);
 	TAILQ_INSERT_TAIL(&conf->conf_luns, lun, l_next);
 	lun->l_ctl_lun = -1;
 
@@ -1382,7 +1383,6 @@ void
 lun_delete(struct lun *lun)
 {
 	struct target *targ;
-	struct option *o, *tmp;
 	int i;
 
 	TAILQ_FOREACH(targ, &lun->l_conf->conf_targets, t_next) {
@@ -1393,8 +1393,7 @@ lun_delete(struct lun *lun)
 	}
 	TAILQ_REMOVE(&lun->l_conf->conf_luns, lun, l_next);
 
-	TAILQ_FOREACH_SAFE(o, &lun->l_options, o_next, tmp)
-		option_delete(&lun->l_options, o);
+	nvlist_destroy(lun->l_options);
 	free(lun->l_name);
 	free(lun->l_backend);
 	free(lun->l_device_id);
@@ -1480,56 +1479,23 @@ lun_set_ctl_lun(struct lun *lun, uint32_t value)
 	lun->l_ctl_lun = value;
 }
 
-struct option *
-option_new(struct options *options, const char *name, const char *value)
+bool
+option_new(nvlist_t *nvl, const char *name, const char *value)
 {
-	struct option *o;
+	int error;
 
-	o = option_find(options, name);
-	if (o != NULL) {
+	if (nvlist_exists_string(nvl, name)) {
 		log_warnx("duplicated option \"%s\"", name);
-		return (NULL);
+		return (false);
 	}
 
-	o = calloc(1, sizeof(*o));
-	if (o == NULL)
-		log_err(1, "calloc");
-	o->o_name = checked_strdup(name);
-	o->o_value = checked_strdup(value);
-	TAILQ_INSERT_TAIL(options, o, o_next);
-
-	return (o);
-}
-
-void
-option_delete(struct options *options, struct option *o)
-{
-
-	TAILQ_REMOVE(options, o, o_next);
-	free(o->o_name);
-	free(o->o_value);
-	free(o);
-}
-
-struct option *
-option_find(const struct options *options, const char *name)
-{
-	struct option *o;
-
-	TAILQ_FOREACH(o, options, o_next) {
-		if (strcmp(o->o_name, name) == 0)
-			return (o);
+	nvlist_add_string(nvl, name, value);
+	error = nvlist_error(nvl);
+	if (error != 0) {
+		log_warnc(error, "failed to add option \"%s\"", name);
+		return (false);
 	}
-
-	return (NULL);
-}
-
-void
-option_set(struct option *o, const char *value)
-{
-
-	free(o->o_value);
-	o->o_value = checked_strdup(value);
+	return (true);
 }
 
 #ifdef ICL_KERNEL_PROXY
@@ -1591,6 +1557,19 @@ connection_new(struct portal *portal, int fd, const char *host,
 
 #if 0
 static void
+options_print(const char *prefix, nvlist_t *nvl)
+{
+	const char *name;
+	void *cookie;
+
+	cookie = NULL;
+	while ((name = nvlist_next(nvl, NULL, &cookie)) != NULL) {
+		fprintf(stderr, "%soption %s %s\n", prefix, name,
+		    nvlist_get_string(nvl, name));
+	}
+}
+
+static void
 conf_print(struct conf *conf)
 {
 	struct auth_group *ag;
@@ -1601,7 +1580,6 @@ conf_print(struct conf *conf)
 	struct portal *portal;
 	struct target *targ;
 	struct lun *lun;
-	struct option *o;
 
 	TAILQ_FOREACH(ag, &conf->conf_auth_groups, ag_next) {
 		fprintf(stderr, "auth-group %s {\n", ag->ag_name);
@@ -1621,14 +1599,13 @@ conf_print(struct conf *conf)
 		fprintf(stderr, "portal-group %s {\n", pg->pg_name);
 		TAILQ_FOREACH(portal, &pg->pg_portals, p_next)
 			fprintf(stderr, "\t listen %s\n", portal->p_listen);
+		options_print("\t", pg->pg_options);
 		fprintf(stderr, "}\n");
 	}
 	TAILQ_FOREACH(lun, &conf->conf_luns, l_next) {
 		fprintf(stderr, "\tlun %s {\n", lun->l_name);
 		fprintf(stderr, "\t\tpath %s\n", lun->l_path);
-		TAILQ_FOREACH(o, &lun->l_options, o_next)
-			fprintf(stderr, "\t\toption %s %s\n",
-			    o->o_name, o->o_value);
+		options_print("\t\t", lun->l_options);
 		fprintf(stderr, "\t}\n");
 	}
 	TAILQ_FOREACH(targ, &conf->conf_targets, t_next) {
@@ -1807,9 +1784,30 @@ conf_verify(struct conf *conf)
 }
 
 static bool
+portal_reuse_socket(struct portal *oldp, struct portal *newp)
+{
+	struct kevent kev;
+
+	if (strcmp(newp->p_listen, oldp->p_listen) != 0)
+		return (false);
+
+	if (oldp->p_socket <= 0)
+		return (false);
+
+	EV_SET(&kev, oldp->p_socket, EVFILT_READ, EV_ADD, 0, 0, newp);
+	if (kevent(kqfd, &kev, 1, NULL, 0, NULL) == -1)
+		return (false);
+
+	newp->p_socket = oldp->p_socket;
+	oldp->p_socket = 0;
+	return (true);
+}
+
+static bool
 portal_init_socket(struct portal *p)
 {
 	struct portal_group *pg = p->p_portal_group;
+	struct kevent kev;
 	int error, sockbuf;
 	int one = 1;
 
@@ -1891,6 +1889,14 @@ portal_init_socket(struct portal *p)
 	error = listen(p->p_socket, -1);
 	if (error != 0) {
 		log_warn("listen(2) failed for %s", p->p_listen);
+		close(p->p_socket);
+		p->p_socket = 0;
+		return (false);
+	}
+	EV_SET(&kev, p->p_socket, EVFILT_READ, EV_ADD, 0, 0, p);
+	error = kevent(kqfd, &kev, 1, NULL, 0, NULL);
+	if (error == -1) {
+		log_warn("kevent(2) failed to register for %s", p->p_listen);
 		close(p->p_socket);
 		p->p_socket = 0;
 		return (false);
@@ -2141,16 +2147,11 @@ conf_apply(struct conf *oldconf, struct conf *newconf)
 			    pg_next) {
 				TAILQ_FOREACH(oldp, &oldpg->pg_portals,
 				    p_next) {
-					if (strcmp(newp->p_listen,
-					    oldp->p_listen) == 0 &&
-					    oldp->p_socket > 0) {
-						newp->p_socket =
-						    oldp->p_socket;
-						oldp->p_socket = 0;
-						break;
-					}
+					if (portal_reuse_socket(oldp, newp))
+						goto reused;
 				}
 			}
+		reused:
 			if (newp->p_socket > 0) {
 				/*
 				 * We're done with this portal.
@@ -2379,26 +2380,10 @@ handle_connection(struct portal *portal, int fd,
 	exit(0);
 }
 
-static int
-fd_add(int fd, fd_set *fdset, int nfds)
-{
-
-	/*
-	 * Skip sockets which we failed to bind.
-	 */
-	if (fd <= 0)
-		return (nfds);
-
-	FD_SET(fd, fdset);
-	if (fd > nfds)
-		nfds = fd;
-	return (nfds);
-}
-
 static void
 main_loop(struct conf *conf, bool dont_fork)
 {
-	struct portal_group *pg;
+	struct kevent kev;
 	struct portal *portal;
 	struct sockaddr_storage client_sa;
 	socklen_t client_salen;
@@ -2406,8 +2391,7 @@ main_loop(struct conf *conf, bool dont_fork)
 	int connection_id;
 	int portal_id;
 #endif
-	fd_set fdset;
-	int error, nfds, client_fd;
+	int error, client_fd;
 
 	pidfile_write(conf->conf_pidfh);
 
@@ -2442,38 +2426,34 @@ found:
 #endif
 			assert(proxy_mode == false);
 
-			FD_ZERO(&fdset);
-			nfds = 0;
-			TAILQ_FOREACH(pg, &conf->conf_portal_groups, pg_next) {
-				TAILQ_FOREACH(portal, &pg->pg_portals, p_next)
-					nfds = fd_add(portal->p_socket, &fdset, nfds);
-			}
-			error = select(nfds + 1, &fdset, NULL, NULL, NULL);
-			if (error <= 0) {
+			error = kevent(kqfd, NULL, 0, &kev, 1, NULL);
+			if (error == -1) {
 				if (errno == EINTR)
-					return;
-				log_err(1, "select");
+					continue;
+				log_err(1, "kevent");
 			}
-			TAILQ_FOREACH(pg, &conf->conf_portal_groups, pg_next) {
-				TAILQ_FOREACH(portal, &pg->pg_portals, p_next) {
-					if (!FD_ISSET(portal->p_socket, &fdset))
-						continue;
-					client_salen = sizeof(client_sa);
-					client_fd = accept(portal->p_socket,
-					    (struct sockaddr *)&client_sa,
-					    &client_salen);
-					if (client_fd < 0) {
-						if (errno == ECONNABORTED)
-							continue;
-						log_err(1, "accept");
-					}
-					assert(client_salen >= client_sa.ss_len);
 
-					handle_connection(portal, client_fd,
-					    (struct sockaddr *)&client_sa,
-					    dont_fork);
-					break;
+			switch (kev.filter) {
+			case EVFILT_READ:
+				portal = kev.udata;
+				assert(portal->p_socket == (int)kev.ident);
+
+				client_salen = sizeof(client_sa);
+				client_fd = accept(portal->p_socket,
+				    (struct sockaddr *)&client_sa,
+				    &client_salen);
+				if (client_fd < 0) {
+					if (errno == ECONNABORTED)
+						continue;
+					log_err(1, "accept");
 				}
+				assert(client_salen >= client_sa.ss_len);
+
+				handle_connection(portal, client_fd,
+				    (struct sockaddr *)&client_sa, dont_fork);
+				break;
+			default:
+				__assert_unreachable();
 			}
 #ifdef ICL_KERNEL_PROXY
 		}
@@ -2759,13 +2739,6 @@ main(int argc, char **argv)
 	if (new_pports_from_conf(newconf, &kports))
 		log_errx(1, "Error associating physical ports; exiting");
 
-	error = conf_apply(oldconf, newconf);
-	if (error != 0)
-		log_errx(1, "failed to apply configuration; exiting");
-
-	conf_delete(oldconf);
-	oldconf = NULL;
-
 	if (dont_daemonize == false) {
 		log_debugx("daemonizing");
 		if (daemon(0, 0) == -1) {
@@ -2774,6 +2747,20 @@ main(int argc, char **argv)
 			exit(1);
 		}
 	}
+
+	kqfd = kqueue();
+	if (kqfd == -1) {
+		log_warn("Cannot create kqueue");
+		pidfile_remove(newconf->conf_pidfh);
+		exit(1);
+	}
+
+	error = conf_apply(oldconf, newconf);
+	if (error != 0)
+		log_errx(1, "failed to apply configuration; exiting");
+
+	conf_delete(oldconf);
+	oldconf = NULL;
 
 	/* Schedule iSNS update */
 	if (!TAILQ_EMPTY(&newconf->conf_isns))
