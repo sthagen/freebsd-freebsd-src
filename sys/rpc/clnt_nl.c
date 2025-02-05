@@ -167,8 +167,7 @@ rpcnl_init(void)
 
 	rpcnl_family_id = genl_register_family(rpcnl_family_name, 0, 1, 1);
 	MPASS(rpcnl_family_id != 0);
-	rv = genl_register_cmds(rpcnl_family_name, clnt_cmds,
-	   nitems(clnt_cmds));
+	rv = genl_register_cmds(rpcnl_family_id, clnt_cmds, nitems(clnt_cmds));
 	MPASS(rv);
 	rw_init(&rpcnl_global_lock, rpcnl_family_name);
 }
@@ -185,7 +184,7 @@ client_nl_create(const char *name, const rpcprog_t program,
 	uint32_t group;
 	bool rv __diagused;
 
-	if ((group = genl_register_group(rpcnl_family_name, name)) == 0)
+	if ((group = genl_register_group(rpcnl_family_id, name)) == 0)
 		return (NULL);
 
 	nl = malloc(sizeof(*nl), M_RPC, M_WAITOK);
@@ -462,6 +461,7 @@ clnt_nl_destroy(CLIENT *cl)
 
 	MPASS(TAILQ_EMPTY(&nl->nl_pending));
 
+	genl_unregister_group(rpcnl_family_id, nl->nl_hdr.group);
 	rw_wlock(&rpcnl_global_lock);
 	RB_REMOVE(nl_data_t, &rpcnl_clients, nl);
 	rw_wlock(&rpcnl_global_lock);
