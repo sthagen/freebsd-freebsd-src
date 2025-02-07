@@ -2198,7 +2198,8 @@ daasync(void *callback_arg, uint32_t code,
 		ccb = (union ccb *)arg;
 
 		/*
-		 * Handle all UNIT ATTENTIONs except our own, as they will be
+		 * Unit attentions are broadcast to all the LUNs of the device
+		 * so handle all UNIT ATTENTIONs except our own, as they will be
 		 * handled by daerror().
 		 */
 		if (xpt_path_periph(ccb->ccb_h.path) != periph &&
@@ -4593,6 +4594,12 @@ dadone(struct cam_periph *periph, union ccb *done_ccb)
 			cam_periph_unlock(periph);
 			return;
 		}
+		/*
+		 * refresh bp, since cmd6workaround may set it to NULL when
+		 * there's no delete methos available since it pushes the bp
+		 * back onto the work queue to reschedule it (since different
+		 * delete methods have different size limitations).
+		 */
 		bp = (struct bio *)done_ccb->ccb_h.ccb_bp;
 		if (error != 0) {
 			int queued_error;
@@ -6028,6 +6035,16 @@ daerror(union ccb *ccb, uint32_t cam_flags, uint32_t sense_flags)
 			/* 28/0: NOT READY TO READY CHANGE, MEDIUM MAY HAVE CHANGED */
 			softc->flags &= ~DA_FLAG_PROBED;
 			disk_media_changed(softc->disk, M_NOWAIT);
+			/*
+			 * In an ideal world, we'd make sure that we have the
+			 * same medium mounted (if we'd seen one already) but
+			 * instead we don't invalidate the pack here and flag
+			 * below to retry the UAs. If we exhaust retries, then
+			 * we'll invalidate it in dadone for ENXIO errors (which
+			 * 28/0 will fail with eventually). Usually, retrying
+			 * just works and/or we get this before we've opened the
+			 * device (which clears the invalid flag).
+			 */
 		} else if (sense_key == SSD_KEY_UNIT_ATTENTION &&
 		    asc == 0x3F && ascq == 0x03) {
 			/* 3f/3: INQUIRY DATA HAS CHANGED */
