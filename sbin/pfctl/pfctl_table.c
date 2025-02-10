@@ -89,7 +89,7 @@ static const char	*istats_text[2][2][2] = {
 		table.pfrt_flags |= PFR_TFLAG_PERSIST;			\
 		if ((!(opts & PF_OPT_NOACTION) ||			\
 		    (opts & PF_OPT_DUMMYACTION)) &&			\
-		    (pfr_add_tables(&table, 1, &nadd, flags)) &&	\
+		    (pfr_add_table(&table, &nadd, flags)) &&		\
 		    (errno != EPERM)) {					\
 			radix_perror();					\
 			goto _error;					\
@@ -189,7 +189,7 @@ pfctl_table(int argc, char *argv[], char *tname, const char *command,
 	} else if (!strcmp(command, "kill")) {
 		if (argc || file != NULL)
 			usage();
-		RVTEST(pfr_del_tables(&table, 1, &ndel, flags));
+		RVTEST(pfr_del_table(&table, &ndel, flags));
 		xprintf(opts, "%d table deleted", ndel);
 	} else if (!strcmp(command, "flush")) {
 		if (argc || file != NULL)
