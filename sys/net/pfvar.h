@@ -1614,6 +1614,7 @@ struct pf_pdesc {
 
 	struct pf_addr	*src;		/* src address */
 	struct pf_addr	*dst;		/* dst address */
+	u_int16_t	*pcksum;	/* proto cksum */
 	u_int16_t	*sport;
 	u_int16_t	*dport;
 	u_int16_t	 osport;
@@ -1661,6 +1662,7 @@ struct pf_pdesc {
 #define PFDESC_SCTP_ADD_IP	0x1000
 	u_int16_t	 sctp_flags;
 	u_int32_t	 sctp_initiate_tag;
+	u_int16_t	 sctp_dummy_sum;
 	struct pf_krule	*related_rule;
 
 	struct pf_sctp_multihome_jobs	sctp_multihome_jobs;
