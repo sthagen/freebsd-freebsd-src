@@ -2974,12 +2974,13 @@ filter_opt	: USER uids {
 			filter_opts.match_tag = $3;
 			filter_opts.match_tag_not = $1;
 		}
-		| RECEIVEDON if_item {
+		| not RECEIVEDON if_item {
 			if (filter_opts.rcv) {
 				yyerror("cannot respecify received-on");
 				YYERROR;
 			}
-			filter_opts.rcv = $2;
+			filter_opts.rcv = $3;
+			filter_opts.rcv->not = $1;
 		}
 		| PROBABILITY probability		{
 			double	p;
@@ -6216,9 +6217,9 @@ expand_rule(struct pfctl_rule *r,
 		    (src_host->ifindex && dst_host->ifindex &&
 		    src_host->ifindex != dst_host->ifindex) ||
 		    (src_host->ifindex && *interface->ifname &&
-		    src_host->ifindex != if_nametoindex(interface->ifname)) ||
+		    src_host->ifindex != ifa_nametoindex(interface->ifname)) ||
 		    (dst_host->ifindex && *interface->ifname &&
-		    dst_host->ifindex != if_nametoindex(interface->ifname)))
+		    dst_host->ifindex != ifa_nametoindex(interface->ifname)))
 			continue;
 		if (!r->af && src_host->af)
 			r->af = src_host->af;
@@ -6228,9 +6229,9 @@ expand_rule(struct pfctl_rule *r,
 		if (*interface->ifname)
 			strlcpy(r->ifname, interface->ifname,
 			    sizeof(r->ifname));
-		else if (if_indextoname(src_host->ifindex, ifname))
+		else if (ifa_indextoname(src_host->ifindex, ifname))
 			strlcpy(r->ifname, ifname, sizeof(r->ifname));
-		else if (if_indextoname(dst_host->ifindex, ifname))
+		else if (ifa_indextoname(dst_host->ifindex, ifname))
 			strlcpy(r->ifname, ifname, sizeof(r->ifname));
 		else
 			memset(r->ifname, '\0', sizeof(r->ifname));
@@ -6279,6 +6280,7 @@ expand_rule(struct pfctl_rule *r,
 		if (rcv) {
 			strlcpy(r->rcv_ifname, rcv->ifname,
 			    sizeof(r->rcv_ifname));
+			r->rcvifnot = rcv->not;
 		}
 		r->type = icmp_type->type;
 		r->code = icmp_type->code;

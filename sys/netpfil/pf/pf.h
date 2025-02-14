@@ -113,7 +113,7 @@ enum	{
 #define PFTM_OTHER_FIRST_PACKET_VAL	60	/* First packet */
 #define PFTM_OTHER_SINGLE_VAL		30	/* Unidirectional */
 #define PFTM_OTHER_MULTIPLE_VAL		60	/* Bidirectional */
-#define PFTM_FRAG_VAL			30	/* Fragment expire */
+#define PFTM_FRAG_VAL			60	/* Fragment expire */
 #define PFTM_INTERVAL_VAL		10	/* Expire interval */
 #define PFTM_SRC_NODE_VAL		0	/* Source tracking */
 #define PFTM_TS_DIFF_VAL		30	/* Allowed TS diff */
@@ -648,6 +648,12 @@ struct pf_rule {
 #define	PFSTATE_DN_IS_QUEUE	0x8000
 #define	PFSTATE_SCRUBMASK (PFSTATE_NODF|PFSTATE_RANDOMID|PFSTATE_SCRUB_TCP)
 #define	PFSTATE_SETMASK   (PFSTATE_SETTOS|PFSTATE_SETPRIO)
+
+/* pfctl_state->src_node_flags */
+#define PFSTATE_SRC_NODE_LIMIT		0x01
+#define PFSTATE_SRC_NODE_NAT		0x02
+#define PFSTATE_SRC_NODE_ROUTE		0x04
+#define PFSTATE_SRC_NODE_LIMIT_GLOBAL	0x10
 
 #define PFSTATE_HIWAT		100000	/* default state table size */
 #define PFSTATE_ADAPT_START	60000	/* default adaptive timeout start */
