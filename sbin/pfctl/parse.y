@@ -3379,6 +3379,15 @@ if_item		: STRING			{
 			$$->next = NULL;
 			$$->tail = $$;
 		}
+		| ANY				{
+			$$ = calloc(1, sizeof(struct node_if));
+			if ($$ == NULL)
+				err(1, "if_item: calloc");
+			strlcpy($$->ifname, "any", sizeof($$->ifname));
+			$$->not = 0;
+			$$->next = NULL;
+			$$->tail = $$;
+		}
 		;
 
 af		: /* empty */			{ $$ = 0; }
@@ -6908,8 +6917,8 @@ check_file_secrecy(int fd, const char *fname)
 		warnx("%s: owner not root or current user", fname);
 		return (-1);
 	}
-	if (st.st_mode & (S_IRWXG | S_IRWXO)) {
-		warnx("%s: group/world readable/writeable", fname);
+	if (st.st_mode & (S_IWGRP | S_IXGRP | S_IRWXO)) {
+		warnx("%s: group writable or world read/writable", fname);
 		return (-1);
 	}
 	return (0);
