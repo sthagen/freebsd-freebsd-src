@@ -74,6 +74,7 @@
 #include <net/mac80211.h>
 
 #include <linux/workqueue.h>
+#include <linux/rculist.h>
 #include "linux_80211.h"
 
 #define	LKPI_80211_WME
@@ -294,7 +295,7 @@ lkpi_80211_dump_stas(SYSCTL_HANDLER_ARGS)
 	sbuf_new_for_sysctl(&s, NULL, 1024, req);
 
 	wiphy_lock(hw->wiphy);
-	TAILQ_FOREACH(lsta, &lvif->lsta_head, lsta_entry) {
+	list_for_each_entry(lsta, &lvif->lsta_list, lsta_list) {
 		sta = LSTA_TO_STA(lsta);
 
 		sbuf_putc(&s, '\n');
@@ -463,12 +464,11 @@ lkpi_lsta_remove(struct lkpi_sta *lsta, struct lkpi_vif *lvif)
 {
 
 
-	LKPI_80211_LVIF_LOCK(lvif);
-	KASSERT(lsta->lsta_entry.tqe_prev != NULL,
-	    ("%s: lsta %p lsta_entry.tqe_prev %p ni %p\n", __func__,
-	    lsta, lsta->lsta_entry.tqe_prev, lsta->ni));
-	TAILQ_REMOVE(&lvif->lsta_head, lsta, lsta_entry);
-	LKPI_80211_LVIF_UNLOCK(lvif);
+	wiphy_lock(lsta->hw->wiphy);
+	KASSERT(!list_empty(&lsta->lsta_list),
+	    ("%s: lsta %p ni %p\n", __func__, lsta, lsta->ni));
+	list_del_init(&lsta->lsta_list);
+	wiphy_unlock(lsta->hw->wiphy);
 }
 
 static struct lkpi_sta *
@@ -488,6 +488,7 @@ lkpi_lsta_alloc(struct ieee80211vap *vap, const uint8_t mac[IEEE80211_ADDR_LEN],
 	if (lsta == NULL)
 		return (NULL);
 
+	lsta->hw = hw;
 	lsta->added_to_drv = false;
 	lsta->state = IEEE80211_STA_NOTEXIST;
 	/*
@@ -750,6 +751,38 @@ lkpi_opmode_to_vif_type(enum ieee80211_opmode opmode)
 }
 
 #ifdef LKPI_80211_HW_CRYPTO
+static const char *
+lkpi_cipher_suite_to_name(uint32_t wlan_cipher_suite)
+{
+
+	switch (wlan_cipher_suite) {
+	case WLAN_CIPHER_SUITE_WEP40:
+		return ("WEP40");
+	case WLAN_CIPHER_SUITE_TKIP:
+		return ("TKIP");
+	case WLAN_CIPHER_SUITE_CCMP:
+		return ("CCMP");
+	case WLAN_CIPHER_SUITE_WEP104:
+		return ("WEP104");
+	case WLAN_CIPHER_SUITE_AES_CMAC:
+		return ("AES_CMAC");
+	case WLAN_CIPHER_SUITE_GCMP:
+		return ("GCMP");
+	case WLAN_CIPHER_SUITE_GCMP_256:
+		return ("GCMP_256");
+	case WLAN_CIPHER_SUITE_CCMP_256:
+		return ("CCMP_256");
+	case WLAN_CIPHER_SUITE_BIP_GMAC_128:
+		return ("BIP_GMAC_128");
+	case WLAN_CIPHER_SUITE_BIP_GMAC_256:
+		return ("BIP_GMAC_256");
+	case WLAN_CIPHER_SUITE_BIP_CMAC_256:
+		return ("BIP_CMAC_256");
+	default:
+		return ("??");
+	}
+}
+
 static uint32_t
 lkpi_l80211_to_net80211_cyphers(uint32_t wlan_cipher_suite)
 {
@@ -770,12 +803,16 @@ lkpi_l80211_to_net80211_cyphers(uint32_t wlan_cipher_suite)
 	case WLAN_CIPHER_SUITE_BIP_GMAC_128:
 	case WLAN_CIPHER_SUITE_BIP_GMAC_256:
 	case WLAN_CIPHER_SUITE_BIP_CMAC_256:
-		printf("%s: unsupported WLAN Cipher Suite %#08x | %u\n", __func__,
-		    wlan_cipher_suite >> 8, wlan_cipher_suite & 0xff);
+		printf("%s: unsupported WLAN Cipher Suite %#08x | %u (%s)\n",
+		    __func__,
+		    wlan_cipher_suite >> 8, wlan_cipher_suite & 0xff,
+		    lkpi_cipher_suite_to_name(wlan_cipher_suite));
 		break;
 	default:
-		printf("%s: unknown WLAN Cipher Suite %#08x | %u\n", __func__,
-		    wlan_cipher_suite >> 8, wlan_cipher_suite & 0xff);
+		printf("%s: unknown WLAN Cipher Suite %#08x | %u (%s)\n",
+		    __func__,
+		    wlan_cipher_suite >> 8, wlan_cipher_suite & 0xff,
+		    lkpi_cipher_suite_to_name(wlan_cipher_suite));
 	}
 
 	return (0);
@@ -1127,7 +1164,8 @@ _lkpi_iv_key_set(struct ieee80211vap *vap, const struct ieee80211_key *k)
 		break;
 	case WLAN_CIPHER_SUITE_TKIP:
 	default:
-		ic_printf(ic, "%s: CIPHER SUITE %#x not supported\n", __func__, lcipher);
+		ic_printf(ic, "%s: CIPHER SUITE %#x (%s) not supported\n",
+		    __func__, lcipher, lkpi_cipher_suite_to_name(lcipher));
 		IMPROVE();
 		wiphy_unlock(hw->wiphy);
 		ieee80211_free_node(ni);
@@ -1736,10 +1774,10 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	lsta->txq_ready = true;
 	LKPI_80211_LSTA_TXQ_UNLOCK(lsta);
 
-	LKPI_80211_LVIF_LOCK(lvif);
+	wiphy_lock(hw->wiphy);
 	/* Insert the [l]sta into the list of known stations. */
-	TAILQ_INSERT_TAIL(&lvif->lsta_head, lsta, lsta_entry);
-	LKPI_80211_LVIF_UNLOCK(lvif);
+	list_add_tail(&lsta->lsta_list, &lvif->lsta_list);
+	wiphy_unlock(hw->wiphy);
 
 	/* Add (or adjust) sta and change state (from NOTEXIST) to NONE. */
 	KASSERT(lsta != NULL, ("%s: ni %p lsta is NULL\n", __func__, ni));
@@ -3260,7 +3298,7 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 
 	lvif = malloc(len, M_80211_VAP, M_WAITOK | M_ZERO);
 	mtx_init(&lvif->mtx, "lvif", NULL, MTX_DEF);
-	TAILQ_INIT(&lvif->lsta_head);
+	INIT_LIST_HEAD(&lvif->lsta_list);
 	lvif->lvif_bss = NULL;
 	lvif->lvif_bss_synched = false;
 	vap = LVIF_TO_VAP(lvif);
@@ -4408,7 +4446,7 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
 					continue;
 				ltxq = TXQ_TO_LTXQ(sta->txq[tid]);
 				ic_printf(ic, "  tid %d ltxq %p seen_dequeue %d stopped %d skb_queue_len %u\n",
-				    tid, ltxq, ltxq->seen_dequeue, ltxq-> stopped, skb_queue_len(&ltxq->skbq));
+				    tid, ltxq, ltxq->seen_dequeue, ltxq->stopped, skb_queue_len(&ltxq->skbq));
 			}
 		}
 		ieee80211_free_node(ni);
@@ -5714,11 +5752,12 @@ linuxkpi_ieee80211_iterate_keys(struct ieee80211_hw *hw,
 	lvif = VIF_TO_LVIF(vif);
 
 	if (rcu) {
+		rcu_read_lock_held();		/* XXX-BZ is this correct? */
+
 		if (vif == NULL) {
 			TODO();
 		} else {
-			IMPROVE("We do not actually match the RCU code");
-			TAILQ_FOREACH(lsta, &lvif->lsta_head, lsta_entry) {
+			list_for_each_entry_rcu(lsta, &lvif->lsta_list, lsta_list) {
 				for (ieee80211_keyix keyix = 0; keyix < nitems(lsta->kc);
 				    keyix++)
 					lkpi_ieee80211_iterate_keys(hw, vif,
@@ -5733,7 +5772,7 @@ linuxkpi_ieee80211_iterate_keys(struct ieee80211_hw *hw,
 		if (vif == NULL) {
 			TODO();
 		} else {
-			TAILQ_FOREACH(lsta, &lvif->lsta_head, lsta_entry) {
+			list_for_each_entry(lsta, &lvif->lsta_list, lsta_list) {
 				for (ieee80211_keyix keyix = 0; keyix < nitems(lsta->kc);
 				    keyix++)
 					lkpi_ieee80211_iterate_keys(hw, vif,
@@ -5794,14 +5833,14 @@ linuxkpi_ieee80211_iterate_stations_atomic(struct ieee80211_hw *hw,
 	LKPI_80211_LHW_LVIF_LOCK(lhw);
 	TAILQ_FOREACH(lvif, &lhw->lvif_head, lvif_entry) {
 
-		LKPI_80211_LVIF_LOCK(lvif);
-		TAILQ_FOREACH(lsta, &lvif->lsta_head, lsta_entry) {
+		rcu_read_lock();
+		list_for_each_entry_rcu(lsta, &lvif->lsta_list, lsta_list) {
 			if (!lsta->added_to_drv)
 				continue;
 			sta = LSTA_TO_STA(lsta);
 			iterfunc(arg, sta);
 		}
-		LKPI_80211_LVIF_UNLOCK(lvif);
+		rcu_read_unlock();
 	}
 	LKPI_80211_LHW_LVIF_UNLOCK(lhw);
 }
@@ -6568,14 +6607,14 @@ lkpi_find_lsta_by_ni(struct lkpi_vif *lvif, struct ieee80211_node *ni)
 {
 	struct lkpi_sta *lsta, *temp;
 
-	LKPI_80211_LVIF_LOCK(lvif);
-	TAILQ_FOREACH_SAFE(lsta, &lvif->lsta_head, lsta_entry, temp) {
+	rcu_read_lock();
+	list_for_each_entry_rcu(lsta, &lvif->lsta_list, lsta_list) {
 		if (lsta->ni == ni) {
-			LKPI_80211_LVIF_UNLOCK(lvif);
+			rcu_read_unlock();
 			return (lsta);
 		}
 	}
-	LKPI_80211_LVIF_UNLOCK(lvif);
+	rcu_read_unlock();
 
 	return (NULL);
 }
@@ -6585,20 +6624,20 @@ struct ieee80211_sta *
 linuxkpi_ieee80211_find_sta(struct ieee80211_vif *vif, const u8 *peer)
 {
 	struct lkpi_vif *lvif;
-	struct lkpi_sta *lsta, *temp;
+	struct lkpi_sta *lsta;
 	struct ieee80211_sta *sta;
 
 	lvif = VIF_TO_LVIF(vif);
 
-	LKPI_80211_LVIF_LOCK(lvif);
-	TAILQ_FOREACH_SAFE(lsta, &lvif->lsta_head, lsta_entry, temp) {
+	rcu_read_lock();
+	list_for_each_entry_rcu(lsta, &lvif->lsta_list, lsta_list) {
 		sta = LSTA_TO_STA(lsta);
 		if (IEEE80211_ADDR_EQ(sta->addr, peer)) {
-			LKPI_80211_LVIF_UNLOCK(lvif);
+			rcu_read_unlock();
 			return (sta);
 		}
 	}
-	LKPI_80211_LVIF_UNLOCK(lvif);
+	rcu_read_unlock();
 	return (NULL);
 }
 
@@ -7138,8 +7177,8 @@ lkpi_ieee80211_wake_queues(struct ieee80211_hw *hw, int hwq)
 #endif
 				lvif->hw_queue_stopped[ac] = false;
 
-				LKPI_80211_LVIF_LOCK(lvif);
-				TAILQ_FOREACH(lsta, &lvif->lsta_head, lsta_entry) {
+				rcu_read_lock();
+				list_for_each_entry_rcu(lsta, &lvif->lsta_list, lsta_list) {
 					struct ieee80211_sta *sta;
 
 					sta = LSTA_TO_STA(lsta);
@@ -7162,7 +7201,7 @@ lkpi_ieee80211_wake_queues(struct ieee80211_hw *hw, int hwq)
 						lkpi_80211_mo_wake_tx_queue(hw, sta->txq[tid]);
 					}
 				}
-				LKPI_80211_LVIF_UNLOCK(lvif);
+				rcu_read_unlock();
 			}
 		}
 	}

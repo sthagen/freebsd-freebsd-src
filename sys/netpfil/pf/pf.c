@@ -54,7 +54,6 @@
 #include <sys/kthread.h>
 #include <sys/limits.h>
 #include <sys/mbuf.h>
-#include <sys/md5.h>
 #include <sys/random.h>
 #include <sys/refcount.h>
 #include <sys/sdt.h>
@@ -62,6 +61,8 @@
 #include <sys/sysctl.h>
 #include <sys/taskqueue.h>
 #include <sys/ucred.h>
+
+#include <crypto/sha2/sha512.h>
 
 #include <net/if.h>
 #include <net/if_var.h>
@@ -176,7 +177,7 @@ VNET_DEFINE(u_int32_t,			 ticket_altqs_inactive);
 VNET_DEFINE(int,			 altqs_inactive_open);
 VNET_DEFINE(u_int32_t,			 ticket_pabuf);
 
-VNET_DEFINE(MD5_CTX,			 pf_tcp_secret_ctx);
+VNET_DEFINE(SHA512_CTX,			 pf_tcp_secret_ctx);
 #define	V_pf_tcp_secret_ctx		 VNET(pf_tcp_secret_ctx)
 VNET_DEFINE(u_char,			 pf_tcp_secret[16]);
 #define	V_pf_tcp_secret			 VNET(pf_tcp_secret)
@@ -2354,7 +2355,9 @@ pf_intr(void *v)
 
 				pfse->pfse_m->m_flags |= M_SKIP_FIREWALL;
 				pfse->pfse_m->m_pkthdr.csum_flags |=
-				    CSUM_IP_VALID | CSUM_IP_CHECKED;
+				    CSUM_IP_VALID | CSUM_IP_CHECKED |
+				    CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
+				pfse->pfse_m->m_pkthdr.csum_data = 0xffff;
 				ip_input(pfse->pfse_m);
 			} else {
 				ip_output(pfse->pfse_m, NULL, NULL, 0, NULL,
@@ -2375,6 +2378,9 @@ pf_intr(void *v)
 
 				pfse->pfse_m->m_flags |= M_SKIP_FIREWALL |
 				    M_LOOP;
+				pfse->pfse_m->m_pkthdr.csum_flags |=
+				    CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
+				pfse->pfse_m->m_pkthdr.csum_data = 0xffff;
 				ip6_input(pfse->pfse_m);
 			} else {
 				ip6_output(pfse->pfse_m, NULL, NULL, 0, NULL,
@@ -4003,28 +4009,46 @@ pf_build_tcp(const struct pf_krule *r, sa_family_t af,
 	switch (af) {
 #ifdef INET
 	case AF_INET:
+		m->m_pkthdr.csum_flags |= CSUM_TCP;
+		m->m_pkthdr.csum_data = offsetof(struct tcphdr, th_sum);
+
 		h = mtod(m, struct ip *);
 
-		/* IP header fields included in the TCP checksum */
 		h->ip_p = IPPROTO_TCP;
 		h->ip_len = htons(tlen);
+		h->ip_v = 4;
+		h->ip_hl = sizeof(*h) >> 2;
+		h->ip_tos = IPTOS_LOWDELAY;
+		h->ip_len = htons(len);
+		h->ip_off = htons(V_path_mtu_discovery ? IP_DF : 0);
+		h->ip_ttl = ttl ? ttl : V_ip_defttl;
+		h->ip_sum = 0;
 		h->ip_src.s_addr = saddr->v4.s_addr;
 		h->ip_dst.s_addr = daddr->v4.s_addr;
 
 		th = (struct tcphdr *)((caddr_t)h + sizeof(struct ip));
+		th->th_sum = in_pseudo(h->ip_src.s_addr, h->ip_dst.s_addr,
+		    htons(len - sizeof(struct ip) + IPPROTO_TCP));
 		break;
 #endif /* INET */
 #ifdef INET6
 	case AF_INET6:
+		m->m_pkthdr.csum_flags |= CSUM_TCP_IPV6;
+		m->m_pkthdr.csum_data = offsetof(struct tcphdr, th_sum);
+
 		h6 = mtod(m, struct ip6_hdr *);
 
 		/* IP header fields included in the TCP checksum */
 		h6->ip6_nxt = IPPROTO_TCP;
 		h6->ip6_plen = htons(tlen);
+		h6->ip6_vfc |= IPV6_VERSION;
+		h6->ip6_hlim = V_ip6_defhlim;
 		memcpy(&h6->ip6_src, &saddr->v6, sizeof(struct in6_addr));
 		memcpy(&h6->ip6_dst, &daddr->v6, sizeof(struct in6_addr));
 
 		th = (struct tcphdr *)((caddr_t)h6 + sizeof(struct ip6_hdr));
+		th->th_sum = in6_cksum_pseudo(h6, len - sizeof(struct ip6_hdr),
+		    IPPROTO_TCP, 0);
 		break;
 #endif /* INET6 */
 	}
@@ -4043,35 +4067,7 @@ pf_build_tcp(const struct pf_krule *r, sa_family_t af,
 		opt[0] = TCPOPT_MAXSEG;
 		opt[1] = 4;
 		HTONS(mss);
-		bcopy((caddr_t)&mss, (caddr_t)(opt + 2), 2);
-	}
-
-	switch (af) {
-#ifdef INET
-	case AF_INET:
-		/* TCP checksum */
-		th->th_sum = in_cksum(m, len);
-
-		/* Finish the IP header */
-		h->ip_v = 4;
-		h->ip_hl = sizeof(*h) >> 2;
-		h->ip_tos = IPTOS_LOWDELAY;
-		h->ip_off = htons(V_path_mtu_discovery ? IP_DF : 0);
-		h->ip_len = htons(len);
-		h->ip_ttl = ttl ? ttl : V_ip_defttl;
-		h->ip_sum = 0;
-		break;
-#endif /* INET */
-#ifdef INET6
-	case AF_INET6:
-		/* TCP checksum */
-		th->th_sum = in6_cksum(m, IPPROTO_TCP,
-		    sizeof(struct ip6_hdr), tlen);
-
-		h6->ip6_vfc |= IPV6_VERSION;
-		h6->ip6_hlim = IPV6_DEFHLIM;
-		break;
-#endif /* INET6 */
+		memcpy((opt + 2), &mss, 2);
 	}
 
 	return (m);
@@ -4998,7 +4994,7 @@ pf_get_mss(struct pf_pdesc *pd)
 			--hlen;
 			break;
 		case TCPOPT_MAXSEG:
-			bcopy((caddr_t)(opt + 2), (caddr_t)&mss, 2);
+			memcpy(&mss, (opt + 2), 2);
 			NTOHS(mss);
 			/* FALLTHROUGH */
 		default:
@@ -5055,35 +5051,38 @@ pf_calc_mss(struct pf_addr *addr, sa_family_t af, int rtableid, u_int16_t offer)
 static u_int32_t
 pf_tcp_iss(struct pf_pdesc *pd)
 {
-	MD5_CTX ctx;
-	u_int32_t digest[4];
+	SHA512_CTX ctx;
+	union {
+		uint8_t bytes[SHA512_DIGEST_LENGTH];
+		uint32_t words[1];
+	} digest;
 
 	if (V_pf_tcp_secret_init == 0) {
 		arc4random_buf(&V_pf_tcp_secret, sizeof(V_pf_tcp_secret));
-		MD5Init(&V_pf_tcp_secret_ctx);
-		MD5Update(&V_pf_tcp_secret_ctx, V_pf_tcp_secret,
+		SHA512_Init(&V_pf_tcp_secret_ctx);
+		SHA512_Update(&V_pf_tcp_secret_ctx, V_pf_tcp_secret,
 		    sizeof(V_pf_tcp_secret));
 		V_pf_tcp_secret_init = 1;
 	}
 
 	ctx = V_pf_tcp_secret_ctx;
 
-	MD5Update(&ctx, (char *)&pd->hdr.tcp.th_sport, sizeof(u_short));
-	MD5Update(&ctx, (char *)&pd->hdr.tcp.th_dport, sizeof(u_short));
+	SHA512_Update(&ctx, &pd->hdr.tcp.th_sport, sizeof(u_short));
+	SHA512_Update(&ctx, &pd->hdr.tcp.th_dport, sizeof(u_short));
 	switch (pd->af) {
 	case AF_INET6:
-		MD5Update(&ctx, (char *)&pd->src->v6, sizeof(struct in6_addr));
-		MD5Update(&ctx, (char *)&pd->dst->v6, sizeof(struct in6_addr));
+		SHA512_Update(&ctx, &pd->src->v6, sizeof(struct in6_addr));
+		SHA512_Update(&ctx, &pd->dst->v6, sizeof(struct in6_addr));
 		break;
 	case AF_INET:
-		MD5Update(&ctx, (char *)&pd->src->v4, sizeof(struct in_addr));
-		MD5Update(&ctx, (char *)&pd->dst->v4, sizeof(struct in_addr));
+		SHA512_Update(&ctx, &pd->src->v4, sizeof(struct in_addr));
+		SHA512_Update(&ctx, &pd->dst->v4, sizeof(struct in_addr));
 		break;
 	}
-	MD5Final((u_char *)digest, &ctx);
+	SHA512_Final(digest.bytes, &ctx);
 	V_pf_tcp_iss_off += 4096;
 #define	ISN_RANDOM_INCREMENT (4096 - 1)
-	return (digest[0] + (arc4random() & ISN_RANDOM_INCREMENT) +
+	return (digest.words[0] + (arc4random() & ISN_RANDOM_INCREMENT) +
 	    V_pf_tcp_iss_off);
 #undef	ISN_RANDOM_INCREMENT
 }
@@ -6061,7 +6060,7 @@ pf_create_state(struct pf_krule *r, struct pf_krule *nr, struct pf_krule *a,
 	s->rule = r;
 	s->nat_rule = nr;
 	s->anchor = a;
-	bcopy(match_rules, &s->match_rules, sizeof(s->match_rules));
+	memcpy(&s->match_rules, match_rules, sizeof(s->match_rules));
 	memcpy(&s->act, &pd->act, sizeof(struct pf_rule_actions));
 
 	STATE_INC_COUNTERS(s);
@@ -7793,6 +7792,7 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 		pd2.sidx = (pd->dir == PF_IN) ? 1 : 0;
 		pd2.didx = (pd->dir == PF_IN) ? 0 : 1;
 		pd2.m = pd->m;
+		pd2.kif = pd->kif;
 		switch (pd->af) {
 #ifdef INET
 		case AF_INET:
@@ -9276,19 +9276,9 @@ pf_check_proto_cksum(struct mbuf *m, int off, int len, u_int8_t p, sa_family_t a
 	if (!hw_assist) {
 		switch (af) {
 		case AF_INET:
-			if (p == IPPROTO_ICMP) {
-				if (m->m_len < off)
-					return (1);
-				m->m_data += off;
-				m->m_len -= off;
-				sum = in_cksum(m, len);
-				m->m_data -= off;
-				m->m_len += off;
-			} else {
-				if (m->m_len < sizeof(struct ip))
-					return (1);
-				sum = in4_cksum(m, p, off, len);
-			}
+			if (m->m_len < sizeof(struct ip))
+				return (1);
+			sum = in4_cksum(m, (p == IPPROTO_ICMP ? 0 : p), off, len);
 			break;
 #ifdef INET6
 		case AF_INET6:
