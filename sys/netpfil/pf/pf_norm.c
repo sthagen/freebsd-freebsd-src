@@ -706,7 +706,8 @@ pf_join_fragment(struct pf_fragment *frag)
 	TAILQ_REMOVE(&frag->fr_queue, frent, fr_next);
 
 	m = frent->fe_m;
-	m_adj(m, (frent->fe_hdrlen + frent->fe_len) - m->m_pkthdr.len);
+	if ((frent->fe_hdrlen + frent->fe_len) < m->m_pkthdr.len)
+		m_adj(m, (frent->fe_hdrlen + frent->fe_len) - m->m_pkthdr.len);
 	uma_zfree(V_pf_frent_z, frent);
 	while ((frent = TAILQ_FIRST(&frag->fr_queue)) != NULL) {
 		TAILQ_REMOVE(&frag->fr_queue, frent, fr_next);
@@ -715,7 +716,8 @@ pf_join_fragment(struct pf_fragment *frag)
 		/* Strip off ip header. */
 		m_adj(m2, frent->fe_hdrlen);
 		/* Strip off any trailing bytes. */
-		m_adj(m2, frent->fe_len - m2->m_pkthdr.len);
+		if (frent->fe_len < m2->m_pkthdr.len)
+			m_adj(m2, frent->fe_len - m2->m_pkthdr.len);
 
 		uma_zfree(V_pf_frent_z, frent);
 		m_cat(m, m2);
@@ -1217,7 +1219,7 @@ pf_normalize_ip(u_short *reason, struct pf_pdesc *pd)
 	REASON_SET(reason, PFRES_FRAG);
  drop:
 	if (r != NULL && r->log)
-		PFLOG_PACKET(PF_DROP, *reason, r, NULL, NULL, pd, 1);
+		PFLOG_PACKET(PF_DROP, *reason, r, NULL, NULL, pd, 1, NULL);
 
 	return (PF_DROP);
 }
@@ -1421,7 +1423,7 @@ pf_normalize_tcp(struct pf_pdesc *pd)
  tcp_drop:
 	REASON_SET(&reason, PFRES_NORM);
 	if (rm != NULL && r->log)
-		PFLOG_PACKET(PF_DROP, reason, r, NULL, NULL, pd, 1);
+		PFLOG_PACKET(PF_DROP, reason, r, NULL, NULL, pd, 1, NULL);
 	return (PF_DROP);
 }
 
@@ -2185,7 +2187,7 @@ sctp_drop:
 	REASON_SET(&reason, PFRES_NORM);
 	if (rm != NULL && r->log)
 		PFLOG_PACKET(PF_DROP, reason, r, NULL, NULL, pd,
-		    1);
+		    1, NULL);
 
 	return (PF_DROP);
 }
