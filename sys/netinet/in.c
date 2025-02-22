@@ -1293,13 +1293,13 @@ in_ifaddr_broadcast(struct in_addr in, struct in_ifaddr *ia)
  * Return true if the address might be a local broadcast address.
  */
 bool
-in_broadcast(struct in_addr in, struct ifnet *ifp)
+in_ifnet_broadcast(struct in_addr in, struct ifnet *ifp)
 {
 	struct ifaddr *ifa;
 
 	NET_EPOCH_ASSERT();
 
-	if (in.s_addr == INADDR_BROADCAST || in.s_addr == INADDR_ANY)
+	if (in_broadcast(in))
 		return (true);
 	if ((ifp->if_flags & IFF_BROADCAST) == 0)
 		return (false);

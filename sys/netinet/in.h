@@ -672,7 +672,7 @@ int	getsourcefilter(int, uint32_t, struct sockaddr *, socklen_t,
 struct ifnet; struct mbuf;	/* forward declarations for Standard C */
 struct in_ifaddr;
 
-bool	 in_broadcast(struct in_addr, struct ifnet *);
+bool	 in_ifnet_broadcast(struct in_addr, struct ifnet *);
 bool	 in_ifaddr_broadcast(struct in_addr, struct in_ifaddr *);
 int	 in_canforward(struct in_addr);
 int	 in_localaddr(struct in_addr);
@@ -685,6 +685,13 @@ char	*inet_ntoa_r(struct in_addr ina, char *buf); /* in libkern */
 char	*inet_ntop(int, const void *, char *, socklen_t); /* in libkern */
 int	 inet_pton(int af, const char *, void *); /* in libkern */
 void	 in_ifdetach(struct ifnet *);
+
+static inline bool
+in_broadcast(struct in_addr in)
+{
+	return (in.s_addr == htonl(INADDR_BROADCAST) ||
+	    in.s_addr == htonl(INADDR_ANY));
+}
 
 #define	in_hosteq(s, t)	((s).s_addr == (t).s_addr)
 #define	in_nullhost(x)	((x).s_addr == INADDR_ANY)
