@@ -6921,11 +6921,11 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
 	}
 
 	if (ni != NULL) {
-		int ridx __unused;
 #ifdef LINUXKPI_DEBUG_80211
 		int old_rate;
 
-		old_rate = ni->ni_vap->iv_bss->ni_txrate;
+		old_rate =
+		    ieee80211_node_get_txrate_dot11rate(ni->ni_vap->iv_bss);
 #endif
 		txs.pktlen = skb->len;
 		txs.flags |= IEEE80211_RATECTL_STATUS_PKTLEN;
@@ -6945,14 +6945,15 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
 
 		IMPROVE("only update of rate matches but that requires us to get a proper rate");
 		ieee80211_ratectl_tx_complete(ni, &txs);
-		ridx = ieee80211_ratectl_rate(ni->ni_vap->iv_bss, NULL, 0);
+		ieee80211_ratectl_rate(ni->ni_vap->iv_bss, NULL, 0);
 
 #ifdef LINUXKPI_DEBUG_80211
 		if (linuxkpi_debug_80211 & D80211_TRACE_TX) {
-			printf("TX-RATE: %s: old %d new %d ridx %d, "
+			printf("TX-RATE: %s: old %d new %d "
 			    "long_retries %d\n", __func__,
-			    old_rate, ni->ni_vap->iv_bss->ni_txrate,
-			    ridx, txs.long_retries);
+			    old_rate,
+			    ieee80211_node_get_txrate_dot11rate(ni->ni_vap->iv_bss),
+			    txs.long_retries);
 		}
 #endif
 	}
