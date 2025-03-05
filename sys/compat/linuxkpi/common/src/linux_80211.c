@@ -6224,14 +6224,12 @@ lkpi_convert_rx_status(struct ieee80211_hw *hw,
 	}
 	if (rx_status->flag & RX_FLAG_MMIC_STRIPPED)
 		rx_stats->c_pktflags |= IEEE80211_RX_F_MMIC_STRIP;
-	if (rx_status->flag & RX_FLAG_MIC_STRIPPED) {
-		/* net80211 re-uses M[ichael]MIC for MIC too. Confusing. */
-		rx_stats->c_pktflags |= IEEE80211_RX_F_MMIC_STRIP;
-	}
+	if (rx_status->flag & RX_FLAG_MMIC_ERROR)
+		rx_stats->c_pktflags |= IEEE80211_RX_F_FAIL_MMIC;
+	if (rx_status->flag & RX_FLAG_MIC_STRIPPED)
+		rx_stats->c_pktflags |= IEEE80211_RX_F_MIC_STRIP;
 	if (rx_status->flag & RX_FLAG_IV_STRIPPED)
 		rx_stats->c_pktflags |= IEEE80211_RX_F_IV_STRIP;
-	if (rx_status->flag & RX_FLAG_MMIC_ERROR)
-		rx_stats->c_pktflags |= IEEE80211_RX_F_FAIL_MIC;
 	if (rx_status->flag & RX_FLAG_FAILED_FCS_CRC)
 		rx_stats->c_pktflags |= IEEE80211_RX_F_FAIL_FCSCRC;
 #endif
@@ -6921,12 +6919,6 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
 	}
 
 	if (ni != NULL) {
-#ifdef LINUXKPI_DEBUG_80211
-		int old_rate;
-
-		old_rate =
-		    ieee80211_node_get_txrate_dot11rate(ni->ni_vap->iv_bss);
-#endif
 		txs.pktlen = skb->len;
 		txs.flags |= IEEE80211_RATECTL_STATUS_PKTLEN;
 		if (info->status.rates[0].count > 1) {
@@ -6943,16 +6935,13 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
 			txs.flags |= IEEE80211_RATECTL_STATUS_RSSI;
 		}
 
-		IMPROVE("only update of rate matches but that requires us to get a proper rate");
+		IMPROVE("only update rate if needed but that requires us to get a proper rate from mo_sta_statistics");
 		ieee80211_ratectl_tx_complete(ni, &txs);
 		ieee80211_ratectl_rate(ni->ni_vap->iv_bss, NULL, 0);
 
 #ifdef LINUXKPI_DEBUG_80211
 		if (linuxkpi_debug_80211 & D80211_TRACE_TX) {
-			printf("TX-RATE: %s: old %d new %d "
-			    "long_retries %d\n", __func__,
-			    old_rate,
-			    ieee80211_node_get_txrate_dot11rate(ni->ni_vap->iv_bss),
+			printf("TX-RATE: %s: long_retries %d\n", __func__,
 			    txs.long_retries);
 		}
 #endif
