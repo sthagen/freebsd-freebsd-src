@@ -751,7 +751,7 @@ sendit:
 				error = ENOBUFS;
 			}
 			IPSTAT_INC(ips_odropped);
-			goto bad;
+			goto done;
 		} else {
 			m = m1;
 		}
@@ -859,7 +859,7 @@ sendit:
 
 done:
 	return (error);
- bad:
+bad:
 	m_freem(m);
 	goto done;
 }
