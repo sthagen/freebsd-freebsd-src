@@ -2266,7 +2266,7 @@ pf_icmp_mapping(struct pf_pdesc *pd, u_int8_t type,
 			*icmp_dir = PF_IN;
 			*virtual_type = type;
 			*virtual_id = 0;
-			HTONS(*virtual_type);
+			*virtual_type = htons(*virtual_type);
 			return (1);  /* These types match to another state */
 
 		/*
@@ -2333,7 +2333,7 @@ pf_icmp_mapping(struct pf_pdesc *pd, u_int8_t type,
 			*icmp_dir = PF_IN;
 			*virtual_type = type;
 			*virtual_id = 0;
-			HTONS(*virtual_type);
+			*virtual_type = htons(*virtual_type);
 			return (1);  /* These types match to another state */
 		/*
 		 * All remaining ICMP6 types get their own states,
@@ -2350,7 +2350,7 @@ pf_icmp_mapping(struct pf_pdesc *pd, u_int8_t type,
 	default:
 		unhandled_af(pd->af);
 	}
-	HTONS(*virtual_type);
+	*virtual_type = htons(*virtual_type);
 	return (0);  /* These types match to their own state */
 }
 
@@ -4101,7 +4101,7 @@ pf_build_tcp(const struct pf_krule *r, sa_family_t af,
 		opt = (char *)(th + 1);
 		opt[0] = TCPOPT_MAXSEG;
 		opt[1] = 4;
-		HTONS(mss);
+		mss = htons(mss);
 		memcpy((opt + 2), &mss, 2);
 	}
 
@@ -4527,10 +4527,7 @@ pf_match(u_int8_t op, u_int32_t a1, u_int32_t a2, u_int32_t p)
 int
 pf_match_port(u_int8_t op, u_int16_t a1, u_int16_t a2, u_int16_t p)
 {
-	NTOHS(a1);
-	NTOHS(a2);
-	NTOHS(p);
-	return (pf_match(op, a1, a2, p));
+	return (pf_match(op, ntohs(a1), ntohs(a2), ntohs(p)));
 }
 
 static int
@@ -5034,7 +5031,7 @@ pf_get_mss(struct pf_pdesc *pd)
 			break;
 		case TCPOPT_MAXSEG:
 			memcpy(&mss, (opt + 2), 2);
-			NTOHS(mss);
+			mss = ntohs(mss);
 			/* FALLTHROUGH */
 		default:
 			optlen = opt[1];
@@ -6103,7 +6100,6 @@ pf_create_state(struct pf_krule *r, struct pf_krule *nr, struct pf_krule *a,
 	memcpy(&s->match_rules, match_rules, sizeof(s->match_rules));
 	memcpy(&s->act, &pd->act, sizeof(struct pf_rule_actions));
 
-	STATE_INC_COUNTERS(s);
 	if (r->allow_opts)
 		s->state_flags |= PFSTATE_ALLOWOPTS;
 	if (r->rule_flag & PFRULE_STATESLOPPY)
@@ -6227,6 +6223,8 @@ pf_create_state(struct pf_krule *r, struct pf_krule *nr, struct pf_krule *a,
 	} else
 		*sm = s;
 
+	STATE_INC_COUNTERS(s);
+
 	/*
 	 * Lock order is important: first state, then source node.
 	 */
@@ -6302,7 +6300,6 @@ drop:
 	if (s != NULL) {
 		pf_src_tree_remove_state(s);
 		s->timeout = PFTM_UNLINKED;
-		STATE_DEC_COUNTERS(s);
 		pf_free_state(s);
 	}
 
@@ -7905,7 +7902,6 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 			struct tcphdr		 th;
 			u_int32_t		 seq;
 			struct pf_state_peer	*src, *dst;
-			u_int16_t		 dummy_cksum = 0;
 			u_int8_t		 dws;
 			int			 copyback = 0;
 
@@ -8002,7 +7998,8 @@ pf_test_state_icmp(struct pf_kstate **state, struct pf_pdesc *pd,
 					nk = (*state)->key[pd->didx];
 
 #if defined(INET) && defined(INET6)
-				int	 afto, sidx, didx;
+				int		 afto, sidx, didx;
+				u_int16_t	 dummy_cksum = 0;
 
 				afto = pd->af != nk->af;
 
