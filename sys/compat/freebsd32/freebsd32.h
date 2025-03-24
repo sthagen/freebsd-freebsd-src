@@ -446,6 +446,27 @@ struct kinfo_vm_layout32 {
 	uint32_t	kvm_spare[12];
 };
 
+#if defined(_WANT_KEVENT32) || (defined(_KERNEL) && defined(__LP64__))
+struct kinfo_knote32 {
+	int		knt_kq_fd;
+	struct kevent32	knt_event;
+	int		knt_status;
+	int		knt_extdata;
+	uint32_t	knt_spare0[8];
+	union {
+		struct {
+			int		knt_vnode_type;
+			uint32_t	knt_vnode_fsid[2];
+			uint32_t	knt_vnode_fileid[2];
+			char		knt_vnode_fullpath[PATH_MAX];
+		} knt_vnode;
+		struct {
+			uint32_t	knt_pipe_ino[2];
+		} knt_pipe;
+	};
+};
+#endif
+
 struct kld_file_stat_1_32 {
 	int	version;	/* set to sizeof(struct kld_file_stat_1) */
 	char	name[MAXPATHLEN];

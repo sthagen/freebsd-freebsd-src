@@ -34,14 +34,11 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_capsicum.h"
 #include "opt_ddb.h"
 #include "opt_ktrace.h"
 
-#include <sys/param.h>
 #include <sys/systm.h>
-
 #include <sys/capsicum.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
@@ -2992,6 +2989,47 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct file **fpp)
 		error = ENOENT;
 	}
 	FILEDESC_SUNLOCK(fdp);
+	fddrop(fdp);
+	return (error);
+}
+
+int
+fget_remote_foreach(struct thread *td, struct proc *p,
+    int (*fn)(struct proc *, int, struct file *, void *), void *arg)
+{
+	struct filedesc *fdp;
+	struct fdescenttbl *fdt;
+	struct file *fp;
+	int error, error1, fd, highfd;
+
+	error = 0;
+	PROC_LOCK(p);
+	fdp = fdhold(p);
+	PROC_UNLOCK(p);
+	if (fdp == NULL)
+		return (ENOENT);
+
+	FILEDESC_SLOCK(fdp);
+	if (refcount_load(&fdp->fd_refcnt) != 0) {
+		fdt = atomic_load_ptr(&fdp->fd_files);
+		highfd = fdt->fdt_nfiles - 1;
+		FILEDESC_SUNLOCK(fdp);
+	} else {
+		error = ENOENT;
+		FILEDESC_SUNLOCK(fdp);
+		goto out;
+	}
+
+	for (fd = 0; fd <= highfd; fd++) {
+		error1 = fget_remote(td, p, fd, &fp);
+		if (error1 != 0)
+			continue;
+		error = fn(p, fd, fp, arg);
+		fdrop(fp, td);
+		if (error != 0)
+			break;
+	}
+out:
 	fddrop(fdp);
 	return (error);
 }
