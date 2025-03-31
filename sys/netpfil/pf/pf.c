@@ -798,23 +798,6 @@ pf_set_protostate(struct pf_kstate *s, int which, u_int8_t newstate)
 	s->src.state = newstate;
 }
 
-#ifdef INET6
-void
-pf_addrcpy(struct pf_addr *dst, const struct pf_addr *src, sa_family_t af)
-{
-	switch (af) {
-#ifdef INET
-	case AF_INET:
-		memcpy(&dst->v4, &src->v4, sizeof(dst->v4));
-		break;
-#endif /* INET */
-	case AF_INET6:
-		memcpy(&dst->v6, &src->v6, sizeof(dst->v6));
-		break;
-	}
-}
-#endif /* INET6 */
-
 static void
 pf_init_threshold(struct pf_threshold *threshold,
     u_int32_t limit, u_int32_t seconds)
@@ -1523,15 +1506,28 @@ keyattach:
 						printf("\n");
 					}
 					s->timeout = PFTM_UNLINKED;
+					if (idx == PF_SK_STACK)
+						/*
+						 * Remove the wire key from
+						 * the hash. Other threads
+						 * can't be referencing it
+						 * because we still hold the
+						 * hash lock.
+						 */
+						pf_state_key_detach(s,
+						    PF_SK_WIRE);
 					PF_HASHROW_UNLOCK(ih);
 					KEYS_UNLOCK();
-					if (idx == PF_SK_WIRE) {
+					if (idx == PF_SK_WIRE)
+						/*
+						 * We've not inserted either key.
+						 * Free both.
+						 */
 						uma_zfree(V_pf_state_key_z, skw);
-						if (skw != sks)
-							uma_zfree(V_pf_state_key_z, sks);
-					} else {
-						pf_detach_state(s);
-					}
+					if (skw != sks)
+						uma_zfree(
+						    V_pf_state_key_z,
+						    sks);
 					return (EEXIST); /* collision! */
 				}
 			}
@@ -1822,6 +1818,7 @@ pf_state_insert(struct pfi_kkif *kif, struct pfi_kkif *orig_kif,
 	/* Returns with ID locked on success. */
 	if ((error = pf_state_key_attach(skw, sks, s)) != 0)
 		return (error);
+	skw = sks = NULL;
 
 	ih = &V_pf_idhash[PF_IDHASH(s)];
 	PF_HASHROW_ASSERT(ih);
@@ -4266,26 +4263,29 @@ pf_send_tcp(const struct pf_krule *r, sa_family_t af,
 }
 
 static void
-pf_return(struct pf_krule *r, struct pf_krule *nr, struct pf_pdesc *pd,
-    struct pf_state_key *sk, struct tcphdr *th,
-    u_int16_t bproto_sum, u_int16_t bip_sum,
-    u_short *reason, int rtableid)
+pf_undo_nat(struct pf_krule *nr, struct pf_pdesc *pd, uint16_t bip_sum)
 {
-	struct pf_addr	* const saddr = pd->src;
-	struct pf_addr	* const daddr = pd->dst;
-
 	/* undo NAT changes, if they have taken place */
 	if (nr != NULL) {
-		PF_ACPY(saddr, &sk->addr[pd->sidx], pd->af);
-		PF_ACPY(daddr, &sk->addr[pd->didx], pd->af);
+		PF_ACPY(pd->src, &pd->osrc, pd->af);
+		PF_ACPY(pd->dst, &pd->odst, pd->af);
 		if (pd->sport)
-			*pd->sport = sk->port[pd->sidx];
+			*pd->sport = pd->osport;
 		if (pd->dport)
-			*pd->dport = sk->port[pd->didx];
+			*pd->dport = pd->odport;
 		if (pd->ip_sum)
 			*pd->ip_sum = bip_sum;
 		m_copyback(pd->m, pd->off, pd->hdrlen, pd->hdr.any);
 	}
+}
+
+static void
+pf_return(struct pf_krule *r, struct pf_krule *nr, struct pf_pdesc *pd,
+    struct tcphdr *th, u_int16_t bproto_sum, u_int16_t bip_sum,
+    u_short *reason, int rtableid)
+{
+	pf_undo_nat(nr, pd, bip_sum);
+
 	if (pd->proto == IPPROTO_TCP &&
 	    ((r->rule_flag & PFRULE_RETURNRST) ||
 	    (r->rule_flag & PFRULE_RETURN)) &&
@@ -5479,6 +5479,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 	int			 asd = 0;
 	int			 match = 0;
 	int			 state_icmp = 0, icmp_dir;
+	int			 action = PF_PASS;
 	u_int16_t		 virtual_type, virtual_id;
 	u_int16_t		 bproto_sum = 0, bip_sum = 0;
 	u_int8_t		 icmptype = 0, icmpcode = 0;
@@ -5913,7 +5914,7 @@ nextrule:
 	    ((r->rule_flag & PFRULE_RETURNRST) ||
 	    (r->rule_flag & PFRULE_RETURNICMP) ||
 	    (r->rule_flag & PFRULE_RETURN))) {
-		pf_return(r, nr, pd, sk, th, bproto_sum,
+		pf_return(r, nr, pd, th, bproto_sum,
 		    bip_sum, &reason, r->rtableid);
 	}
 
@@ -5951,18 +5952,18 @@ nextrule:
 	if (pd->virtual_proto != PF_VPROTO_FRAGMENT &&
 	   (!state_icmp && (r->keep_state || nr != NULL ||
 	    (pd->flags & PFDESC_TCP_NORM)))) {
-		int action;
 		bool nat64;
 
 		action = pf_create_state(r, nr, a, pd, nk, sk,
 		    &rewrite, sm, tag, bproto_sum, bip_sum,
 		    &match_rules, udp_mapping);
+		sk = nk = NULL;
 		if (action != PF_PASS) {
 			pf_udp_mapping_release(udp_mapping);
 			pd->act.log |= PF_LOG_FORCE;
 			if (action == PF_DROP &&
 			    (r->rule_flag & PFRULE_RETURN))
-				pf_return(r, nr, pd, sk, th,
+				pf_return(r, nr, pd, th,
 				    bproto_sum, bip_sum, &reason,
 				    pd->act.rtableid);
 			return (action);
@@ -5993,6 +5994,9 @@ nextrule:
 				goto cleanup;
 
 			rewrite += ret;
+
+			if (rewrite && sk->af != nk->af)
+				action = PF_AFRT;
 		}
 	} else {
 		while ((ri = SLIST_FIRST(&match_rules))) {
@@ -6002,6 +6006,7 @@ nextrule:
 
 		uma_zfree(V_pf_state_key_z, sk);
 		uma_zfree(V_pf_state_key_z, nk);
+		sk = nk = NULL;
 		pf_udp_mapping_release(udp_mapping);
 	}
 
@@ -6020,10 +6025,7 @@ nextrule:
 		 */
 		return (PF_DEFER);
 
-	if (rewrite && sk != NULL && nk != NULL && sk->af != nk->af) {
-		return (PF_AFRT);
-	} else
-		return (PF_PASS);
+	return (action);
 
 cleanup:
 	while ((ri = SLIST_FIRST(&match_rules))) {
@@ -6222,6 +6224,7 @@ pf_create_state(struct pf_krule *r, struct pf_krule *nr, struct pf_krule *a,
 		goto drop;
 	} else
 		*sm = s;
+	sk = nk = NULL;
 
 	STATE_INC_COUNTERS(s);
 
@@ -6240,21 +6243,7 @@ pf_create_state(struct pf_krule *r, struct pf_krule *nr, struct pf_krule *a,
 	if (pd->proto == IPPROTO_TCP && (tcp_get_flags(th) & (TH_SYN|TH_ACK)) ==
 	    TH_SYN && r->keep_state == PF_STATE_SYNPROXY) {
 		pf_set_protostate(s, PF_PEER_SRC, PF_TCPS_PROXY_SRC);
-		/* undo NAT changes, if they have taken place */
-		if (nr != NULL) {
-			struct pf_state_key *skt = s->key[PF_SK_WIRE];
-			if (pd->dir == PF_OUT)
-				skt = s->key[PF_SK_STACK];
-			PF_ACPY(pd->src, &skt->addr[pd->sidx], pd->af);
-			PF_ACPY(pd->dst, &skt->addr[pd->didx], pd->af);
-			if (pd->sport)
-				*pd->sport = skt->port[pd->sidx];
-			if (pd->dport)
-				*pd->dport = skt->port[pd->didx];
-			if (pd->ip_sum)
-				*pd->ip_sum = bip_sum;
-			m_copyback(pd->m, pd->off, pd->hdrlen, pd->hdr.any);
-		}
+		pf_undo_nat(nr, pd, bip_sum);
 		s->src.seqhi = htonl(arc4random());
 		/* Find mss option */
 		int rtid = M_GETFIB(pd->m);
@@ -9870,6 +9859,8 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		}
 		pd->src = (struct pf_addr *)&h->ip_src;
 		pd->dst = (struct pf_addr *)&h->ip_dst;
+		PF_ACPY(&pd->osrc, pd->src, af);
+		PF_ACPY(&pd->odst, pd->dst, af);
 		pd->ip_sum = &h->ip_sum;
 		pd->virtual_proto = pd->proto = h->ip_p;
 		pd->tos = h->ip_tos & ~IPTOS_ECN_MASK;
@@ -9911,6 +9902,8 @@ pf_setup_pdesc(sa_family_t af, int dir, struct pf_pdesc *pd, struct mbuf **m0,
 		h = mtod(pd->m, struct ip6_hdr *);
 		pd->src = (struct pf_addr *)&h->ip6_src;
 		pd->dst = (struct pf_addr *)&h->ip6_dst;
+		PF_ACPY(&pd->osrc, pd->src, af);
+		PF_ACPY(&pd->odst, pd->dst, af);
 		pd->ip_sum = NULL;
 		pd->tos = IPV6_DSCP(h);
 		pd->ttl = h->ip6_hlim;
