@@ -1,6 +1,7 @@
 /*-
- * Copyright (c) 2014 Andrew Turner <andrew@FreeBSD.org>
- * All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2025 Rubicon Communications, LLC (Netgate)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -22,36 +23,54 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
+ *
  */
 
-#ifndef _MACHINE_METADATA_H_
-#define	_MACHINE_METADATA_H_
+#include <err.h>
+#include <stdio.h>
+#include <pcap.h>
+#include <unistd.h>
 
-#define	MODINFOMD_EFI_MAP	0x1001
-#define	MODINFOMD_DTBP		0x1002
-#define	MODINFOMD_EFI_FB	0x1003
+static void
+callback(u_char *arg __unused, const struct pcap_pkthdr *hdr __unused,
+    const unsigned char *bytes __unused)
+{
+}
 
-/*
- * This is not the same as the UEFI standard EFI_MEMORY_ATTRIBUTES_TABLE, though
- * memory_size / descritpr_size entries of EFI_MEMORY_DESCRIPTORS follow this table
- * starting at a 16-byte alignment.
- */
-struct efi_map_header {
-	size_t		memory_size;		/* Numnber of bytes that follow */
-	size_t		descriptor_size;	/* Size of each EFI_MEMORY_DESCRIPTOR */
-	uint32_t	descriptor_version;	/* Currently '1' */
-};
+int
+main(int argc, const char **argv)
+{
+	pcap_t *pcap;
+	const char *interface;
+	char errbuf[PCAP_ERRBUF_SIZE] = { 0 };
+	int ret;
 
-struct efi_fb {
-	uint64_t	fb_addr;
-	uint64_t	fb_size;
-	uint32_t	fb_height;
-	uint32_t	fb_width;
-	uint32_t	fb_stride;
-	uint32_t	fb_mask_red;
-	uint32_t	fb_mask_green;
-	uint32_t	fb_mask_blue;
-	uint32_t	fb_mask_reserved;
-};
+	if (argc != 2)
+		err(1, "Usage: %s <interface>\n", argv[0]);
 
-#endif /* !_MACHINE_METADATA_H_ */
+	interface = argv[1];
+
+	pcap = pcap_create(interface, errbuf);
+	if (! pcap)
+		perror("Failed to pcap interface");
+
+	ret = pcap_set_snaplen(pcap, 86);
+	if (ret != 0)
+		perror("Failed to set snaplen");
+
+	ret = pcap_set_timeout(pcap, 100);
+	if (ret != 0)
+		perror("Failed to set timeout");
+
+	ret = pcap_activate(pcap);
+	if (ret != 0)
+		perror("Failed to activate");
+
+	/* So we have two readers on one /dev/bpf fd */
+	fork();
+
+	printf("Interface open\n");
+	pcap_loop(pcap, 0, callback, NULL);
+
+	return (0);
+}
