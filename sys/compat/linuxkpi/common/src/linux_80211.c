@@ -365,9 +365,81 @@ lkpi_80211_dump_stas(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
+static enum ieee80211_sta_rx_bw
+lkpi_cw_to_rx_bw(enum nl80211_chan_width cw)
+{
+	switch (cw) {
+	case NL80211_CHAN_WIDTH_320:
+		return (IEEE80211_STA_RX_BW_320);
+	case NL80211_CHAN_WIDTH_160:
+	case NL80211_CHAN_WIDTH_80P80:
+		return (IEEE80211_STA_RX_BW_160);
+	case NL80211_CHAN_WIDTH_80:
+		return (IEEE80211_STA_RX_BW_80);
+	case NL80211_CHAN_WIDTH_40:
+		return (IEEE80211_STA_RX_BW_40);
+	case NL80211_CHAN_WIDTH_20:
+	case NL80211_CHAN_WIDTH_20_NOHT:
+		return (IEEE80211_STA_RX_BW_20);
+	case NL80211_CHAN_WIDTH_5:
+	case NL80211_CHAN_WIDTH_10:
+		/* Unsupported input. */
+		return (IEEE80211_STA_RX_BW_20);
+	}
+}
+
+static enum nl80211_chan_width
+lkpi_rx_bw_to_cw(enum ieee80211_sta_rx_bw rx_bw)
+{
+	switch (rx_bw) {
+	case IEEE80211_STA_RX_BW_20:
+		return (NL80211_CHAN_WIDTH_20);	/* _NOHT */
+	case IEEE80211_STA_RX_BW_40:
+		return (NL80211_CHAN_WIDTH_40);
+	case IEEE80211_STA_RX_BW_80:
+		return (NL80211_CHAN_WIDTH_80);
+	case IEEE80211_STA_RX_BW_160:
+		return (NL80211_CHAN_WIDTH_160); /* 80P80 */
+	case IEEE80211_STA_RX_BW_320:
+		return (NL80211_CHAN_WIDTH_320);
+	}
+}
+
+static void
+lkpi_sync_chanctx_cw_from_rx_bw(struct ieee80211_hw *hw,
+    struct ieee80211_vif *vif, struct ieee80211_sta *sta)
+{
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	enum ieee80211_sta_rx_bw old_bw;
+	uint32_t changed;
+
+	chanctx_conf = rcu_dereference_protected(vif->bss_conf.chanctx_conf,
+	    lockdep_is_held(&hw->wiphy->mtx));
+	if (chanctx_conf == NULL)
+		return;
+
+	old_bw = lkpi_cw_to_rx_bw(chanctx_conf->def.width);
+	if (old_bw == sta->deflink.bandwidth)
+		return;
+
+	chanctx_conf->def.width = lkpi_rx_bw_to_cw(sta->deflink.bandwidth);
+	if (chanctx_conf->def.width == NL80211_CHAN_WIDTH_20 &&
+	    !sta->deflink.ht_cap.ht_supported)
+		chanctx_conf->def.width = NL80211_CHAN_WIDTH_20_NOHT;
+
+	chanctx_conf->min_def = chanctx_conf->def;
+
+	vif->bss_conf.chanreq.oper.width = chanctx_conf->def.width;
+
+	changed = IEEE80211_CHANCTX_CHANGE_MIN_WIDTH;
+	changed |= IEEE80211_CHANCTX_CHANGE_WIDTH;
+	lkpi_80211_mo_change_chanctx(hw, chanctx_conf, changed);
+}
+
 #if defined(LKPI_80211_HT)
 static void
-lkpi_sta_sync_ht_from_ni(struct ieee80211_sta *sta, struct ieee80211_node *ni)
+lkpi_sta_sync_ht_from_ni(struct ieee80211_vif *vif, struct ieee80211_sta *sta,
+    struct ieee80211_node *ni)
 {
 	struct ieee80211vap *vap;
 	uint8_t *ie;
@@ -399,7 +471,8 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_sta *sta, struct ieee80211_node *ni)
 	sta->deflink.ht_cap.cap = htcap->cap_info;
 	sta->deflink.ht_cap.mcs = htcap->mcs;
 
-	if ((sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) != 0)
+	if ((sta->deflink.ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) != 0 &&
+	    IEEE80211_IS_CHAN_HT40(ni->ni_chan))
 		sta->deflink.bandwidth = IEEE80211_STA_RX_BW_40;
 	else
 		sta->deflink.bandwidth = IEEE80211_STA_RX_BW_20;
@@ -435,14 +508,16 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_sta *sta, struct ieee80211_node *ni)
 
 #if defined(LKPI_80211_VHT)
 static void
-lkpi_sta_sync_vht_from_ni(struct ieee80211_sta *sta, struct ieee80211_node *ni)
+lkpi_sta_sync_vht_from_ni(struct ieee80211_vif *vif, struct ieee80211_sta *sta,
+    struct ieee80211_node *ni)
 {
 	uint32_t width;
 	int rx_nss;
 	uint16_t rx_mcs_map;
 	uint8_t mcs;
 
-	if ((ni->ni_flags & IEEE80211_NODE_VHT) == 0) {
+	if ((ni->ni_flags & IEEE80211_NODE_VHT) == 0 ||
+	    !IEEE80211_IS_CHAN_VHT_5GHZ(ni->ni_chan)) {
 		sta->deflink.vht_cap.vht_supported = false;
 		return;
 	}
@@ -507,15 +582,25 @@ skip_bw:
 #endif
 
 static void
-lkpi_sta_sync_from_ni(struct ieee80211_sta *sta, struct ieee80211_node *ni)
+lkpi_sta_sync_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+    struct ieee80211_sta *sta, struct ieee80211_node *ni, bool updchnctx)
 {
 
 #if defined(LKPI_80211_HT)
-	lkpi_sta_sync_ht_from_ni(sta, ni);
+	lkpi_sta_sync_ht_from_ni(vif, sta, ni);
 #endif
 #if defined(LKPI_80211_VHT)
-	lkpi_sta_sync_vht_from_ni(sta, ni);
+	lkpi_sta_sync_vht_from_ni(vif, sta, ni);
 #endif
+	/*
+	 * We are also called from node allocation which net80211
+	 * can do even on `ifconfig down`; in that case the chanctx
+	 * may still be valid and we get a discrepancy between
+	 * sta and chanctx.  Thus do not try to update the chanctx
+	 * when called from lkpi_lsta_alloc().
+	 */
+	if (updchnctx)
+		lkpi_sync_chanctx_cw_from_rx_bw(hw, vif, sta);
 }
 
 static uint8_t
@@ -570,12 +655,11 @@ static void
 lkpi_lsta_remove(struct lkpi_sta *lsta, struct lkpi_vif *lvif)
 {
 
+	lockdep_assert_wiphy(lsta->hw->wiphy);
 
-	wiphy_lock(lsta->hw->wiphy);
 	KASSERT(!list_empty(&lsta->lsta_list),
 	    ("%s: lsta %p ni %p\n", __func__, lsta, lsta->ni));
 	list_del_init(&lsta->lsta_list);
-	wiphy_unlock(lsta->hw->wiphy);
 }
 
 static struct lkpi_sta *
@@ -686,7 +770,9 @@ lkpi_lsta_alloc(struct ieee80211vap *vap, const uint8_t mac[IEEE80211_ADDR_LEN],
 	sta->deflink.bandwidth = IEEE80211_STA_RX_BW_20;
 	sta->deflink.rx_nss = 1;
 
-	lkpi_sta_sync_from_ni(sta, ni);
+	wiphy_lock(hw->wiphy);
+	lkpi_sta_sync_from_ni(hw, vif, sta, ni, false);
+	wiphy_unlock(hw->wiphy);
 
 	IMPROVE("he, eht, bw_320, ... smps_mode, ..");
 
@@ -1579,10 +1665,10 @@ lkpi_stop_hw_scan(struct lkpi_hw *lhw, struct ieee80211_vif *vif)
 	hw = LHW_TO_HW(lhw);
 
 	IEEE80211_UNLOCK(lhw->ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	/* Need to cancel the scan. */
 	lkpi_80211_mo_cancel_hw_scan(hw, vif);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 
 	/* Need to make sure we see ieee80211_scan_completed. */
 	LKPI_80211_LHW_SCAN_LOCK(lhw);
@@ -1699,11 +1785,14 @@ lkpi_wake_tx_queues(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 static void
 lkpi_80211_flush_tx(struct lkpi_hw *lhw, struct lkpi_sta *lsta)
 {
+	struct ieee80211_hw *hw;
 	struct mbufq mq;
 	struct mbuf *m;
 	int len;
 
-	LKPI_80211_LHW_UNLOCK_ASSERT(lhw);
+	/* There is no lockdep_assert_not_held_wiphy(). */
+	hw = LHW_TO_HW(lhw);
+	lockdep_assert_not_held(&hw->wiphy->mtx);
 
 	/* Do not accept any new packets until scan_to_auth or lsta_free(). */
 	LKPI_80211_LSTA_TXQ_LOCK(lsta);
@@ -1730,6 +1819,35 @@ lkpi_80211_flush_tx(struct lkpi_hw *lhw, struct lkpi_sta *lsta)
 		m = mbufq_dequeue(&mq);
 	}
 }
+
+
+static void
+lkpi_remove_chanctx(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+{
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	struct lkpi_chanctx *lchanctx;
+
+	chanctx_conf = rcu_dereference_protected(vif->bss_conf.chanctx_conf,
+	    lockdep_is_held(&hw->wiphy->mtx));
+
+	if (chanctx_conf == NULL)
+		return;
+
+	/* Remove vif context. */
+	lkpi_80211_mo_unassign_vif_chanctx(hw, vif, &vif->bss_conf, chanctx_conf);
+
+	lkpi_hw_conf_idle(hw, true);
+
+	/* Remove chan ctx. */
+	lkpi_80211_mo_remove_chanctx(hw, chanctx_conf);
+
+	/* Cleanup. */
+	rcu_assign_pointer(vif->bss_conf.chanctx_conf, NULL);
+	lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
+	list_del(&lchanctx->entry);
+	free(lchanctx, M_LKPI80211);
+}
+
 
 /* -------------------------------------------------------------------------- */
 
@@ -1812,11 +1930,12 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	LKPI_80211_LVIF_UNLOCK(lvif);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	/* Add chanctx (or if exists, change it). */
-	if (vif->chanctx_conf != NULL) {
-		chanctx_conf = vif->chanctx_conf;
+	chanctx_conf = rcu_dereference_protected(vif->bss_conf.chanctx_conf,
+	    lockdep_is_held(&hw->wiphy->mtx));
+	if (chanctx_conf != NULL) {
 		lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
 		IMPROVE("diff changes for changed, working on live copy, rcu");
 	} else {
@@ -1837,6 +1956,7 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	IMPROVE("Check vht_cap from band not just chan?");
 	KASSERT(ni->ni_chan != NULL && ni->ni_chan != IEEE80211_CHAN_ANYC,
 	   ("%s:%d: ni %p ni_chan %p\n", __func__, __LINE__, ni, ni->ni_chan));
+
 #ifdef LKPI_80211_HT
 	if (IEEE80211_IS_CHAN_HT(ni->ni_chan)) {
 		if (IEEE80211_IS_CHAN_HT40(ni->ni_chan))
@@ -1846,7 +1966,7 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	}
 #endif
 #ifdef LKPI_80211_VHT
-	if (IEEE80211_IS_CHAN_VHT(ni->ni_chan)) {
+	if (IEEE80211_IS_CHAN_VHT_5GHZ(ni->ni_chan)) {
 #ifdef __notyet__
 		if (IEEE80211_IS_CHAN_VHT80P80(ni->ni_chan))
 			chanctx_conf->def.width = NL80211_CHAN_WIDTH_80P80;
@@ -1891,7 +2011,7 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	bss_changed |= lkpi_update_dtim_tsf(vif, ni, vap, __func__, __LINE__);
 
 	error = 0;
-	if (vif->chanctx_conf != NULL) {
+	if (vif->bss_conf.chanctx_conf == chanctx_conf) {
 		changed = IEEE80211_CHANCTX_CHANGE_MIN_WIDTH;
 		changed |= IEEE80211_CHANCTX_CHANGE_RADAR;
 		changed |= IEEE80211_CHANCTX_CHANGE_RX_CHAINS;
@@ -1912,7 +2032,8 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 			goto out;
 		}
 
-		vif->bss_conf.chanctx_conf = chanctx_conf;
+		list_add_rcu(&lchanctx->entry, &lhw->lchanctx_list);
+		rcu_assign_pointer(vif->bss_conf.chanctx_conf, chanctx_conf);
 
 		/* Assign vif chanctx. */
 		if (error == 0)
@@ -1924,7 +2045,9 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 			ic_printf(vap->iv_ic, "%s:%d: mo_assign_vif_chanctx "
 			    "failed: %d\n", __func__, __LINE__, error);
 			lkpi_80211_mo_remove_chanctx(hw, chanctx_conf);
+			rcu_assign_pointer(vif->bss_conf.chanctx_conf, NULL);
 			lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
+			list_del(&lchanctx->entry);
 			free(lchanctx, M_LKPI80211);
 			goto out;
 		}
@@ -1952,10 +2075,8 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	lsta->txq_ready = true;
 	LKPI_80211_LSTA_TXQ_UNLOCK(lsta);
 
-	wiphy_lock(hw->wiphy);
 	/* Insert the [l]sta into the list of known stations. */
 	list_add_tail(&lsta->lsta_list, &lvif->lsta_list);
-	wiphy_unlock(hw->wiphy);
 
 	/* Add (or adjust) sta and change state (from NOTEXIST) to NONE. */
 	KASSERT(lsta != NULL, ("%s: ni %p lsta is NULL\n", __func__, ni));
@@ -2001,7 +2122,7 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	 * (ideally we'd do that on a callback for something else ...)
 	 */
 
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 
 	LKPI_80211_LVIF_LOCK(lvif);
@@ -2046,7 +2167,7 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	goto out_relocked;
 
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 out_relocked:
 	/*
@@ -2098,7 +2219,7 @@ lkpi_sta_auth_to_scan(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	lkpi_lsta_dump(lsta, ni, __func__, __LINE__);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	/* flush, drop. */
 	lkpi_80211_mo_flush(hw, vif,  nitems(sta->txq), true);
@@ -2157,26 +2278,10 @@ lkpi_sta_auth_to_scan(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 
 	/* conf_tx */
 
-	/* Take the chan ctx down. */
-	if (vif->chanctx_conf != NULL) {
-		struct lkpi_chanctx *lchanctx;
-		struct ieee80211_chanctx_conf *chanctx_conf;
-
-		chanctx_conf = vif->chanctx_conf;
-		/* Remove vif context. */
-		lkpi_80211_mo_unassign_vif_chanctx(hw, vif, &vif->bss_conf, &vif->chanctx_conf);
-		/* NB: vif->chanctx_conf is NULL now. */
-
-		lkpi_hw_conf_idle(hw, true);
-
-		/* Remove chan ctx. */
-		lkpi_80211_mo_remove_chanctx(hw, chanctx_conf);
-		lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
-		free(lchanctx, M_LKPI80211);
-	}
+	lkpi_remove_chanctx(hw, vif);
 
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 	return (error);
 }
@@ -2209,7 +2314,7 @@ lkpi_sta_auth_to_assoc(struct ieee80211vap *vap, enum ieee80211_state nstate, in
 	vif = LVIF_TO_VIF(lvif);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	LKPI_80211_LVIF_LOCK(lvif);
 	/* XXX-BZ KASSERT later? */
@@ -2275,7 +2380,7 @@ lkpi_sta_auth_to_assoc(struct ieee80211vap *vap, enum ieee80211_state nstate, in
 	 */
 
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 	return (error);
 }
@@ -2298,7 +2403,7 @@ lkpi_sta_a_to_a(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 	vif = LVIF_TO_VIF(lvif);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	LKPI_80211_LVIF_LOCK(lvif);
 	/* XXX-BZ KASSERT later? */
@@ -2342,7 +2447,7 @@ lkpi_sta_a_to_a(struct ieee80211vap *vap, enum ieee80211_state nstate, int arg)
 
 	error = 0;
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 
 	return (error);
@@ -2368,7 +2473,7 @@ _lkpi_sta_assoc_to_down(struct ieee80211vap *vap, enum ieee80211_state nstate, i
 	vif = LVIF_TO_VIF(lvif);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	LKPI_80211_LVIF_LOCK(lvif);
 #ifdef LINUXKPI_DEBUG_80211
@@ -2404,7 +2509,7 @@ _lkpi_sta_assoc_to_down(struct ieee80211vap *vap, enum ieee80211_state nstate, i
 		lsta->in_mgd = true;
 	}
 
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 
 	/* Call iv_newstate first so we get potential DEAUTH packet out. */
@@ -2420,7 +2525,7 @@ _lkpi_sta_assoc_to_down(struct ieee80211vap *vap, enum ieee80211_state nstate, i
 	/* Ensure the packets get out. */
 	lkpi_80211_flush_tx(lhw, lsta);
 
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	lkpi_lsta_dump(lsta, ni, __func__, __LINE__);
 
@@ -2501,27 +2606,11 @@ _lkpi_sta_assoc_to_down(struct ieee80211vap *vap, enum ieee80211_state nstate, i
 
 	/* conf_tx */
 
-	/* Take the chan ctx down. */
-	if (vif->chanctx_conf != NULL) {
-		struct lkpi_chanctx *lchanctx;
-		struct ieee80211_chanctx_conf *chanctx_conf;
-
-		chanctx_conf = vif->chanctx_conf;
-		/* Remove vif context. */
-		lkpi_80211_mo_unassign_vif_chanctx(hw, vif, &vif->bss_conf, &vif->chanctx_conf);
-		/* NB: vif->chanctx_conf is NULL now. */
-
-		lkpi_hw_conf_idle(hw, true);
-
-		/* Remove chan ctx. */
-		lkpi_80211_mo_remove_chanctx(hw, chanctx_conf);
-		lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
-		free(lchanctx, M_LKPI80211);
-	}
+	lkpi_remove_chanctx(hw, vif);
 
 	error = EALREADY;
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 outni:
 	return (error);
@@ -2580,7 +2669,7 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	vif = LVIF_TO_VIF(lvif);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	LKPI_80211_LVIF_LOCK(lvif);
 	/* XXX-BZ KASSERT later? */
@@ -2656,7 +2745,6 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	}
 
 	bss_changed |= lkpi_update_dtim_tsf(vif, ni, vap, __func__, __LINE__);
-
 	lkpi_80211_mo_bss_info_changed(hw, vif, &vif->bss_conf, bss_changed);
 
 	/* - change_chanctx (if needed)
@@ -2691,7 +2779,7 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 
 	sta->deflink.rx_nss = MAX(1, sta->deflink.rx_nss);
 	IMPROVE("Is this the right spot, has net80211 done all updates already?");
-	lkpi_sta_sync_from_ni(sta, ni);
+	lkpi_sta_sync_from_ni(hw, vif, sta, ni, true);
 
 	/* Update sta_state (ASSOC to AUTHORIZED). */
 	KASSERT(lsta != NULL, ("%s: ni %p lsta is NULL\n", __func__, ni));
@@ -2718,7 +2806,7 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	lkpi_80211_mo_bss_info_changed(hw, vif, &vif->bss_conf, bss_changed);
 
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 	return (error);
 }
@@ -2777,7 +2865,7 @@ lkpi_sta_run_to_assoc(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	lkpi_lsta_dump(lsta, ni, __func__, __LINE__);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	/* flush, drop. */
 	lkpi_80211_mo_flush(hw, vif,  nitems(sta->txq), true);
@@ -2792,7 +2880,7 @@ lkpi_sta_run_to_assoc(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 		lsta->in_mgd = true;
 	}
 
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 
 	/* Call iv_newstate first so we get potential DISASSOC packet out. */
@@ -2808,7 +2896,7 @@ lkpi_sta_run_to_assoc(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	/* Ensure the packets get out. */
 	lkpi_80211_flush_tx(lhw, lsta);
 
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	lkpi_lsta_dump(lsta, ni, __func__, __LINE__);
 
@@ -2852,9 +2940,7 @@ lkpi_sta_run_to_assoc(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 
 #ifdef LKPI_80211_HW_CRYPTO
 	if (lkpi_hwcrypto) {
-		wiphy_lock(hw->wiphy);
 		error = lkpi_sta_del_keys(hw, vif, lsta);
-		wiphy_unlock(hw->wiphy);
 		if (error != 0) {
 			ic_printf(vap->iv_ic, "%s:%d: lkpi_sta_del_keys "
 			    "failed: %d\n", __func__, __LINE__, error);
@@ -2888,7 +2974,7 @@ lkpi_sta_run_to_assoc(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 
 	error = EALREADY;
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 outni:
 	return (error);
@@ -2914,7 +3000,7 @@ lkpi_sta_run_to_init(struct ieee80211vap *vap, enum ieee80211_state nstate, int 
 	vif = LVIF_TO_VIF(lvif);
 
 	IEEE80211_UNLOCK(vap->iv_ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	LKPI_80211_LVIF_LOCK(lvif);
 #ifdef LINUXKPI_DEBUG_80211
@@ -2950,7 +3036,7 @@ lkpi_sta_run_to_init(struct ieee80211vap *vap, enum ieee80211_state nstate, int 
 		lsta->in_mgd = true;
 	}
 
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 
 	/* Call iv_newstate first so we get potential DISASSOC packet out. */
@@ -2966,7 +3052,7 @@ lkpi_sta_run_to_init(struct ieee80211vap *vap, enum ieee80211_state nstate, int 
 	/* Ensure the packets get out. */
 	lkpi_80211_flush_tx(lhw, lsta);
 
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 
 	lkpi_lsta_dump(lsta, ni, __func__, __LINE__);
 
@@ -3008,9 +3094,7 @@ lkpi_sta_run_to_init(struct ieee80211vap *vap, enum ieee80211_state nstate, int 
 
 #ifdef LKPI_80211_HW_CRYPTO
 	if (lkpi_hwcrypto) {
-		wiphy_lock(hw->wiphy);
 		error = lkpi_sta_del_keys(hw, vif, lsta);
-		wiphy_unlock(hw->wiphy);
 		if (error != 0) {
 			ic_printf(vap->iv_ic, "%s:%d: lkpi_sta_del_keys "
 			    "failed: %d\n", __func__, __LINE__, error);
@@ -3117,27 +3201,11 @@ lkpi_sta_run_to_init(struct ieee80211vap *vap, enum ieee80211_state nstate, int 
 
 	/* conf_tx */
 
-	/* Take the chan ctx down. */
-	if (vif->chanctx_conf != NULL) {
-		struct lkpi_chanctx *lchanctx;
-		struct ieee80211_chanctx_conf *chanctx_conf;
-
-		chanctx_conf = vif->chanctx_conf;
-		/* Remove vif context. */
-		lkpi_80211_mo_unassign_vif_chanctx(hw, vif, &vif->bss_conf, &vif->chanctx_conf);
-		/* NB: vif->chanctx_conf is NULL now. */
-
-		lkpi_hw_conf_idle(hw, true);
-
-		/* Remove chan ctx. */
-		lkpi_80211_mo_remove_chanctx(hw, chanctx_conf);
-		lchanctx = CHANCTX_CONF_TO_LCHANCTX(chanctx_conf);
-		free(lchanctx, M_LKPI80211);
-	}
+	lkpi_remove_chanctx(hw, vif);
 
 	error = EALREADY;
 out:
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(vap->iv_ic);
 outni:
 	return (error);
@@ -3341,6 +3409,9 @@ lkpi_wme_update(struct lkpi_hw *lhw, struct ieee80211vap *vap, bool planned)
 	int error;
 	uint16_t ac;
 
+	hw = LHW_TO_HW(lhw);
+	lockdep_assert_wiphy(hw->wiphy);
+
 	IMPROVE();
 	KASSERT(WME_NUM_AC == IEEE80211_NUM_ACS, ("%s: WME_NUM_AC %d != "
 	    "IEEE80211_NUM_ACS %d\n", __func__, WME_NUM_AC, IEEE80211_NUM_ACS));
@@ -3367,12 +3438,10 @@ lkpi_wme_update(struct lkpi_hw *lhw, struct ieee80211vap *vap, bool planned)
 		wmeparr[ac] = chp.cap_wmeParams[ac];
 	IEEE80211_UNLOCK(ic);
 
-	hw = LHW_TO_HW(lhw);
 	lvif = VAP_TO_LVIF(vap);
 	vif = LVIF_TO_VIF(lvif);
 
 	/* Configure tx queues (conf_tx) & send BSS_CHANGED_QOS. */
-	LKPI_80211_LHW_LOCK(lhw);
 	for (ac = 0; ac < IEEE80211_NUM_ACS; ac++) {
 		struct wmeParams *wmep;
 
@@ -3387,7 +3456,6 @@ lkpi_wme_update(struct lkpi_hw *lhw, struct ieee80211vap *vap, bool planned)
 			ic_printf(ic, "%s: conf_tx ac %u failed %d\n",
 			    __func__, ac, error);
 	}
-	LKPI_80211_LHW_UNLOCK(lhw);
 	changed = BSS_CHANGED_QOS;
 	if (!planned)
 		lkpi_80211_mo_bss_info_changed(hw, vif, &vif->bss_conf, changed);
@@ -3402,6 +3470,7 @@ lkpi_ic_wme_update(struct ieee80211com *ic)
 #ifdef LKPI_80211_WME
 	struct ieee80211vap *vap;
 	struct lkpi_hw *lhw;
+	struct ieee80211_hw *hw;
 
 	IMPROVE("Use the per-VAP callback in net80211.");
 	vap = TAILQ_FIRST(&ic->ic_vaps);
@@ -3409,8 +3478,11 @@ lkpi_ic_wme_update(struct ieee80211com *ic)
 		return (0);
 
 	lhw = ic->ic_softc;
+	hw = LHW_TO_HW(lhw);
 
+	wiphy_lock(hw->wiphy);
 	lkpi_wme_update(lhw, vap, false);
+	wiphy_unlock(hw->wiphy);
 #endif
 	return (0);	/* unused */
 }
@@ -3492,7 +3564,7 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 
 	/* XXX-BZ hardcoded for now! */
 #if 1
-	vif->chanctx_conf = NULL;
+	RCU_INIT_POINTER(vif->bss_conf.chanctx_conf, NULL);
 	vif->bss_conf.vif = vif;
 	/* vap->iv_myaddr is not set until net80211::vap_setup or vap_attach. */
 	IEEE80211_ADDR_COPY(vif->bss_conf.addr, mac);
@@ -3575,7 +3647,7 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 
 	/* Configure tx queues (conf_tx), default WME & send BSS_CHANGED_QOS. */
 	IMPROVE("Hardcoded values; to fix see 802.11-2016, 9.4.2.29 EDCA Parameter Set element");
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	for (ac = 0; ac < IEEE80211_NUM_ACS; ac++) {
 
 		bzero(&txqp, sizeof(txqp));
@@ -3588,7 +3660,7 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 			ic_printf(ic, "%s: conf_tx ac %u failed %d\n",
 			    __func__, ac, error);
 	}
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	changed = BSS_CHANGED_QOS;
 	lkpi_80211_mo_bss_info_changed(hw, vif, &vif->bss_conf, changed);
 
@@ -3750,8 +3822,8 @@ static void
 lkpi_ic_parent(struct ieee80211com *ic)
 {
 	struct lkpi_hw *lhw;
-#ifdef HW_START_STOP
 	struct ieee80211_hw *hw;
+#ifdef HW_START_STOP
 	int error;
 #endif
 	bool start_all;
@@ -3759,13 +3831,11 @@ lkpi_ic_parent(struct ieee80211com *ic)
 	IMPROVE();
 
 	lhw = ic->ic_softc;
-#ifdef HW_START_STOP
 	hw = LHW_TO_HW(lhw);
-#endif
 	start_all = false;
 
 	/* IEEE80211_UNLOCK(ic); */
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	if (ic->ic_nrunning > 0) {
 #ifdef HW_START_STOP
 		error = lkpi_80211_mo_start(hw);
@@ -3777,7 +3847,7 @@ lkpi_ic_parent(struct ieee80211com *ic)
 		lkpi_80211_mo_stop(hw, false);		/* XXX SUSPEND */
 #endif
 	}
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	/* IEEE80211_LOCK(ic); */
 
 	if (start_all)
@@ -3877,7 +3947,8 @@ lkpi_scan_ies_add(uint8_t *p, struct ieee80211_scan_ies *scan_ies,
 		}
 #endif
 #if defined(LKPI_80211_VHT)
-		if ((vap->iv_vht_flags & IEEE80211_FVHT_VHT) != 0) {
+		if (band == NL80211_BAND_5GHZ &&
+		    (vap->iv_vht_flags & IEEE80211_FVHT_VHT) != 0) {
 			struct ieee80211_channel *c;
 
 			c = ieee80211_ht_adjust_channel(ic, ic->ic_curchan,
@@ -4742,9 +4813,9 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
 		    ltxq->txq.tid, ac, skb->priority, skb->qmap);
 #endif
 	LKPI_80211_LTXQ_UNLOCK(ltxq);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	lkpi_80211_mo_wake_tx_queue(hw, &ltxq->txq);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	return;
 
 ops_tx:
@@ -4757,9 +4828,9 @@ ops_tx:
 #endif
 	memset(&control, 0, sizeof(control));
 	control.sta = sta;
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	lkpi_80211_mo_tx(hw, &control, skb);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 }
 
 static void
@@ -4920,9 +4991,9 @@ lkpi_ic_addba_request(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap,
 	params.amsdu = false;
 
 	IEEE80211_UNLOCK(ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	error = lkpi_80211_mo_ampdu_action(hw, vif, &params);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(ic);
 	if (error != 0) {
 		ic_printf(ic, "%s: mo_ampdu_action returned %d. ni %p tap %p\n",
@@ -4998,9 +5069,9 @@ lkpi_ic_addba_response(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap
 	}
 
 	IEEE80211_UNLOCK(ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	error = lkpi_80211_mo_ampdu_action(hw, vif, &params);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(ic);
 	if (error != 0) {
 		ic_printf(ic, "%s: mo_ampdu_action returned %d. ni %p tap %p\n",
@@ -5057,9 +5128,9 @@ lkpi_ic_addba_stop(struct ieee80211_node *ni, struct ieee80211_tx_ampdu *tap)
 	params.amsdu = false;
 
 	IEEE80211_UNLOCK(ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	error = lkpi_80211_mo_ampdu_action(hw, vif, &params);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	IEEE80211_LOCK(ic);
 	if (error != 0) {
 		ic_printf(ic, "%s: mo_ampdu_action returned %d. ni %p tap %p\n",
@@ -5155,9 +5226,9 @@ lkpi_ic_ampdu_rx_start(struct ieee80211_node *ni, struct ieee80211_rx_ampdu *rap
 	else
 		params.amsdu = false;
 
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	error = lkpi_80211_mo_ampdu_action(hw, vif, &params);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	if (error != 0) {
 		ic_printf(ic, "%s: mo_ampdu_action returned %d. ni %p rap %p\n",
 		    __func__, error, ni, rap);
@@ -5229,9 +5300,9 @@ lkpi_ic_ampdu_rx_stop(struct ieee80211_node *ni, struct ieee80211_rx_ampdu *rap)
 	ic_locked = IEEE80211_IS_LOCKED(ic);
 	if (ic_locked)
 		IEEE80211_UNLOCK(ic);
-	LKPI_80211_LHW_LOCK(lhw);
+	wiphy_lock(hw->wiphy);
 	error = lkpi_80211_mo_ampdu_action(hw, vif, &params);
-	LKPI_80211_LHW_UNLOCK(lhw);
+	wiphy_unlock(hw->wiphy);
 	if (ic_locked)
 		IEEE80211_LOCK(ic);
 	if (error != 0)
@@ -5379,7 +5450,7 @@ lkpi_ic_getradiocaps(struct ieee80211com *ic, int maxchan,
 		    NL80211_BAND_5GHZ);
 
 #ifdef LKPI_80211_VHT
-		if (hw->wiphy->bands[NL80211_BAND_5GHZ]->vht_cap.vht_supported){
+		if (hw->wiphy->bands[NL80211_BAND_5GHZ]->vht_cap.vht_supported) {
 
 			ic->ic_flags_ext |= IEEE80211_FEXT_VHT;
 			ic->ic_vht_cap.vht_cap_info =
@@ -5469,7 +5540,6 @@ linuxkpi_ieee80211_alloc_hw(size_t priv_len, const struct ieee80211_ops *ops)
 	lhw = wiphy_priv(wiphy);
 	lhw->ops = ops;
 
-	LKPI_80211_LHW_LOCK_INIT(lhw);
 	LKPI_80211_LHW_SCAN_LOCK_INIT(lhw);
 	LKPI_80211_LHW_TXQ_LOCK_INIT(lhw);
 	sx_init_flags(&lhw->lvif_sx, "lhw-lvif", SX_RECURSE | SX_DUPOK);
@@ -5478,6 +5548,9 @@ linuxkpi_ieee80211_alloc_hw(size_t priv_len, const struct ieee80211_ops *ops)
 		lhw->txq_generation[ac] = 1;
 		TAILQ_INIT(&lhw->scheduled_txqs[ac]);
 	}
+
+	/* Chanctx_conf */
+	INIT_LIST_HEAD(&lhw->lchanctx_list);
 
 	/* Deferred RX path. */
 	LKPI_80211_LHW_RXQ_LOCK_INIT(lhw);
@@ -5542,10 +5615,25 @@ linuxkpi_ieee80211_iffree(struct ieee80211_hw *hw)
 	    __func__, lhw, mbufq_len(&lhw->rxq)));
 	LKPI_80211_LHW_RXQ_LOCK_DESTROY(lhw);
 
+	/* Chanctx_conf. */
+	if (!list_empty_careful(&lhw->lchanctx_list)) {
+		struct lkpi_chanctx *lchanctx, *next;
+		struct ieee80211_chanctx_conf *chanctx_conf;
+
+		list_for_each_entry_safe(lchanctx, next, &lhw->lchanctx_list, entry) {
+			if (lchanctx->added_to_drv) {
+				/* In reality we should panic? */
+				chanctx_conf = &lchanctx->chanctx_conf;
+				lkpi_80211_mo_remove_chanctx(hw, chanctx_conf);
+			}
+			list_del(&lchanctx->entry);
+			free(lchanctx, M_LKPI80211);
+		}
+	}
+
 	/* Cleanup more of lhw here or in wiphy_free()? */
 	LKPI_80211_LHW_TXQ_LOCK_DESTROY(lhw);
 	LKPI_80211_LHW_SCAN_LOCK_DESTROY(lhw);
-	LKPI_80211_LHW_LOCK_DESTROY(lhw);
 	sx_destroy(&lhw->lvif_sx);
 	IMPROVE();
 }
@@ -5977,8 +6065,6 @@ linuxkpi_ieee80211_iterate_chan_contexts(struct ieee80211_hw *hw,
     void *arg)
 {
 	struct lkpi_hw *lhw;
-	struct lkpi_vif *lvif;
-	struct ieee80211_vif *vif;
 	struct lkpi_chanctx *lchanctx;
 
 	KASSERT(hw != NULL && iterfunc != NULL,
@@ -5986,22 +6072,13 @@ linuxkpi_ieee80211_iterate_chan_contexts(struct ieee80211_hw *hw,
 
 	lhw = HW_TO_LHW(hw);
 
-	IMPROVE("lchanctx should be its own list somewhere");
-
-	LKPI_80211_LHW_LVIF_LOCK(lhw);
-	TAILQ_FOREACH(lvif, &lhw->lvif_head, lvif_entry) {
-
-		vif = LVIF_TO_VIF(lvif);
-		if (vif->chanctx_conf == NULL)
-			continue;
-
-		lchanctx = CHANCTX_CONF_TO_LCHANCTX(vif->chanctx_conf);
+	rcu_read_lock();
+	list_for_each_entry_rcu(lchanctx, &lhw->lchanctx_list, entry) {
 		if (!lchanctx->added_to_drv)
 			continue;
-
 		iterfunc(hw, &lchanctx->chanctx_conf, arg);
 	}
-	LKPI_80211_LHW_LVIF_UNLOCK(lhw);
+	rcu_read_unlock();
 }
 
 void
