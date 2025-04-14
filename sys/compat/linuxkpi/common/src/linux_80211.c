@@ -314,6 +314,13 @@ lkpi_80211_dump_stas(SYSCTL_HANDLER_ARGS)
 			continue;
 		}
 
+		/* If no RX_BITRATE is reported, try to fill it in from the lsta sinfo. */
+		if ((sinfo.filled & BIT_ULL(NL80211_STA_INFO_RX_BITRATE)) == 0 &&
+		    (lsta->sinfo.filled & BIT_ULL(NL80211_STA_INFO_RX_BITRATE)) != 0) {
+			memcpy(&sinfo.rxrate, &lsta->sinfo.rxrate, sizeof(sinfo.rxrate));
+			sinfo.filled |= BIT_ULL(NL80211_STA_INFO_RX_BITRATE);
+		}
+
 		lkpi_nl80211_sta_info_to_str(&s, " nl80211_sta_info (valid fields)", sinfo.filled);
 		sbuf_printf(&s, " connected_time %u inactive_time %u\n",
 		    sinfo.connected_time, sinfo.inactive_time);
@@ -786,7 +793,7 @@ lkpi_lsta_alloc(struct ieee80211vap *vap, const uint8_t mac[IEEE80211_ADDR_LEN],
 	/* Deferred TX path. */
 	LKPI_80211_LSTA_TXQ_LOCK_INIT(lsta);
 	TASK_INIT(&lsta->txq_task, 0, lkpi_80211_txq_task, lsta);
-	mbufq_init(&lsta->txq, IFQ_MAXLEN);
+	mbufq_init(&lsta->txq, 32 * NAPI_POLL_WEIGHT);
 	lsta->txq_ready = true;
 
 	return (lsta);
@@ -4514,11 +4521,23 @@ lkpi_ic_node_free(struct ieee80211_node *ni)
 		lhw->ic_node_free(ni);
 }
 
+/*
+ * lkpi_xmit() called from both the (*ic_raw_xmit) as well as the (*ic_transmit)
+ * call path.
+ * Unfortunately they have slightly different invariants.  See
+ * ieee80211_raw_output() and ieee80211_parent_xmitpkt().
+ * Both take care of the ni reference in case of error, and otherwise during
+ * the callback after transmit.
+ * The difference is that in case of error (*ic_raw_xmit) needs us to release
+ * the mbuf, while (*ic_transmit) will free the mbuf itself.
+ */
 static int
-lkpi_ic_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
-        const struct ieee80211_bpf_params *params __unused)
+lkpi_xmit(struct ieee80211_node *ni, struct mbuf *m,
+    const struct ieee80211_bpf_params *params __unused,
+    bool freem)
 {
 	struct lkpi_sta *lsta;
+	int error;
 
 	lsta = ni->ni_drv_data;
 	LKPI_80211_LSTA_TXQ_LOCK(lsta);
@@ -4533,16 +4552,24 @@ lkpi_ic_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 	if (!lsta->txq_ready) {
 #endif
 		LKPI_80211_LSTA_TXQ_UNLOCK(lsta);
-		/*
-		 * Free the mbuf (do NOT release ni ref for the m_pkthdr.rcvif!
-		 * ieee80211_raw_output() does that in case of error).
-		 */
-		m_free(m);
+		if (freem)
+			m_free(m);
 		return (ENETDOWN);
 	}
 
 	/* Queue the packet and enqueue the task to handle it. */
-	mbufq_enqueue(&lsta->txq, m);
+	error = mbufq_enqueue(&lsta->txq, m);
+	if (error != 0) {
+		LKPI_80211_LSTA_TXQ_UNLOCK(lsta);
+		if (freem)
+			m_free(m);
+#ifdef LINUXKPI_DEBUG_80211
+		if (linuxkpi_debug_80211 & D80211_TRACE_TX)
+			ic_printf(ni->ni_ic, "%s: mbufq_enqueue failed: %d\n",
+			    __func__, error);
+#endif
+		return (ENETDOWN);
+	}
 	taskqueue_enqueue(taskqueue_thread, &lsta->txq_task);
 	LKPI_80211_LSTA_TXQ_UNLOCK(lsta);
 
@@ -4554,6 +4581,13 @@ lkpi_ic_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
 #endif
 
 	return (0);
+}
+
+static int
+lkpi_ic_raw_xmit(struct ieee80211_node *ni, struct mbuf *m,
+        const struct ieee80211_bpf_params *params __unused)
+{
+	return (lkpi_xmit(ni, m, NULL, true));
 }
 
 #ifdef LKPI_80211_HW_CRYPTO
@@ -4914,7 +4948,7 @@ lkpi_ic_transmit(struct ieee80211com *ic, struct mbuf *m)
 	struct ieee80211_node *ni;
 
 	ni = (struct ieee80211_node *)m->m_pkthdr.rcvif;
-	return (lkpi_ic_raw_xmit(ni, m, NULL));
+	return (lkpi_xmit(ni, m, NULL, false));
 }
 
 #ifdef LKPI_80211_HT
@@ -5572,7 +5606,7 @@ linuxkpi_ieee80211_alloc_hw(size_t priv_len, const struct ieee80211_ops *ops)
 	/* Deferred RX path. */
 	LKPI_80211_LHW_RXQ_LOCK_INIT(lhw);
 	TASK_INIT(&lhw->rxq_task, 0, lkpi_80211_lhw_rxq_task, lhw);
-	mbufq_init(&lhw->rxq, IFQ_MAXLEN);
+	mbufq_init(&lhw->rxq, 32 * NAPI_POLL_WEIGHT);
 	lhw->rxq_stopped = false;
 
 	/*
@@ -5616,6 +5650,7 @@ linuxkpi_ieee80211_iffree(struct ieee80211_hw *hw)
 	/* Flush mbufq (make sure to release ni refs!). */
 	m = mbufq_dequeue(&lhw->rxq);
 	while (m != NULL) {
+#ifdef LKPI_80211_USE_MTAG
 		struct m_tag *mtag;
 
 		mtag = m_tag_locate(m, MTAG_ABI_LKPI80211, LKPI80211_TAG_RXNI, NULL);
@@ -5625,6 +5660,14 @@ linuxkpi_ieee80211_iffree(struct ieee80211_hw *hw)
 			rxni = (struct lkpi_80211_tag_rxni *)(mtag + 1);
 			ieee80211_free_node(rxni->ni);
 		}
+#else
+		if (m->m_pkthdr.PH_loc.ptr != NULL) {
+			struct ieee80211_node *ni;
+
+			ni = m->m_pkthdr.PH_loc.ptr;
+			ieee80211_free_node(ni);
+		}
+#endif
 		m_freem(m);
 		m = mbufq_dequeue(&lhw->rxq);
 	}
@@ -6192,10 +6235,13 @@ static void
 lkpi_80211_lhw_rxq_rx_one(struct lkpi_hw *lhw, struct mbuf *m)
 {
 	struct ieee80211_node *ni;
+#ifdef LKPI_80211_USE_MTAG
 	struct m_tag *mtag;
+#endif
 	int ok;
 
 	ni = NULL;
+#ifdef LKPI_80211_USE_MTAG
         mtag = m_tag_locate(m, MTAG_ABI_LKPI80211, LKPI80211_TAG_RXNI, NULL);
 	if (mtag != NULL) {
 		struct lkpi_80211_tag_rxni *rxni;
@@ -6203,6 +6249,12 @@ lkpi_80211_lhw_rxq_rx_one(struct lkpi_hw *lhw, struct mbuf *m)
 		rxni = (struct lkpi_80211_tag_rxni *)(mtag + 1);
 		ni = rxni->ni;
 	}
+#else
+	if (m->m_pkthdr.PH_loc.ptr != NULL) {
+		ni = m->m_pkthdr.PH_loc.ptr;
+		m->m_pkthdr.PH_loc.ptr = NULL;
+	}
+#endif
 
 	if (ni != NULL) {
 		ok = ieee80211_input_mimo(ni, m);
@@ -6249,15 +6301,17 @@ lkpi_80211_lhw_rxq_task(void *ctx, int pending)
 }
 
 static void
-lkpi_convert_rx_status(struct ieee80211_hw *hw,
+lkpi_convert_rx_status(struct ieee80211_hw *hw, struct lkpi_sta *lsta,
     struct ieee80211_rx_status *rx_status,
     struct ieee80211_rx_stats *rx_stats,
     uint8_t *rssip)
 {
 	struct ieee80211_supported_band *supband;
+	struct rate_info rxrate;
 	int i;
 	uint8_t rssi;
 
+	memset(&rxrate, 0, sizeof(rxrate));
 	memset(rx_stats, 0, sizeof(*rx_stats));
 	rx_stats->r_flags = IEEE80211_R_NF | IEEE80211_R_RSSI;
 	/* XXX-BZ correct hardcoded noise floor, survey data? */
@@ -6324,30 +6378,56 @@ lkpi_convert_rx_status(struct ieee80211_hw *hw,
 
 	switch (rx_status->encoding) {
 	case RX_ENC_LEGACY:
+	{
+		uint32_t legacy = 0;
+
 		supband = hw->wiphy->bands[rx_status->band];
 		if (supband != NULL)
-			rx_stats->c_rate = supband->bitrates[rx_status->rate_idx].bitrate;
+			legacy = supband->bitrates[rx_status->rate_idx].bitrate;
+		rx_stats->c_rate = legacy;
+		rxrate.legacy = legacy;
 		/* Is there a LinuxKPI way of reporting IEEE80211_RX_F_CCK / _OFDM? */
 		break;
+	}
 	case RX_ENC_HT:
 		rx_stats->c_pktflags |= IEEE80211_RX_F_HT;
-		if ((rx_status->enc_flags & RX_ENC_FLAG_SHORT_GI) != 0)
-			rx_stats->c_pktflags |= IEEE80211_RX_F_SHORTGI;
 		rx_stats->c_rate = rx_status->rate_idx;		/* mcs */
+		rxrate.flags |= RATE_INFO_FLAGS_MCS;
+		rxrate.mcs = rx_status->rate_idx;
+		if ((rx_status->enc_flags & RX_ENC_FLAG_SHORT_GI) != 0) {
+			rx_stats->c_pktflags |= IEEE80211_RX_F_SHORTGI;
+			rxrate.flags |= RATE_INFO_FLAGS_SHORT_GI;
+		}
 		break;
 	case RX_ENC_VHT:
 		rx_stats->c_pktflags |= IEEE80211_RX_F_VHT;
-		if ((rx_status->enc_flags & RX_ENC_FLAG_SHORT_GI) != 0)
-			rx_stats->c_pktflags |= IEEE80211_RX_F_SHORTGI;
 		rx_stats->c_rate = rx_status->rate_idx;		/* mcs */
 		rx_stats->c_vhtnss = rx_status->nss;
+		rxrate.flags |= RATE_INFO_FLAGS_VHT_MCS;
+		rxrate.mcs = rx_status->rate_idx;
+		rxrate.nss = rx_status->nss;
+		if ((rx_status->enc_flags & RX_ENC_FLAG_SHORT_GI) != 0) {
+			rx_stats->c_pktflags |= IEEE80211_RX_F_SHORTGI;
+			rxrate.flags |= RATE_INFO_FLAGS_SHORT_GI;
+		}
 		break;
 	case RX_ENC_HE:
+		rxrate.flags |= RATE_INFO_FLAGS_HE_MCS;
+		rxrate.mcs = rx_status->rate_idx;
+		rxrate.nss = rx_status->nss;
+		/* XXX TODO */
+		TODO("net80211 has not matching encoding for %u", rx_status->encoding);
+		break;
 	case RX_ENC_EHT:
+		rxrate.flags |= RATE_INFO_FLAGS_EHT_MCS;
+		rxrate.mcs = rx_status->rate_idx;
+		rxrate.nss = rx_status->nss;
+		/* XXX TODO */
 		TODO("net80211 has not matching encoding for %u", rx_status->encoding);
 		break;
 	}
 
+	rxrate.bw = rx_status->bw;
 	switch (rx_status->bw) {
 	case RATE_INFO_BW_20:
 		rx_stats->c_width = IEEE80211_RX_FW_20MHZ;
@@ -6398,6 +6478,11 @@ lkpi_convert_rx_status(struct ieee80211_hw *hw,
 	if (rx_status->flag & RX_FLAG_FAILED_FCS_CRC)
 		rx_stats->c_pktflags |= IEEE80211_RX_F_FAIL_FCSCRC;
 #endif
+
+	if (lsta != NULL) {
+		memcpy(&lsta->sinfo.rxrate, &rxrate, sizeof(rxrate));
+		lsta->sinfo.filled |= BIT_ULL(NL80211_STA_INFO_RX_BITRATE);
+	}
 }
 
 /* For %list see comment towards the end of the function. */
@@ -6416,12 +6501,16 @@ linuxkpi_ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb,
 	struct ieee80211vap *vap;
 	struct ieee80211_hdr *hdr;
 	struct lkpi_sta *lsta;
-	int i, offset, ok;
+	int i, offset, ok, error;
 	uint8_t rssi;
 	bool is_beacon;
 
+	lhw = HW_TO_LHW(hw);
+	ic = lhw->ic;
+
 	if (skb->len < 2) {
 		/* Need 80211 stats here. */
+		counter_u64_add(ic->ic_ierrors, 1);
 		IMPROVE();
 		goto err;
 	}
@@ -6431,8 +6520,10 @@ linuxkpi_ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb,
 	 * have an mbuf backing the skb data then?
 	 */
 	m = m_get2(skb->len, M_NOWAIT, MT_DATA, M_PKTHDR);
-	if (m == NULL)
+	if (m == NULL) {
+		counter_u64_add(ic->ic_ierrors, 1);
 		goto err;
+	}
 	m_copyback(m, 0, skb->tail - skb->data, skb->data);
 
 	shinfo = skb_shinfo(skb);
@@ -6494,19 +6585,6 @@ linuxkpi_ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb,
 no_trace_beacons:
 #endif
 
-	rssi = 0;
-	lkpi_convert_rx_status(hw, rx_status, &rx_stats, &rssi);
-
-	lhw = HW_TO_LHW(hw);
-	ic = lhw->ic;
-
-	ok = ieee80211_add_rx_params(m, &rx_stats);
-	if (ok == 0) {
-		m_freem(m);
-		counter_u64_add(ic->ic_ierrors, 1);
-		goto err;
-	}
-
 	lsta = NULL;
 	if (sta != NULL) {
 		lsta = STA_TO_LSTA(sta);
@@ -6518,6 +6596,16 @@ no_trace_beacons:
 		ni = ieee80211_find_rxnode(ic, wh);
 		if (ni != NULL)
 			lsta = ni->ni_drv_data;
+	}
+
+	rssi = 0;
+	lkpi_convert_rx_status(hw, lsta, rx_status, &rx_stats, &rssi);
+
+	ok = ieee80211_add_rx_params(m, &rx_stats);
+	if (ok == 0) {
+		m_freem(m);
+		counter_u64_add(ic->ic_ierrors, 1);
+		goto err;
 	}
 
 	if (ni != NULL)
@@ -6602,32 +6690,47 @@ skip_device_ts:
 	}
 #endif
 
-	/*
-	 * Attach meta-information to the mbuf for the deferred RX path.
-	 * Currently this is best-effort.  Should we need to be hard,
-	 * drop the frame and goto err;
-	 */
+	/* Attach meta-information to the mbuf for the deferred RX path. */
 	if (ni != NULL) {
+#ifdef LKPI_80211_USE_MTAG
 		struct m_tag *mtag;
 		struct lkpi_80211_tag_rxni *rxni;
 
 		mtag = m_tag_alloc(MTAG_ABI_LKPI80211, LKPI80211_TAG_RXNI,
 		    sizeof(*rxni), IEEE80211_M_NOWAIT);
-		if (mtag != NULL) {
-			rxni = (struct lkpi_80211_tag_rxni *)(mtag + 1);
-			rxni->ni = ni;		/* We hold a reference. */
-			m_tag_prepend(m, mtag);
+		if (mtag == NULL) {
+			m_freem(m);
+			counter_u64_add(ic->ic_ierrors, 1);
+			goto err;
 		}
+		rxni = (struct lkpi_80211_tag_rxni *)(mtag + 1);
+		rxni->ni = ni;		/* We hold a reference. */
+		m_tag_prepend(m, mtag);
+#else
+		m->m_pkthdr.PH_loc.ptr = ni;	/* We hold a reference. */
+#endif
 	}
 
 	LKPI_80211_LHW_RXQ_LOCK(lhw);
 	if (lhw->rxq_stopped) {
 		LKPI_80211_LHW_RXQ_UNLOCK(lhw);
 		m_freem(m);
+		counter_u64_add(ic->ic_ierrors, 1);
 		goto err;
 	}
 
-	mbufq_enqueue(&lhw->rxq, m);
+	error = mbufq_enqueue(&lhw->rxq, m);
+	if (error != 0) {
+		LKPI_80211_LHW_RXQ_UNLOCK(lhw);
+		m_freem(m);
+		counter_u64_add(ic->ic_ierrors, 1);
+#ifdef LINUXKPI_DEBUG_80211
+		if (linuxkpi_debug_80211 & D80211_TRACE_RX)
+			ic_printf(ni->ni_ic, "%s: mbufq_enqueue failed: %d\n",
+			    __func__, error);
+#endif
+		goto err;
+	}
 	taskqueue_enqueue(taskqueue_thread, &lhw->rxq_task);
 	LKPI_80211_LHW_RXQ_UNLOCK(lhw);
 
