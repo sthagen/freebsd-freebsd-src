@@ -7,7 +7,7 @@ ATF_TESTS_C+=		heapsort_test
 ATF_TESTS_C+=		libc_exit_test
 ATF_TESTS_C+=		mergesort_test
 ATF_TESTS_C+=		qsort_test
-.if ${COMPILER_TYPE} == "clang"
+.if ${COMPILER_FEATURES:Mblocks}
 ATF_TESTS_C+=		qsort_b_test
 .endif
 ATF_TESTS_C+=		qsort_r_compat_test
@@ -61,7 +61,7 @@ CFLAGS+=	-I${.CURDIR}
 
 LIBADD.cxa_thread_atexit_test+=		pthread
 
-# Tests that requires Blocks feature
+# Tests that require blocks support
 .for t in qsort_b_test
 CFLAGS.${t}.c+=		-fblocks
 LIBADD.${t}+=		BlocksRuntime
