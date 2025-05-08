@@ -1681,11 +1681,12 @@ uipc_sopoll_stream_or_seqpacket(struct socket *so, int events,
 					    (POLLOUT | POLLWRNORM);
 				if (sb->sb_state & SBS_CANTRCVMORE)
 					revents |= POLLHUP;
-				if (!(revents & (POLLOUT | POLLWRNORM)))
+				if (!(revents & (POLLOUT | POLLWRNORM))) {
 					so2->so_rcv.uxst_flags |= UXST_PEER_SEL;
+					selrecord(td, &so->so_wrsel);
+				}
 				SOCK_RECVBUF_UNLOCK(so2);
-			}
-			if (!(revents & (POLLOUT | POLLWRNORM)))
+			} else
 				selrecord(td, &so->so_wrsel);
 		}
 	}
@@ -2436,8 +2437,11 @@ uipc_sendfile(struct socket *so, int flags, struct mbuf *m,
 			sb->sb_acc += mc.mc_len;
 			wakeup = true;
 		}
-	} else
+	} else {
+		STAILQ_FOREACH(m, &mc.mc_q, m_stailq)
+			m->m_flags |= M_BLOCKED;
 		wakeup = false;
+	}
 	STAILQ_CONCAT(&sb->uxst_mbq, &mc.mc_q);
 	UIPC_STREAM_SBCHECK(sb);
 	if (wakeup)
@@ -4213,10 +4217,9 @@ unp_dispose(struct socket *so)
 			while (m != NULL && m->m_flags & M_NOTREADY)
 				m = m->m_next;
 			for (prev = n = m; n != NULL; n = n->m_next) {
-				if (n->m_flags & M_NOTREADY) {
-					n = n->m_next;
-					prev->m_next = n;
-				} else
+				if (n->m_flags & M_NOTREADY)
+					prev->m_next = n->m_next;
+				else
 					prev = n;
 			}
 			sb->uxst_fnrdy = NULL;
