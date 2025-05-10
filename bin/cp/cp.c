@@ -267,7 +267,7 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 	char *recpath = NULL;
 	int atflags, dne, badcp, len, rval;
 	mode_t mask, mode;
-	bool beneath = type != FILE_TO_FILE;
+	bool beneath = Rflag && type != FILE_TO_FILE;
 	bool skipdp = false;
 
 	/*
@@ -280,7 +280,7 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 	if (type == FILE_TO_FILE) {
 		to.dir = AT_FDCWD;
 		to.end = to.path + strlcpy(to.path, to.base, sizeof(to.path));
-		strcpy(to.base, dot);
+		strlcpy(to.base, dot, sizeof(to.base));
 	} else if (type == FILE_TO_DIR) {
 		to.dir = open(to.base, O_DIRECTORY | O_SEARCH);
 		if (to.dir < 0)
@@ -331,30 +331,45 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 				assert(to.dir < 0);
 				assert(root_stat == NULL);
 				mode = curr_stat->st_mode | S_IRWXU;
+				/*
+				 * Will our umask prevent us from entering
+				 * the directory after we create it?
+				 */
+				if (~mask & S_IRWXU)
+					umask(~mask & ~S_IRWXU);
 				if (mkdir(to.base, mode) != 0) {
 					warn("%s", to.base);
-					(void)fts_set(ftsp, curr, FTS_SKIP);
+					fts_set(ftsp, curr, FTS_SKIP);
 					badcp = rval = 1;
+					if (~mask & S_IRWXU)
+						umask(~mask);
 					continue;
 				}
 				to.dir = open(to.base, O_DIRECTORY | O_SEARCH);
 				if (to.dir < 0) {
 					warn("%s", to.base);
 					(void)rmdir(to.base);
-					(void)fts_set(ftsp, curr, FTS_SKIP);
+					fts_set(ftsp, curr, FTS_SKIP);
 					badcp = rval = 1;
+					if (~mask & S_IRWXU)
+						umask(~mask);
 					continue;
 				}
 				if (fstat(to.dir, &created_root_stat) != 0) {
 					warn("%s", to.base);
 					(void)close(to.dir);
 					(void)rmdir(to.base);
-					(void)fts_set(ftsp, curr, FTS_SKIP);
+					fts_set(ftsp, curr, FTS_SKIP);
 					to.dir = -1;
 					badcp = rval = 1;
+					if (~mask & S_IRWXU)
+						umask(~mask);
 					continue;
 				}
+				if (~mask & S_IRWXU)
+					umask(~mask);
 				root_stat = &created_root_stat;
+				curr->fts_number = 1;
 			} else {
 				/* entering a directory; append its name to to.path */
 				len = snprintf(to.end, END(to.path) - to.end, "%s%s",
@@ -371,33 +386,33 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 				to.end += len;
 			}
 			skipdp = false;
-                        /*
-                         * We're on the verge of recursing on ourselves.
-                         * Either we need to stop right here (we knowingly
-                         * just created it), or we will in an immediate
-                         * descendant.  Record the path of the immediate
-                         * descendant to make our lives a little less
-                         * complicated looking.
-                         */
+			/*
+			 * We're on the verge of recursing on ourselves.
+			 * Either we need to stop right here (we knowingly
+			 * just created it), or we will in an immediate
+			 * descendant.  Record the path of the immediate
+			 * descendant to make our lives a little less
+			 * complicated looking.
+			 */
 			if (type != FILE_TO_FILE &&
 			    root_stat->st_dev == curr_stat->st_dev &&
 			    root_stat->st_ino == curr_stat->st_ino) {
 				assert(recpath == NULL);
 				if (root_stat == &created_root_stat) {
-                                        /*
-                                         * This directory didn't exist
-                                         * when we started, we created it
-                                         * as part of traversal.  Stop
-                                         * right here before we do
-                                         * something silly.
-                                         */
-					(void)fts_set(ftsp, curr, FTS_SKIP);
+					/*
+					 * This directory didn't exist
+					 * when we started, we created it
+					 * as part of traversal.  Stop
+					 * right here before we do
+					 * something silly.
+					 */
+					fts_set(ftsp, curr, FTS_SKIP);
 					continue;
 				}
 				if (asprintf(&recpath, "%s/%s", to.path,
 				    rootname) < 0) {
 					warnc(ENOMEM, NULL);
-					(void)fts_set(ftsp, curr, FTS_SKIP);
+					fts_set(ftsp, curr, FTS_SKIP);
 					badcp = rval = 1;
 					continue;
 				}
@@ -432,9 +447,7 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 			} else if (curr->fts_number) {
 				const char *path = *to.path ? to.path : dot;
 				mode = curr_stat->st_mode;
-				if (((mode & (S_ISUID | S_ISGID | S_ISTXT)) ||
-				    ((mode | S_IRWXU) & mask) != (mode & mask)) &&
-				    fchmodat(to.dir, path, mode & mask, 0) != 0) {
+				if (fchmodat(to.dir, path, mode & mask, 0) != 0) {
 					warn("chmod: %s/%s", to.base, to.path);
 					rval = 1;
 				}
@@ -476,9 +489,9 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 			/*
 			 * This can happen in two cases:
 			 * - DIR_TO_DNE; we created the directory and
-                         *   populated root_stat earlier.
+			 *   populated root_stat earlier.
 			 * - FILE_TO_DIR if a source has a trailing slash;
-                         *   the caller populated root_stat.
+			 *   the caller populated root_stat.
 			 */
 			dne = false;
 			to_stat = *root_stat;
@@ -497,7 +510,7 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 			    to.base, to.path, curr->fts_path);
 			badcp = rval = 1;
 			if (S_ISDIR(curr_stat->st_mode))
-				(void)fts_set(ftsp, curr, FTS_SKIP);
+				fts_set(ftsp, curr, FTS_SKIP);
 			continue;
 		}
 
@@ -524,7 +537,7 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 			if (!Rflag) {
 				warnx("%s is a directory (not copied).",
 				    curr->fts_path);
-				(void)fts_set(ftsp, curr, FTS_SKIP);
+				fts_set(ftsp, curr, FTS_SKIP);
 				badcp = rval = 1;
 				break;
 			}
@@ -538,15 +551,25 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 			 */
 			if (dne) {
 				mode = curr_stat->st_mode | S_IRWXU;
+				/*
+				 * Will our umask prevent us from entering
+				 * the directory after we create it?
+				 */
+				if (~mask & S_IRWXU)
+					umask(~mask & ~S_IRWXU);
 				if (mkdirat(to.dir, to.path, mode) != 0) {
 					warn("%s/%s", to.base, to.path);
-					(void)fts_set(ftsp, curr, FTS_SKIP);
+					fts_set(ftsp, curr, FTS_SKIP);
 					badcp = rval = 1;
+					if (~mask & S_IRWXU)
+						umask(~mask);
 					break;
 				}
+				if (~mask & S_IRWXU)
+					umask(~mask);
 			} else if (!S_ISDIR(to_stat.st_mode)) {
 				warnc(ENOTDIR, "%s/%s", to.base, to.path);
-				(void)fts_set(ftsp, curr, FTS_SKIP);
+				fts_set(ftsp, curr, FTS_SKIP);
 				badcp = rval = 1;
 				break;
 			}
@@ -554,8 +577,10 @@ copy(char *argv[], enum op type, int fts_options, struct stat *root_stat)
 			 * Arrange to correct directory attributes later
 			 * (in the post-order phase) if this is a new
 			 * directory, or if the -p flag is in effect.
+			 * Note that fts_number may already be set if this
+			 * is the newly created destination directory.
 			 */
-			curr->fts_number = pflag || dne;
+			curr->fts_number |= pflag || dne;
 			break;
 		case S_IFBLK:
 		case S_IFCHR:
