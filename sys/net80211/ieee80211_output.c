@@ -1945,6 +1945,15 @@ bad:
 #undef MC01
 }
 
+/**
+ * @brief Free an 802.11 frame mbuf.
+ *
+ * Note that since a "frame" may consist of an mbuf packet
+ * list containing the 802.11 fragments that make up said
+ * frame, it will free everything in the mbuf packet list.
+ *
+ * @param m     mbuf packet list to free
+ */
 void
 ieee80211_free_mbuf(struct mbuf *m)
 {
@@ -1960,7 +1969,12 @@ ieee80211_free_mbuf(struct mbuf *m)
 	} while ((m = next) != NULL);
 }
 
-/*
+/**
+ * @brief Fragment the frame according to the specified mtu.
+ *
+ * This implements the fragmentation part of 802.11-2016 10.2.7
+ * (Fragmentation/defragmentation overview.)
+ *
  * Fragment the frame according to the specified mtu.
  * The size of the 802.11 header (w/o padding) is provided
  * so we don't need to recalculate it.  We create a new
@@ -1986,10 +2000,6 @@ ieee80211_free_mbuf(struct mbuf *m)
  * @param hdrsize	header size to reserver
  * @param ciphdrsize	crypto cipher header size to reserve
  * @param mtu		maximum fragment size
- *
- * This implements the fragmentation part of 802.11-2016 10.2.7
- * (Fragmentation/defragmentation overview.)
- *
  * @retval 1 if successful, with the mbuf pointed at by m0
  *   turned into an mbuf list of fragments (with the original
  *   mbuf being truncated.)
