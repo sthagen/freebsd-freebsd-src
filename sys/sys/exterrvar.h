@@ -12,23 +12,12 @@
 #define	_SYS_EXTERRVAR_H_
 
 #include <sys/_exterr.h>
+#include <sys/_uexterror.h>
 #include <sys/exterr_cat.h>
-#include <sys/types.h>
-
-struct uexterror {
-	uint32_t ver;
-	uint32_t error;
-	uint32_t cat;
-	uint32_t src_line;
-	uint64_t p1;
-	uint64_t p2;
-	uint64_t rsrv1[4];
-	char msg[128];
-};
 
 #define	UEXTERROR_MAXLEN	256
 
-#define	UEXTERROR_VER		0x10010001
+#define	UEXTERROR_VER		0x10010002
 
 #define	EXTERRCTL_ENABLE	1
 #define	EXTERRCTL_DISABLE	2
@@ -57,12 +46,18 @@ struct uexterror {
 		_Td->td_kexterr.p1 = (uintptr_t)pp1;		\
 		_Td->td_kexterr.p2 = (uintptr_t)pp2;		\
 		_Td->td_kexterr.src_line = __LINE__;		\
+		ktrexterr(_Td);					\
 	}							\
 } while (0)
 #define	SET_ERROR0(eerror, mmsg)	SET_ERROR2(eerror, mmsg, 0, 0)
 #define	SET_ERROR1(eerror, mmsg, pp1)	SET_ERROR2(eerror, mmsg, pp1, 0)
 
+int exterr_to_ue(struct thread *td, struct uexterror *ue);
+void ktrexterr(struct thread *td);
+
 #else	/* _KERNEL */
+
+#include <sys/types.h>
 
 __BEGIN_DECLS
 int exterrctl(u_int op, u_int flags, void *ptr);
