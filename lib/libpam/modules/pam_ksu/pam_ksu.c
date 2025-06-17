@@ -78,15 +78,14 @@ static krb5_error_code
 krb5_make_principal(krb5_context context, krb5_principal principal,
 	krb5_const_realm realm, ...)
 {
+	krb5_realm temp_realm = NULL;
 	krb5_error_code rc;
 	va_list ap;
+
 	if (realm == NULL) {
-		krb5_realm temp_realm = NULL;
 		if ((rc = krb5_get_default_realm(context, &temp_realm)))
 			return (rc);
 		realm=temp_realm;
-		if (temp_realm)
-			free(temp_realm);
 	}
 	va_start(ap, realm);
 	/*
@@ -99,6 +98,8 @@ krb5_make_principal(krb5_context context, krb5_principal principal,
 	 */
 	rc = krb5_build_principal_va(context, principal, strlen(realm), realm, ap);
 	va_end(ap);
+	if (temp_realm)
+		free(temp_realm);
 	return (rc);
 }
 #endif
