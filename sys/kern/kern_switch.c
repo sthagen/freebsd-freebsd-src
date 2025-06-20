@@ -326,7 +326,9 @@ runq_sw_set_not_empty_op(int idx, int sw_idx, rqsw_t sw_bit, rqsw_t *swp)
 	rqsw_t old_sw __unused = *swp;
 
 	*swp |= sw_bit;
-	CTR4(KTR_RUNQ, "runq_sw_set_not_empty: idx=%d sw_idx=%d bits=%#x->%#x",
+	CTR4(KTR_RUNQ,
+	    "runq_sw_set_not_empty: idx=%d sw_idx=%d "
+	    "bits=" RQSW_PRI "->" RQSW_PRI,
 	    idx, sw_idx, old_sw, *swp);
 	return (0);
 }
@@ -349,7 +351,9 @@ runq_sw_set_empty_op(int idx, int sw_idx, rqsw_t sw_bit, rqsw_t *swp)
 	rqsw_t old_sw __unused = *swp;
 
 	*swp &= ~sw_bit;
-	CTR4(KTR_RUNQ, "runq_sw_set_empty: idx=%d sw_idx=%d bits=%#x->%#x",
+	CTR4(KTR_RUNQ,
+	    "runq_sw_set_empty: idx=%d sw_idx=%d "
+	    "bits=" RQSW_PRI "->" RQSW_PRI,
 	    idx, sw_idx, old_sw, *swp);
 	return (0);
 }
@@ -489,7 +493,7 @@ int
 runq_findq(struct runq *const rq, const int lvl_min, const int lvl_max,
     runq_pred_t *const pred, void *const pred_data)
 {
-	rqsw_t const (*const rqsw)[RQSW_NB] = &rq->rq_status.rq_sw;
+	const rqsw_t (*const rqsw)[RQSW_NB] = &rq->rq_status.rq_sw;
 	rqsw_t w;
 	int i, last, idx;
 
@@ -525,7 +529,8 @@ last_mask:
 		goto return_idx;
 	return (-1);
 return_idx:
-	CTR4(KTR_RUNQ, "runq_findq: bits=%#x->%#x i=%d idx=%d",
+	CTR4(KTR_RUNQ,
+	    "runq_findq: bits=" RQSW_PRI "->" RQSW_PRI " i=%d idx=%d",
 	    (*rqsw)[i], w, i, idx);
 	return (idx);
 }
@@ -563,20 +568,27 @@ runq_first_thread(struct runq *const rq)
 
 /*
  * Return true if there are some processes of any priority on the run queue,
- * false otherwise.  Has no side effects.
+ * false otherwise.  Has no side effects.  Supports racy lookups (required by
+ * 4BSD).
  */
 bool
 runq_not_empty(struct runq *rq)
 {
-	struct thread *const td = runq_first_thread(rq);
+	const rqsw_t (*const rqsw)[RQSW_NB] = &rq->rq_status.rq_sw;
+	int sw_idx;
 
-	if (td != NULL) {
-		CTR2(KTR_RUNQ, "runq_not_empty: idx=%d, td=%p",
-		    td->td_rqindex, td);
-		return (true);
+	for (sw_idx = 0; sw_idx < RQSW_NB; ++sw_idx) {
+		const rqsw_t w = (*rqsw)[sw_idx];
+
+		if (w != 0) {
+			CTR3(KTR_RUNQ, "runq_not_empty: not empty; "
+			    "rq=%p, sw_idx=%d, bits=" RQSW_PRI,
+			    rq, sw_idx, w);
+			return (true);
+		}
 	}
 
-	CTR0(KTR_RUNQ, "runq_not_empty: empty");
+	CTR1(KTR_RUNQ, "runq_not_empty: empty; rq=%p", rq);
 	return (false);
 }
 
