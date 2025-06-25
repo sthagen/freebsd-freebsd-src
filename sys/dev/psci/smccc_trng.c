@@ -69,8 +69,8 @@ trng_identify(driver_t *driver, device_t parent)
 {
 	int32_t version;
 
-	/* TRNG depends on SMCCC 1.1 (per the spec) */
-	if (smccc_get_version() < SMCCC_MAKE_VERSION(1, 1))
+	/* Check if TRNG is supported */
+	if (smccc_arch_features(TRNG_VERSION) != SMCCC_RET_SUCCESS)
 		return;
 
 	/* Check we have TRNG 1.0 or later */
@@ -122,7 +122,7 @@ trng_read(void *buf, unsigned usz)
 	if (ret < 0)
 		return (0);
 
-	memcpy(buf, &res.a0, len);
+	memcpy(buf, &res.a3, len);
 	return (len);
 }
 
