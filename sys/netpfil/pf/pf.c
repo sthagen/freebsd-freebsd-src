@@ -205,6 +205,8 @@ VNET_DEFINE(size_t, pf_allrulecount);
 VNET_DEFINE(struct pf_krule *, pf_rulemarker);
 #endif
 
+#define PF_SCTP_MAX_ENDPOINTS		8
+
 struct pf_sctp_endpoint;
 RB_HEAD(pf_sctp_endpoints, pf_sctp_endpoint);
 struct pf_sctp_source {
@@ -307,10 +309,7 @@ VNET_DEFINE(uma_zone_t,	 pf_udp_mapping_z);
 VNET_DEFINE(struct unrhdr64, pf_stateid);
 
 static void		 pf_src_tree_remove_state(struct pf_kstate *);
-static void		 pf_init_threshold(struct pf_threshold *, u_int32_t,
-			    u_int32_t);
-static void		 pf_add_threshold(struct pf_threshold *);
-static int		 pf_check_threshold(struct pf_threshold *);
+static int		 pf_check_threshold(struct pf_kthreshold *);
 
 static void		 pf_change_ap(struct pf_pdesc *, struct pf_addr *, u_int16_t *,
 			    struct pf_addr *, u_int16_t);
@@ -448,6 +447,12 @@ VNET_DEFINE(struct pf_limit, pf_limits[PF_LIMIT_MAX]);
 		SDT_PROBE5(pf, ip, state, lookup, pd->kif, k, (pd->dir), pd, (s));	\
 		if ((s) == NULL)					\
 			return (PF_DROP);				\
+		if ((s)->rule->pktrate.limit && pd->dir == (s)->direction) {	\
+			if (pf_check_threshold(&(s)->rule->pktrate)) {	\
+				s = NULL;				\
+				return (PF_DROP);			\
+			}						\
+		}							\
 		if (PACKET_LOOPED(pd))					\
 			return (PF_PASS);				\
 	} while (0)
@@ -795,34 +800,21 @@ pf_set_protostate(struct pf_kstate *s, int which, u_int8_t newstate)
 	s->src.state = newstate;
 }
 
-static void
-pf_init_threshold(struct pf_threshold *threshold,
+bool
+pf_init_threshold(struct pf_kthreshold *threshold,
     u_int32_t limit, u_int32_t seconds)
 {
-	threshold->limit = limit * PF_THRESHOLD_MULT;
+	threshold->limit = limit;
 	threshold->seconds = seconds;
-	threshold->count = 0;
-	threshold->last = time_uptime;
-}
+	threshold->cr = counter_rate_alloc(M_NOWAIT, seconds);
 
-static void
-pf_add_threshold(struct pf_threshold *threshold)
-{
-	u_int32_t t = time_uptime, diff = t - threshold->last;
-
-	if (diff >= threshold->seconds)
-		threshold->count = 0;
-	else
-		threshold->count -= threshold->count * diff /
-		    threshold->seconds;
-	threshold->count += PF_THRESHOLD_MULT;
-	threshold->last = t;
+	return (threshold->cr != NULL);
 }
 
 static int
-pf_check_threshold(struct pf_threshold *threshold)
+pf_check_threshold(struct pf_kthreshold *threshold)
 {
-	return (threshold->count > threshold->limit);
+	return (counter_ratecheck(threshold->cr, threshold->limit) < 0);
 }
 
 static bool
@@ -837,7 +829,6 @@ pf_src_connlimit(struct pf_kstate *state)
 
 	src_node->conn++;
 	state->src.tcp_est = 1;
-	pf_add_threshold(&src_node->conn_rate);
 
 	if (state->rule->max_src_conn &&
 	    state->rule->max_src_conn <
@@ -1031,6 +1022,7 @@ pf_free_src_node(struct pf_ksrc_node *sn)
 		counter_u64_free(sn->bytes[i]);
 		counter_u64_free(sn->packets[i]);
 	}
+	counter_rate_free(sn->conn_rate.cr);
 	uma_zfree(V_pf_sources_z, sn);
 }
 
@@ -1095,9 +1087,13 @@ pf_insert_src_node(struct pf_ksrc_node *sns[PF_SN_MAX],
 		}
 
 		if (sn_type == PF_SN_LIMIT)
-			pf_init_threshold(&(*sn)->conn_rate,
+			if (! pf_init_threshold(&(*sn)->conn_rate,
 			    rule->max_src_conn_rate.limit,
-			    rule->max_src_conn_rate.seconds);
+			    rule->max_src_conn_rate.seconds)) {
+				pf_free_src_node(*sn);
+				reason = PFRES_MEMORY;
+				goto done;
+			}
 
 		MPASS((*sn)->lock == NULL);
 		(*sn)->lock = &(*sh)->lock;
@@ -5618,6 +5614,11 @@ pf_match_rule(struct pf_test_ctx *ctx, struct pf_kruleset *ruleset)
 		    pf_osfp_fingerprint(pd, ctx->th),
 		    r->os_fingerprint)),
 			TAILQ_NEXT(r, entries));
+		/* must be last! */
+		if (r->pktrate.limit) {
+			PF_TEST_ATTRIB((pf_check_threshold(&r->pktrate)),
+			    TAILQ_NEXT(r, entries));
+		}
 		/* FALLTHROUGH */
 		if (r->tag)
 			ctx->tag = r->tag;
@@ -7298,6 +7299,7 @@ pf_sctp_multihome_add_addr(struct pf_pdesc *pd, struct pf_addr *a, uint32_t v_ta
 	};
 	struct pf_sctp_source *i;
 	struct pf_sctp_endpoint *ep;
+	int count;
 
 	PF_SCTP_ENDPOINTS_LOCK();
 
@@ -7316,11 +7318,19 @@ pf_sctp_multihome_add_addr(struct pf_pdesc *pd, struct pf_addr *a, uint32_t v_ta
 	}
 
 	/* Avoid inserting duplicates. */
+	count = 0;
 	TAILQ_FOREACH(i, &ep->sources, entry) {
+		count++;
 		if (pf_addr_cmp(&i->addr, a, pd->af) == 0) {
 			PF_SCTP_ENDPOINTS_UNLOCK();
 			return;
 		}
+	}
+
+	/* Limit the number of addresses per endpoint. */
+	if (count >= PF_SCTP_MAX_ENDPOINTS) {
+		PF_SCTP_ENDPOINTS_UNLOCK();
+		return;
 	}
 
 	i = malloc(sizeof(*i), M_PFTEMP, M_NOWAIT);
