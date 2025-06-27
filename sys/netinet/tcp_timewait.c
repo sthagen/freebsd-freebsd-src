@@ -90,8 +90,30 @@
 VNET_DEFINE_STATIC(bool, nolocaltimewait) = true;
 #define	V_nolocaltimewait	VNET(nolocaltimewait)
 SYSCTL_BOOL(_net_inet_tcp, OID_AUTO, nolocaltimewait,
-    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nolocaltimewait), true,
+    CTLFLAG_VNET | CTLFLAG_RW, &VNET_NAME(nolocaltimewait), 0,
     "Do not create TCP TIME_WAIT state for local connections");
+
+static u_int
+tcp_msl(struct tcpcb *tp)
+{
+	struct inpcb *inp = tptoinpcb(tp);
+#ifdef INET6
+	bool isipv6 = inp->inp_inc.inc_flags & INC_ISIPV6;
+#endif
+
+	if (
+#ifdef INET6
+	    isipv6 ? in6_localip(&inp->in6p_faddr) :
+#endif
+#ifdef INET
+	    in_localip(inp->inp_faddr))
+#else
+	    false)
+#endif
+		return (V_tcp_msl_local);
+	else
+		return (V_tcp_msl);
+}
 
 /*
  * Move a TCP connection into TIME_WAIT state.
@@ -140,7 +162,7 @@ tcp_twstart(struct tcpcb *tp)
 		return;
 	}
 
-	tcp_timer_activate(tp, TT_2MSL, 2 * V_tcp_msl);
+	tcp_timer_activate(tp, TT_2MSL, 2 * tcp_msl(tp));
 	INP_WUNLOCK(inp);
 }
 
@@ -283,7 +305,7 @@ tcp_twcheck(struct inpcb *inp, struct tcpopt *to, struct tcphdr *th,
 	if (thflags & TH_FIN) {
 		seq = th->th_seq + tlen + (thflags & TH_SYN ? 1 : 0);
 		if (seq + 1 == tp->rcv_nxt)
-			tcp_timer_activate(tp, TT_2MSL, 2 * V_tcp_msl);
+			tcp_timer_activate(tp, TT_2MSL, 2 * tcp_msl(tp));
 	}
 
 	/*
