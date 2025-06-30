@@ -424,6 +424,7 @@ int	 invalid_redirect(struct node_host *, sa_family_t);
 u_int16_t parseicmpspec(char *, sa_family_t);
 int	 kw_casecmp(const void *, const void *);
 int	 map_tos(char *string, int *);
+int	 filteropts_to_rule(struct pfctl_rule *, struct filter_opts *);
 struct node_mac* node_mac_from_string(const char *);
 struct node_mac* node_mac_from_string_masklen(const char *, int);
 struct node_mac* node_mac_from_string_mask(const char *, const char *);
@@ -1021,38 +1022,7 @@ anchorrule	: ANCHOR anchorname dir quick interface af proto fromto
 			r.direction = $3;
 			r.quick = $4.quick;
 			r.af = $6;
-			r.prob = $9.prob;
-			r.rtableid = $9.rtableid;
-			r.ridentifier = $9.ridentifier;
-			r.pktrate.limit = $9.pktrate.limit;
-			r.pktrate.seconds = $9.pktrate.seconds;
-			r.max_pkt_size = $9.max_pkt_size;
 
-			if ($9.tag)
-				if (strlcpy(r.tagname, $9.tag,
-				    PF_TAG_NAME_SIZE) >= PF_TAG_NAME_SIZE) {
-					yyerror("tag too long, max %u chars",
-					    PF_TAG_NAME_SIZE - 1);
-					YYERROR;
-				}
-			if ($9.match_tag)
-				if (strlcpy(r.match_tagname, $9.match_tag,
-				    PF_TAG_NAME_SIZE) >= PF_TAG_NAME_SIZE) {
-					yyerror("tag too long, max %u chars",
-					    PF_TAG_NAME_SIZE - 1);
-					YYERROR;
-				}
-			r.match_tag_not = $9.match_tag_not;
-			if (rule_label(&r, $9.label))
-				YYERROR;
-			for (int i = 0; i < PF_RULE_MAX_LABEL_COUNT; i++)
-				free($9.label[i]);
-			r.flags = $9.flags.b1;
-			r.flagset = $9.flags.b2;
-			if (($9.flags.b1 & $9.flags.b2) != $9.flags.b1) {
-				yyerror("flags always false");
-				YYERROR;
-			}
 			if ($9.flags.b1 || $9.flags.b2 || $8.src_os) {
 				for (proto = $7; proto != NULL &&
 				    proto->proto != IPPROTO_TCP;
@@ -1070,32 +1040,13 @@ anchorrule	: ANCHOR anchorname dir quick interface af proto fromto
 				}
 			}
 
-			r.tos = $9.tos;
+			if (filteropts_to_rule(&r, &$9))
+				YYERROR;
 
 			if ($9.keep.action) {
 				yyerror("cannot specify state handling "
 				    "on anchors");
 				YYERROR;
-			}
-
-			if ($9.match_tag)
-				if (strlcpy(r.match_tagname, $9.match_tag,
-				    PF_TAG_NAME_SIZE) >= PF_TAG_NAME_SIZE) {
-					yyerror("tag too long, max %u chars",
-					    PF_TAG_NAME_SIZE - 1);
-					YYERROR;
-				}
-			r.match_tag_not = $9.match_tag_not;
-			if ($9.marker & FOM_PRIO) {
-				if ($9.prio == 0)
-					r.prio = PF_PRIO_ZERO;
-				else
-					r.prio = $9.prio;
-			}
-			if ($9.marker & FOM_SETPRIO) {
-				r.set_prio[0] = $9.set_prio[0];
-				r.set_prio[1] = $9.set_prio[1];
-				r.scrub_flags |= PFSTATE_SETPRIO;
 			}
 
 			decide_address_family($8.src.host, &r.af);
@@ -2417,66 +2368,11 @@ pfrule		: action dir logquick interface route af proto fromto
 			r.log = $3.log;
 			r.logif = $3.logif;
 			r.quick = $3.quick;
-			r.prob = $9.prob;
-			r.rtableid = $9.rtableid;
-
-			if ($9.nodf)
-				r.scrub_flags |= PFSTATE_NODF;
-			if ($9.randomid)
-				r.scrub_flags |= PFSTATE_RANDOMID;
-			if ($9.minttl)
-				r.min_ttl = $9.minttl;
-			if ($9.max_mss)
-				r.max_mss = $9.max_mss;
-			if ($9.marker & FOM_SETTOS) {
-				r.scrub_flags |= PFSTATE_SETTOS;
-				r.set_tos = $9.settos;
-			}
-			if ($9.marker & FOM_SCRUB_TCP)
-				r.scrub_flags |= PFSTATE_SCRUB_TCP;
-
-			if ($9.marker & FOM_PRIO) {
-				if ($9.prio == 0)
-					r.prio = PF_PRIO_ZERO;
-				else
-					r.prio = $9.prio;
-			}
-			if ($9.marker & FOM_SETPRIO) {
-				r.set_prio[0] = $9.set_prio[0];
-				r.set_prio[1] = $9.set_prio[1];
-				r.scrub_flags |= PFSTATE_SETPRIO;
-			}
-
-			if ($9.marker & FOM_AFTO)
-				r.rule_flag |= PFRULE_AFTO;
-
 			r.af = $6;
-			if ($9.tag)
-				if (strlcpy(r.tagname, $9.tag,
-				    PF_TAG_NAME_SIZE) >= PF_TAG_NAME_SIZE) {
-					yyerror("tag too long, max %u chars",
-					    PF_TAG_NAME_SIZE - 1);
-					YYERROR;
-				}
-			if ($9.match_tag)
-				if (strlcpy(r.match_tagname, $9.match_tag,
-				    PF_TAG_NAME_SIZE) >= PF_TAG_NAME_SIZE) {
-					yyerror("tag too long, max %u chars",
-					    PF_TAG_NAME_SIZE - 1);
-					YYERROR;
-				}
-			r.match_tag_not = $9.match_tag_not;
-			if (rule_label(&r, $9.label))
+
+			if (filteropts_to_rule(&r, &$9))
 				YYERROR;
-			for (int i = 0; i < PF_RULE_MAX_LABEL_COUNT; i++)
-				free($9.label[i]);
-			r.ridentifier = $9.ridentifier;
-			r.flags = $9.flags.b1;
-			r.flagset = $9.flags.b2;
-			if (($9.flags.b1 & $9.flags.b2) != $9.flags.b1) {
-				yyerror("flags always false");
-				YYERROR;
-			}
+
 			if ($9.flags.b1 || $9.flags.b2 || $8.src_os) {
 				for (proto = $7; proto != NULL &&
 				    proto->proto != IPPROTO_TCP;
@@ -2494,11 +2390,6 @@ pfrule		: action dir logquick interface route af proto fromto
 				}
 			}
 
-			r.tos = $9.tos;
-			r.keep_state = $9.keep.action;
-			r.pktrate.limit = $9.pktrate.limit;
-			r.pktrate.seconds = $9.pktrate.seconds;
-			r.max_pkt_size = $9.max_pkt_size;
 			o = $9.keep.options;
 
 			/* 'keep state' by default on pass rules. */
@@ -2732,10 +2623,6 @@ pfrule		: action dir logquick interface route af proto fromto
 			if (r.keep_state && !statelock)
 				r.rule_flag |= default_statelock;
 
-			if ($9.fragment)
-				r.rule_flag |= PFRULE_FRAGMENT;
-			r.allow_opts = $9.allowopts;
-
 			decide_address_family($8.src.host, &r.af);
 			decide_address_family($8.dst.host, &r.af);
 
@@ -2754,24 +2641,6 @@ pfrule		: action dir logquick interface route af proto fromto
 					    "matching address family found.");
 					YYERROR;
 				}
-			}
-			if ($9.queues.qname != NULL) {
-				if (strlcpy(r.qname, $9.queues.qname,
-				    sizeof(r.qname)) >= sizeof(r.qname)) {
-					yyerror("rule qname too long (max "
-					    "%d chars)", sizeof(r.qname)-1);
-					YYERROR;
-				}
-				free($9.queues.qname);
-			}
-			if ($9.queues.pqname != NULL) {
-				if (strlcpy(r.pqname, $9.queues.pqname,
-				    sizeof(r.pqname)) >= sizeof(r.pqname)) {
-					yyerror("rule pqname too long (max "
-					    "%d chars)", sizeof(r.pqname)-1);
-					YYERROR;
-				}
-				free($9.queues.pqname);
 			}
 #ifdef __FreeBSD__
 			r.divert.port = $9.divert.port;
@@ -5623,18 +5492,18 @@ expand_label_str(char *label, size_t len, const char *srch, const char *repl)
 	char *p, *q;
 
 	if ((tmp = calloc(1, len)) == NULL)
-		err(1, "expand_label_str: calloc");
+		err(1, "%s: calloc", __func__);
 	p = q = label;
 	while ((q = strstr(p, srch)) != NULL) {
 		*q = '\0';
 		if ((strlcat(tmp, p, len) >= len) ||
 		    (strlcat(tmp, repl, len) >= len))
-			errx(1, "expand_label: label too long");
+			errx(1, "%s: label too long", __func__);
 		q += strlen(srch);
 		p = q;
 	}
 	if (strlcat(tmp, p, len) >= len)
-		errx(1, "expand_label: label too long");
+		errx(1, "%s: label too long", __func__);
 	strlcpy(label, tmp, len);	/* always fits */
 	free(tmp);
 }
@@ -5800,7 +5669,7 @@ expand_altq(struct pf_altq *a, struct node_if *interfaces,
 		memcpy(&pa, a, sizeof(struct pf_altq));
 		if (strlcpy(pa.ifname, interface->ifname,
 		    sizeof(pa.ifname)) >= sizeof(pa.ifname))
-			errx(1, "expand_altq: strlcpy");
+			errx(1, "%s: strlcpy", __func__);
 
 		if (interface->not) {
 			yyerror("altq on ! <interface> is not supported");
@@ -5834,16 +5703,16 @@ expand_altq(struct pf_altq *a, struct node_if *interfaces,
 				memset(&pb, 0, sizeof(struct pf_altq));
 				if (strlcpy(qname, "root_", sizeof(qname)) >=
 				    sizeof(qname))
-					errx(1, "expand_altq: strlcpy");
+					errx(1, "%s: strlcpy", __func__);
 				if (strlcat(qname, interface->ifname,
 				    sizeof(qname)) >= sizeof(qname))
-					errx(1, "expand_altq: strlcat");
+					errx(1, "%s: strlcat", __func__);
 				if (strlcpy(pb.qname, qname,
 				    sizeof(pb.qname)) >= sizeof(pb.qname))
-					errx(1, "expand_altq: strlcpy");
+					errx(1, "%s: strlcpy", __func__);
 				if (strlcpy(pb.ifname, interface->ifname,
 				    sizeof(pb.ifname)) >= sizeof(pb.ifname))
-					errx(1, "expand_altq: strlcpy");
+					errx(1, "%s: strlcpy", __func__);
 				pb.qlimit = pa.qlimit;
 				pb.scheduler = pa.scheduler;
 				bw.bw_absolute = pa.ifbandwidth;
@@ -5858,20 +5727,20 @@ expand_altq(struct pf_altq *a, struct node_if *interfaces,
 			LOOP_THROUGH(struct node_queue, queue, nqueues,
 				n = calloc(1, sizeof(struct node_queue));
 				if (n == NULL)
-					err(1, "expand_altq: calloc");
+					err(1, "%s: calloc", __func__);
 				if (pa.scheduler == ALTQT_CBQ ||
 				    pa.scheduler == ALTQT_HFSC ||
 				    pa.scheduler == ALTQT_FAIRQ)
 					if (strlcpy(n->parent, qname,
 					    sizeof(n->parent)) >=
 					    sizeof(n->parent))
-						errx(1, "expand_altq: strlcpy");
+						errx(1, "%s: strlcpy", __func__);
 				if (strlcpy(n->queue, queue->queue,
 				    sizeof(n->queue)) >= sizeof(n->queue))
-					errx(1, "expand_altq: strlcpy");
+					errx(1, "%s: strlcpy", __func__);
 				if (strlcpy(n->ifname, interface->ifname,
 				    sizeof(n->ifname)) >= sizeof(n->ifname))
-					errx(1, "expand_altq: strlcpy");
+					errx(1, "%s: strlcpy", __func__);
 				n->scheduler = pa.scheduler;
 				n->next = NULL;
 				n->tail = n;
@@ -5954,10 +5823,10 @@ expand_queue(struct pf_altq *a, struct node_if *interfaces,
 
 				if (strlcpy(pa.ifname, tqueue->ifname,
 				    sizeof(pa.ifname)) >= sizeof(pa.ifname))
-					errx(1, "expand_queue: strlcpy");
+					errx(1, "%s: strlcpy", __func__);
 				if (strlcpy(pa.parent, tqueue->parent,
 				    sizeof(pa.parent)) >= sizeof(pa.parent))
-					errx(1, "expand_queue: strlcpy");
+					errx(1, "%s: strlcpy", __func__);
 
 				if (eval_pfqueue(pf, &pa, &bwspec, opts))
 					errs++;
@@ -5975,19 +5844,19 @@ expand_queue(struct pf_altq *a, struct node_if *interfaces,
 					n = calloc(1,
 					    sizeof(struct node_queue));
 					if (n == NULL)
-						err(1, "expand_queue: calloc");
+						err(1, "%s: calloc", __func__);
 					if (strlcpy(n->parent, a->qname,
 					    sizeof(n->parent)) >=
 					    sizeof(n->parent))
-						errx(1, "expand_queue strlcpy");
+						errx(1, "%s strlcpy", __func__);
 					if (strlcpy(n->queue, nq->queue,
 					    sizeof(n->queue)) >=
 					    sizeof(n->queue))
-						errx(1, "expand_queue strlcpy");
+						errx(1, "%s strlcpy", __func__);
 					if (strlcpy(n->ifname, tqueue->ifname,
 					    sizeof(n->ifname)) >=
 					    sizeof(n->ifname))
-						errx(1, "expand_queue strlcpy");
+						errx(1, "%s strlcpy", __func__);
 					n->scheduler = tqueue->scheduler;
 					n->next = NULL;
 					n->tail = n;
@@ -6056,12 +5925,12 @@ expand_eth_rule(struct pfctl_eth_rule *r,
 	char qname[PF_QNAME_SIZE];
 
 	if (strlcpy(tagname, r->tagname, sizeof(tagname)) >= sizeof(tagname))
-		errx(1, "expand_eth_rule: tagname");
+		errx(1, "%s: tagname", __func__);
 	if (strlcpy(match_tagname, r->match_tagname, sizeof(match_tagname)) >=
 	    sizeof(match_tagname))
-		errx(1, "expand_eth_rule: match_tagname");
+		errx(1, "%s: match_tagname", __func__);
 	if (strlcpy(qname, r->qname, sizeof(qname)) >= sizeof(qname))
-		errx(1, "expand_eth_rule: qname");
+		errx(1, "%s: qname", __func__);
 
 	LOOP_THROUGH(struct node_if, interface, interfaces,
 	LOOP_THROUGH(struct node_etherproto, proto, protos,
@@ -6093,12 +5962,12 @@ expand_eth_rule(struct pfctl_eth_rule *r,
 
 		if (strlcpy(r->tagname, tagname, sizeof(r->tagname)) >=
 		    sizeof(r->tagname))
-			errx(1, "expand_eth_rule: r->tagname");
+			errx(1, "%s: r->tagname", __func__);
 		if (strlcpy(r->match_tagname, match_tagname,
 		    sizeof(r->match_tagname)) >= sizeof(r->match_tagname))
-			errx(1, "expand_eth_rule: r->match_tagname");
+			errx(1, "%s: r->match_tagname", __func__);
 		if (strlcpy(r->qname, qname, sizeof(r->qname)) >= sizeof(r->qname))
-			errx(1, "expand_eth_rule: r->qname");
+			errx(1, "%s: r->qname", __func__);
 
 		if (bridge_to)
 			strlcpy(r->bridge_to, bridge_to, sizeof(r->bridge_to));
@@ -6232,12 +6101,12 @@ apply_redirspec(struct pfctl_pool *rpool, struct redirspec *rs)
 	for (h = rs->host; h != NULL; h = h->next) {
 		pa = calloc(1, sizeof(struct pf_pooladdr));
 		if (pa == NULL)
-			err(1, "expand_rule: calloc");
+			err(1, "%s: calloc", __func__);
 		pa->addr = h->addr;
 		if (h->ifname != NULL) {
 			if (strlcpy(pa->ifname, h->ifname,
 			    sizeof(pa->ifname)) >= sizeof(pa->ifname))
-				errx(1, "expand_rule: strlcpy");
+				errx(1, "%s: strlcpy", __func__);
 		} else
 			pa->ifname[0] = 0;
 		TAILQ_INSERT_TAIL(&(rpool->list), pa, entries);
@@ -6375,10 +6244,10 @@ expand_rule(struct pfctl_rule *r, bool keeprule,
 	memcpy(label, r->label, sizeof(r->label));
 	assert(sizeof(r->label) == sizeof(label));
 	if (strlcpy(tagname, r->tagname, sizeof(tagname)) >= sizeof(tagname))
-		errx(1, "expand_rule: strlcpy");
+		errx(1, "%s: strlcpy", __func__);
 	if (strlcpy(match_tagname, r->match_tagname, sizeof(match_tagname)) >=
 	    sizeof(match_tagname))
-		errx(1, "expand_rule: strlcpy");
+		errx(1, "%s: strlcpy", __func__);
 	flags = r->flags;
 	flagset = r->flagset;
 	keep_state = r->keep_state;
@@ -6431,21 +6300,21 @@ expand_rule(struct pfctl_rule *r, bool keeprule,
 		memcpy(r->label, label, sizeof(r->label));
 		if (strlcpy(r->tagname, tagname, sizeof(r->tagname)) >=
 		    sizeof(r->tagname))
-			errx(1, "expand_rule: strlcpy");
+			errx(1, "%s: strlcpy", __func__);
 		if (strlcpy(r->match_tagname, match_tagname,
 		    sizeof(r->match_tagname)) >= sizeof(r->match_tagname))
-			errx(1, "expand_rule: strlcpy");
+			errx(1, "%s: strlcpy", __func__);
 
 		osrch = odsth = NULL;
 		if (src_host->addr.type == PF_ADDR_DYNIFTL) {
 			osrch = src_host;
 			if ((src_host = gen_dynnode(src_host, r->af)) == NULL)
-				err(1, "expand_rule: calloc");
+				err(1, "%s: calloc", __func__);
 		}
 		if (dst_host->addr.type == PF_ADDR_DYNIFTL) {
 			odsth = dst_host;
 			if ((dst_host = gen_dynnode(dst_host, r->af)) == NULL)
-				err(1, "expand_rule: calloc");
+				err(1, "%s: calloc", __func__);
 		}
 
 		error += check_netmask(src_host, r->af);
@@ -6898,7 +6767,7 @@ lungetc(int c)
 	if (file->ungetpos >= file->ungetsize) {
 		void *p = reallocarray(file->ungetbuf, file->ungetsize, 2);
 		if (p == NULL)
-			err(1, "lungetc");
+			err(1, "%s", __func__);
 		file->ungetbuf = p;
 		file->ungetsize *= 2;
 	}
@@ -7008,7 +6877,7 @@ top:
 		}
 		yylval.v.string = strdup(buf);
 		if (yylval.v.string == NULL)
-			err(1, "yylex: strdup");
+			err(1, "%s: strdup", __func__);
 		return (STRING);
 		case '!':
 			next = lgetc(0);
@@ -7096,7 +6965,7 @@ nodigits:
 		*p = '\0';
 		if ((token = lookup(buf)) == STRING)
 			if ((yylval.v.string = strdup(buf)) == NULL)
-				err(1, "yylex: strdup");
+				err(1, "%s: strdup", __func__);
 		return (token);
 	}
 	if (c == '\n') {
@@ -7281,7 +7150,7 @@ pfctl_cmdline_symset(char *s)
 		return (-1);
 
 	if ((sym = malloc(strlen(s) - strlen(val) + 1)) == NULL)
-		err(1, "pfctl_cmdline_symset: malloc");
+		err(1, "%s: malloc", __func__);
 
 	strlcpy(sym, s, strlen(s) - strlen(val) + 1);
 
@@ -7645,7 +7514,7 @@ node_mac_from_string(const char *str)
 
 	m = calloc(1, sizeof(struct node_mac));
 	if (m == NULL)
-		err(1, "mac: calloc");
+		err(1, "%s: calloc", __func__);
 
 	if (sscanf(str, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
 	    &m->mac[0], &m->mac[1], &m->mac[2], &m->mac[3], &m->mac[4],
@@ -7702,4 +7571,95 @@ node_mac_from_string_mask(const char *str, const char *mask)
 	}
 
 	return (m);
+}
+
+int
+filteropts_to_rule(struct pfctl_rule *r, struct filter_opts *opts)
+{
+	r->keep_state = opts->keep.action;
+	r->pktrate.limit = opts->pktrate.limit;
+	r->pktrate.seconds = opts->pktrate.seconds;
+	r->prob = opts->prob;
+	r->rtableid = opts->rtableid;
+	r->ridentifier = opts->ridentifier;
+	r->max_pkt_size = opts->max_pkt_size;
+	r->tos = opts->tos;
+
+	if (opts->nodf)
+		r->scrub_flags |= PFSTATE_NODF;
+	if (opts->randomid)
+		r->scrub_flags |= PFSTATE_RANDOMID;
+	if (opts->minttl)
+		r->min_ttl = opts->minttl;
+	if (opts->max_mss)
+		r->max_mss = opts->max_mss;
+
+	if (opts->tag)
+		if (strlcpy(r->tagname, opts->tag,
+		    PF_TAG_NAME_SIZE) >= PF_TAG_NAME_SIZE) {
+			yyerror("tag too long, max %u chars",
+			    PF_TAG_NAME_SIZE - 1);
+			return (1);
+		}
+	if (opts->match_tag)
+		if (strlcpy(r->match_tagname, opts->match_tag,
+		    PF_TAG_NAME_SIZE) >= PF_TAG_NAME_SIZE) {
+			yyerror("tag too long, max %u chars",
+			    PF_TAG_NAME_SIZE - 1);
+			return (1);
+		}
+	r->match_tag_not = opts->match_tag_not;
+
+	if (rule_label(r, opts->label))
+		return (1);
+	for (int i = 0; i < PF_RULE_MAX_LABEL_COUNT; i++)
+		free(opts->label[i]);
+
+	if (opts->marker & FOM_AFTO)
+		r->rule_flag |= PFRULE_AFTO;
+	if (opts->marker & FOM_SCRUB_TCP)
+		r->scrub_flags |= PFSTATE_SCRUB_TCP;
+	if (opts->marker & FOM_PRIO)
+		r->prio = opts->prio ? opts->prio : PF_PRIO_ZERO;
+	if (opts->marker & FOM_SETPRIO) {
+		r->set_prio[0] = opts->set_prio[0];
+		r->set_prio[1] = opts->set_prio[1];
+		r->scrub_flags |= PFSTATE_SETPRIO;
+	}
+	if (opts->marker & FOM_SETTOS) {
+		r->scrub_flags |= PFSTATE_SETTOS;
+		r->set_tos = opts->settos;
+	}
+
+	r->flags = opts->flags.b1;
+	r->flagset = opts->flags.b2;
+	if ((opts->flags.b1 & opts->flags.b2) != opts->flags.b1) {
+		yyerror("flags always false");
+		return (1);
+	}
+
+	if (opts->queues.qname != NULL) {
+		if (strlcpy(r->qname, opts->queues.qname,
+		    sizeof(r->qname)) >= sizeof(r->qname)) {
+			yyerror("rule qname too long (max "
+			    "%d chars)", sizeof(r->qname)-1);
+			return (1);
+		}
+		free(opts->queues.qname);
+	}
+	if (opts->queues.pqname != NULL) {
+		if (strlcpy(r->pqname, opts->queues.pqname,
+		    sizeof(r->pqname)) >= sizeof(r->pqname)) {
+			yyerror("rule pqname too long (max "
+			    "%d chars)", sizeof(r->pqname)-1);
+			return (1);
+		}
+		free(opts->queues.pqname);
+	}
+
+	if (opts->fragment)
+		r->rule_flag |= PFRULE_FRAGMENT;
+	r->allow_opts = opts->allowopts;
+
+	return (0);
 }
