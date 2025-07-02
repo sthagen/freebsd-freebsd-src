@@ -1367,7 +1367,7 @@ check_netmask(struct node_host *h, sa_family_t af)
 		if (af == AF_INET &&
 		    (m->addr32[1] || m->addr32[2] || m->addr32[3])) {
 			fprintf(stderr, "netmask %u invalid for IPv4 address\n",
-			    unmask(m, AF_INET6));
+			    unmask(m));
 			return (1);
 		}
 	}
@@ -1392,7 +1392,7 @@ gen_dynnode(struct node_host *h, sa_family_t af)
 
 	/* fix up netmask */
 	m = &n->addr.v.a.mask;
-	if (af == AF_INET && unmask(m, AF_INET6) > 32)
+	if (af == AF_INET && unmask(m) > 32)
 		set_ipmask(n, 32);
 
 	return (n);
@@ -1483,7 +1483,7 @@ ifa_load(void)
 				continue;
 		n = calloc(1, sizeof(struct node_host));
 		if (n == NULL)
-			err(1, "address: calloc");
+			err(1, "%s: calloc", __func__);
 		n->af = ifa->ifa_addr->sa_family;
 		n->ifa_flags = ifa->ifa_flags;
 #ifdef __KAME__
@@ -1540,7 +1540,7 @@ ifa_load(void)
 			    ifa->ifa_addr)->sdl_index;
 		}
 		if ((n->ifname = strdup(ifa->ifa_name)) == NULL)
-			err(1, "ifa_load: strdup");
+			err(1, "%s: strdup", __func__);
 		n->next = NULL;
 		n->tail = n;
 		if (h == NULL)
@@ -1743,7 +1743,7 @@ ifa_lookup(char *ifa_name, int flags)
 			got6 = 1;
 		n = calloc(1, sizeof(struct node_host));
 		if (n == NULL)
-			err(1, "address: calloc");
+			err(1, "%s: calloc", __func__);
 		n->af = p->af;
 		if (flags & PFI_AFLAG_BROADCAST)
 			memcpy(&n->addr.v.a.addr, &p->bcast,
@@ -1755,16 +1755,9 @@ ifa_lookup(char *ifa_name, int flags)
 			memcpy(&n->addr.v.a.addr, &p->addr.v.a.addr,
 			    sizeof(struct pf_addr));
 		if (flags & PFI_AFLAG_NETWORK)
-			set_ipmask(n, unmask(&p->addr.v.a.mask, n->af));
-		else {
-			if (n->af == AF_INET &&
-			    p->ifa_flags & IFF_LOOPBACK &&
-			    p->ifa_flags & IFF_LINK1)
-				memcpy(&n->addr.v.a.mask, &p->addr.v.a.mask,
-				    sizeof(struct pf_addr));
-			else
-				set_ipmask(n, -1);
-		}
+			set_ipmask(n, unmask(&p->addr.v.a.mask));
+		else
+			set_ipmask(n, -1);
 		n->ifindex = p->ifindex;
 		n->ifname = strdup(p->ifname);
 
@@ -2055,7 +2048,7 @@ append_addr_host(struct pfr_buffer *b, struct node_host *n, int test, int not)
 		bzero(&addr, sizeof(addr));
 		addr.pfra_not = n->not ^ not;
 		addr.pfra_af = n->af;
-		addr.pfra_net = unmask(&n->addr.v.a.mask, n->af);
+		addr.pfra_net = unmask(&n->addr.v.a.mask);
 		switch (n->af) {
 		case AF_INET:
 			addr.pfra_ip4addr.s_addr = n->addr.v.a.addr.addr32[0];
