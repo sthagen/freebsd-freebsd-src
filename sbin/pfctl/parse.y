@@ -6854,7 +6854,8 @@ top:
 			} else if (c == '\\') {
 				if ((next = lgetc(quotec)) == EOF)
 					return (0);
-				if (next == quotec || c == ' ' || c == '\t')
+				if (next == quotec || next == ' ' ||
+				    next == '\t')
 					c = next;
 				else if (next == '\n') {
 					file->lineno++;
@@ -7149,10 +7150,9 @@ pfctl_cmdline_symset(char *s)
 	if ((val = strrchr(s, '=')) == NULL)
 		return (-1);
 
-	if ((sym = malloc(strlen(s) - strlen(val) + 1)) == NULL)
+	sym = strndup(s, val - s);
+	if (sym == NULL)
 		err(1, "%s: malloc", __func__);
-
-	strlcpy(sym, s, strlen(s) - strlen(val) + 1);
 
 	ret = symset(sym, val + 1, 1);
 	free(sym);
