@@ -66,7 +66,6 @@
 #include "pfctl_parser.h"
 #include "pfctl.h"
 
-void		 copy_satopfaddr(struct pf_addr *, struct sockaddr *);
 void		 print_op (u_int8_t, const char *, const char *);
 void		 print_port (u_int8_t, u_int16_t, u_int16_t, const char *, int);
 void		 print_ugid (u_int8_t, unsigned, unsigned, const char *, unsigned);
@@ -1795,7 +1794,7 @@ host(const char *s, int opts)
 	char			*p, *ps;
 	const char		*errstr;
 
-	if ((p = strrchr(s, '/')) != NULL) {
+	if ((p = strchr(s, '/')) != NULL) {
 		mask = strtonum(p+1, 0, 128, &errstr);
 		if (errstr) {
 			fprintf(stderr, "netmask is %s: %s\n", errstr, p);

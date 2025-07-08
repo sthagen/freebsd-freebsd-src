@@ -921,7 +921,27 @@ varset		: STRING '=' varstring	{
 		}
 		;
 
-anchorname	: STRING			{ $$ = $1; }
+anchorname	: STRING			{
+			if ($1[0] == '\0') {
+				free($1);
+				yyerror("anchor name must not be empty");
+				YYERROR;
+			}
+			if (strlen(pf->anchor->path) + 1 +
+			    strlen($1) >= PATH_MAX) {
+				free($1);
+				yyerror("anchor name is longer than %u",
+				   PATH_MAX - 1);
+				YYERROR;
+			}
+			if ($1[0] == '_' || strstr($1, "/_") != NULL) {
+				free($1);
+				yyerror("anchor names beginning with '_' "
+				  "are reserved for internal use");
+				YYERROR;
+			}
+			$$ = $1;
+		}
 		| /* empty */			{ $$ = NULL; }
 		;
 
@@ -938,6 +958,8 @@ pfa_anchor	: '{'
 			struct pfctl_ruleset *rs;
 
 			/* stepping into a brace anchor */
+			if (pf->asd >= PFCTL_ANCHOR_STACK_DEPTH)
+				errx(1, "pfa_anchor: anchors too deep");
 			pf->asd++;
 			pf->bn++;
 
@@ -971,13 +993,6 @@ anchorrule	: ANCHOR anchorname dir quick interface af proto fromto
 			if (check_rulestate(PFCTL_STATE_FILTER)) {
 				if ($2)
 					free($2);
-				YYERROR;
-			}
-
-			if ($2 && ($2[0] == '_' || strstr($2, "/_") != NULL)) {
-				free($2);
-				yyerror("anchor names beginning with '_' "
-				    "are reserved for internal use");
 				YYERROR;
 			}
 
@@ -1162,14 +1177,11 @@ anchorrule	: ANCHOR anchorname dir quick interface af proto fromto
 		}
 		;
 
-loadrule	: LOAD ANCHOR string FROM string	{
+loadrule	: LOAD ANCHOR anchorname FROM string	{
 			struct loadanchors	*loadanchor;
 
-			if (strlen(pf->anchor->path) + 1 +
-			    strlen($3) >= MAXPATHLEN) {
-				yyerror("anchorname %s too long, max %u\n",
-				    $3, MAXPATHLEN - 1);
-				free($3);
+			if ($3 == NULL) {
+				yyerror("anchor name is missing");
 				YYERROR;
 			}
 			loadanchor = calloc(1, sizeof(struct loadanchors));
@@ -1251,6 +1263,8 @@ etherpfa_anchor	: '{'
 			struct pfctl_eth_ruleset *rs;
 
 			/* steping into a brace anchor */
+			if (pf->asd >= PFCTL_ANCHOR_STACK_DEPTH)
+				errx(1, "pfa_anchor: anchors too deep");
 			pf->asd++;
 			pf->bn++;
 
@@ -5424,6 +5438,12 @@ process_tabledef(char *name, struct table_opts *opts, int popts)
 	if (pf->opts & PF_OPT_VERBOSE)
 		print_tabledef(name, opts->flags, opts->init_addr,
 		    &opts->init_nodes);
+	if (!(pf->opts & PF_OPT_NOACTION) ||
+	    (pf->opts & PF_OPT_DUMMYACTION))
+		warn_duplicate_tables(name, pf->anchor->path);
+	else if (pf->opts & PF_OPT_VERBOSE)
+		fprintf(stderr, "%s:%d: skipping duplicate table checks"
+		    " for <%s>\n", file->name, yylval.lineno, name);
 	if (!(pf->opts & PF_OPT_NOACTION) &&
 	    pfctl_define_table(name, opts->flags, opts->init_addr,
 	    pf->anchor->path, &ab, pf->anchor->ruleset.tticket)) {
@@ -6918,7 +6938,7 @@ top:
 	if (c == '-' || isdigit(c)) {
 		do {
 			*p++ = c;
-			if ((unsigned)(p-buf) >= sizeof(buf)) {
+			if ((size_t)(p-buf) >= sizeof(buf)) {
 				yyerror("string too long");
 				return (findeol());
 			}
@@ -6957,7 +6977,7 @@ nodigits:
 	if (isalnum(c) || c == ':' || c == '_') {
 		do {
 			*p++ = c;
-			if ((unsigned)(p-buf) >= sizeof(buf)) {
+			if ((size_t)(p-buf) >= sizeof(buf)) {
 				yyerror("string too long");
 				return (findeol());
 			}
