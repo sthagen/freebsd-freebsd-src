@@ -1652,10 +1652,11 @@ nfsvno_rename(struct nameidata *fromndp, struct nameidata *tondp,
 	}
 	if (fvp == tvp) {
 		/*
-		 * If source and destination are the same, there is nothing to
-		 * do. Set error to -1 to indicate this.
+		 * If source and destination are the same, there is
+		 * nothing to do. Set error to EJUSTRETURN to indicate
+		 * this.
 		 */
-		error = -1;
+		error = EJUSTRETURN;
 		goto out;
 	}
 	if (nd->nd_flag & ND_NFSV4) {
@@ -1697,10 +1698,26 @@ nfsvno_rename(struct nameidata *fromndp, struct nameidata *tondp,
 		    " dsdvp=%p\n", dsdvp[0]);
 	}
 out:
-	if (!error) {
+	mp = NULL;
+	if (error == 0) {
+		error = VOP_GETWRITEMOUNT(tondp->ni_dvp, &mp);
+		if (error == 0) {
+			if (mp == NULL) {
+				error = ENOENT;
+			} else {
+				error = lockmgr(&mp->mnt_renamelock,
+				    LK_EXCLUSIVE | LK_NOWAIT, NULL);
+				if (error != 0)
+					error = ERELOOKUP;
+			}
+		}
+	}
+	if (error == 0) {
 		error = VOP_RENAME(fromndp->ni_dvp, fromndp->ni_vp,
 		    &fromndp->ni_cnd, tondp->ni_dvp, tondp->ni_vp,
 		    &tondp->ni_cnd);
+		lockmgr(&mp->mnt_renamelock, LK_RELEASE, 0);
+		vfs_rel(mp);
 	} else {
 		if (tdvp == tvp)
 			vrele(tdvp);
@@ -1710,8 +1727,13 @@ out:
 			vput(tvp);
 		vrele(fromndp->ni_dvp);
 		vrele(fvp);
-		if (error == -1)
+		if (error == EJUSTRETURN) {
 			error = 0;
+		} else if (error == ERELOOKUP && mp != NULL) {
+			lockmgr(&mp->mnt_renamelock, LK_EXCLUSIVE, 0);
+			lockmgr(&mp->mnt_renamelock, LK_RELEASE, 0);
+			vfs_rel(mp);
+		}
 	}
 
 	/*

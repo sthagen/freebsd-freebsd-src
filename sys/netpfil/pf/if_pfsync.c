@@ -763,6 +763,10 @@ pfsync_state_import(union pfsync_state_union *sp, int flags, int msg_version)
 			    __func__, msg_version);
 	}
 
+	if (! (st->act.rtableid == -1 ||
+	    (st->act.rtableid >= 0 && st->act.rtableid < rt_numfibs)))
+		goto cleanup;
+
 	st->id = sp->pfs_1301.id;
 	st->creatorid = sp->pfs_1301.creatorid;
 	pf_state_peer_ntoh(&sp->pfs_1301.src, &st->src);
@@ -1083,7 +1087,7 @@ pfsync_in_ins(struct mbuf *m, int offset, int count, int flags, int action)
 			msg_version = PFSYNC_MSG_VERSION_1400;
 			break;
 		default:
-			V_pfsyncstats.pfsyncs_badact++;
+			V_pfsyncstats.pfsyncs_badver++;
 			return (-1);
 	}
 
@@ -1110,9 +1114,8 @@ pfsync_in_ins(struct mbuf *m, int offset, int count, int flags, int action)
 			continue;
 		}
 
-		if (pfsync_state_import(sp, flags, msg_version) == ENOMEM)
-			/* Drop out, but process the rest of the actions. */
-			break;
+		if (pfsync_state_import(sp, flags, msg_version) != 0)
+			V_pfsyncstats.pfsyncs_badact++;
 	}
 
 	return (total_len);

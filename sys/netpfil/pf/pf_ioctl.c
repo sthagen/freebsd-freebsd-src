@@ -2155,51 +2155,51 @@ pf_ioctl_addrule(struct pf_krule *rule, uint32_t ticket,
 		rule->rcv_kif = NULL;
 
 	if (rule->rtableid > 0 && rule->rtableid >= rt_numfibs)
-		error = EBUSY;
+		ERROUT(EBUSY);
 #ifdef ALTQ
 	/* set queue IDs */
 	if (rule->qname[0] != 0) {
 		if ((rule->qid = pf_qname2qid(rule->qname)) == 0)
-			error = EBUSY;
+			ERROUT(EBUSY);
 		else if (rule->pqname[0] != 0) {
 			if ((rule->pqid =
 			    pf_qname2qid(rule->pqname)) == 0)
-				error = EBUSY;
+				ERROUT(EBUSY);
 		} else
 			rule->pqid = rule->qid;
 	}
 #endif
 	if (rule->tagname[0])
 		if ((rule->tag = pf_tagname2tag(rule->tagname)) == 0)
-			error = EBUSY;
+			ERROUT(EBUSY);
 	if (rule->match_tagname[0])
 		if ((rule->match_tag =
 		    pf_tagname2tag(rule->match_tagname)) == 0)
-			error = EBUSY;
+			ERROUT(EBUSY);
 	if (rule->rt && !rule->direction)
-		error = EINVAL;
+		ERROUT(EINVAL);
 	if (!rule->log)
 		rule->logif = 0;
 	if (! pf_init_threshold(&rule->pktrate, rule->pktrate.limit,
 	   rule->pktrate.seconds))
-		error = ENOMEM;
+		ERROUT(ENOMEM);
 	if (pf_addr_setup(ruleset, &rule->src.addr, rule->af))
-		error = ENOMEM;
+		ERROUT(ENOMEM);
 	if (pf_addr_setup(ruleset, &rule->dst.addr, rule->af))
-		error = ENOMEM;
+		ERROUT(ENOMEM);
 	if (pf_kanchor_setup(rule, ruleset, anchor_call))
-		error = EINVAL;
+		ERROUT(EINVAL);
 	if (rule->scrub_flags & PFSTATE_SETPRIO &&
 	    (rule->set_prio[0] > PF_PRIO_MAX ||
 	    rule->set_prio[1] > PF_PRIO_MAX))
-		error = EINVAL;
+		ERROUT(EINVAL);
 	for (int i = 0; i < 3; i++) {
 		TAILQ_FOREACH(pa, &V_pf_pabuf[i], entries)
 			if (pa->addr.type == PF_ADDR_TABLE) {
 				pa->addr.p.tbl = pfr_attach_table(ruleset,
 				    pa->addr.v.tblname);
 				if (pa->addr.p.tbl == NULL)
-					error = ENOMEM;
+					ERROUT(ENOMEM);
 			}
 	}
 
@@ -2207,7 +2207,7 @@ pf_ioctl_addrule(struct pf_krule *rule, uint32_t ticket,
 	if (rule->overload_tblname[0]) {
 		if ((rule->overload_tbl = pfr_attach_table(ruleset,
 		    rule->overload_tblname)) == NULL)
-			error = EINVAL;
+			ERROUT(EINVAL);
 		else
 			rule->overload_tbl->pfrkt_flags |=
 			    PFR_TFLAG_ACTIVE;
@@ -2230,23 +2230,19 @@ pf_ioctl_addrule(struct pf_krule *rule, uint32_t ticket,
 	if (((rule->action == PF_NAT) || (rule->action == PF_RDR) ||
 	    (rule->action == PF_BINAT))	&& rule->anchor == NULL &&
 	    TAILQ_FIRST(&rule->rdr.list) == NULL) {
-		error = EINVAL;
+		ERROUT(EINVAL);
 	}
 
 	if (rule->rt > PF_NOPFROUTE && (TAILQ_FIRST(&rule->route.list) == NULL)) {
-		error = EINVAL;
+		ERROUT(EINVAL);
 	}
 
 	if (rule->action == PF_PASS && (rule->rdr.opts & PF_POOL_STICKYADDR ||
 	    rule->nat.opts & PF_POOL_STICKYADDR) && !rule->keep_state) {
-		error = EINVAL;
+		ERROUT(EINVAL);
 	}
 
-	if (error) {
-		pf_free_rule(rule);
-		rule = NULL;
-		ERROUT(error);
-	}
+	MPASS(error == 0);
 
 	rule->nat.cur = TAILQ_FIRST(&rule->nat.list);
 	rule->rdr.cur = TAILQ_FIRST(&rule->rdr.list);
@@ -2699,7 +2695,7 @@ pf_ioctl_get_addr(struct pf_nl_pooladdr *pp)
 
 	PF_RULES_RLOCK_TRACKER;
 
-	pp->anchor[sizeof(pp->anchor) - 1] = 0;
+	pp->anchor[sizeof(pp->anchor) - 1] = '\0';
 
 	PF_RULES_RLOCK();
 	pool = pf_get_kpool(pp->anchor, pp->ticket, pp->r_action,
@@ -2732,7 +2728,7 @@ pf_ioctl_get_rulesets(struct pfioc_ruleset *pr)
 
 	PF_RULES_RLOCK_TRACKER;
 
-	pr->path[sizeof(pr->path) - 1] = 0;
+	pr->path[sizeof(pr->path) - 1] = '\0';
 
 	PF_RULES_RLOCK();
 	if ((ruleset = pf_find_kruleset(pr->path)) == NULL) {
@@ -2771,7 +2767,7 @@ pf_ioctl_get_ruleset(struct pfioc_ruleset *pr)
 		return (ENOENT);
 	}
 
-	pr->name[0] = 0;
+	pr->name[0] = '\0';
 	if (ruleset == &pf_main_ruleset) {
 		/* XXX kludge for pf_main_ruleset */
 		RB_FOREACH(anchor, pf_kanchor_global, &V_pf_anchors)
@@ -2794,6 +2790,78 @@ pf_ioctl_get_ruleset(struct pfioc_ruleset *pr)
 	PF_RULES_RUNLOCK();
 
 	return (error);
+}
+
+int
+pf_ioctl_natlook(struct pfioc_natlook *pnl)
+{
+	struct pf_state_key	*sk;
+	struct pf_kstate	*state;
+	struct pf_state_key_cmp	 key;
+	int			 m = 0, direction = pnl->direction;
+	int			 sidx, didx;
+
+	/* NATLOOK src and dst are reversed, so reverse sidx/didx */
+	sidx = (direction == PF_IN) ? 1 : 0;
+	didx = (direction == PF_IN) ? 0 : 1;
+
+	if (!pnl->proto ||
+	    PF_AZERO(&pnl->saddr, pnl->af) ||
+	    PF_AZERO(&pnl->daddr, pnl->af) ||
+	    ((pnl->proto == IPPROTO_TCP ||
+	    pnl->proto == IPPROTO_UDP) &&
+	    (!pnl->dport || !pnl->sport)))
+		return (EINVAL);
+
+	switch (pnl->direction) {
+	case PF_IN:
+	case PF_OUT:
+	case PF_INOUT:
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	switch (pnl->af) {
+#ifdef INET
+	case AF_INET:
+		break;
+#endif /* INET */
+#ifdef INET6
+	case AF_INET6:
+		break;
+#endif /* INET6 */
+	default:
+		return (EAFNOSUPPORT);
+	}
+
+	bzero(&key, sizeof(key));
+	key.af = pnl->af;
+	key.proto = pnl->proto;
+	pf_addrcpy(&key.addr[sidx], &pnl->saddr, pnl->af);
+	key.port[sidx] = pnl->sport;
+	pf_addrcpy(&key.addr[didx], &pnl->daddr, pnl->af);
+	key.port[didx] = pnl->dport;
+
+	state = pf_find_state_all(&key, direction, &m);
+	if (state == NULL)
+		return (ENOENT);
+
+	if (m > 1) {
+		PF_STATE_UNLOCK(state);
+		return (E2BIG);	/* more than one state */
+	}
+
+	sk = state->key[sidx];
+	pf_addrcpy(&pnl->rsaddr,
+	    &sk->addr[sidx], sk->af);
+	pnl->rsport = sk->port[sidx];
+	pf_addrcpy(&pnl->rdaddr,
+	    &sk->addr[didx], sk->af);
+	pnl->rdport = sk->port[didx];
+	PF_STATE_UNLOCK(state);
+
+	return (0);
 }
 
 static int
@@ -3502,7 +3570,7 @@ DIOCADDRULENV_error:
 			break;
 		}
 
-		pr->anchor[sizeof(pr->anchor) - 1] = 0;
+		pr->anchor[sizeof(pr->anchor) - 1] = '\0';
 
 		/* Frees rule on error */
 		error = pf_ioctl_addrule(rule, pr->ticket, pr->pool_ticket,
@@ -3514,7 +3582,7 @@ DIOCADDRULENV_error:
 	case DIOCGETRULES: {
 		struct pfioc_rule	*pr = (struct pfioc_rule *)addr;
 
-		pr->anchor[sizeof(pr->anchor) - 1] = 0;
+		pr->anchor[sizeof(pr->anchor) - 1] = '\0';
 
 		error = pf_ioctl_getrules(pr);
 
@@ -3653,7 +3721,7 @@ DIOCGETRULENV_error:
 		u_int32_t		 nr = 0;
 		int			 rs_num;
 
-		pcr->anchor[sizeof(pcr->anchor) - 1] = 0;
+		pcr->anchor[sizeof(pcr->anchor) - 1] = '\0';
 
 		if (pcr->action < PF_CHANGE_ADD_HEAD ||
 		    pcr->action > PF_CHANGE_GET_TICKET) {
@@ -4133,51 +4201,8 @@ DIOCGETSTATESV2_full:
 
 	case DIOCNATLOOK: {
 		struct pfioc_natlook	*pnl = (struct pfioc_natlook *)addr;
-		struct pf_state_key	*sk;
-		struct pf_kstate	*state;
-		struct pf_state_key_cmp	 key;
-		int			 m = 0, direction = pnl->direction;
-		int			 sidx, didx;
 
-		/* NATLOOK src and dst are reversed, so reverse sidx/didx */
-		sidx = (direction == PF_IN) ? 1 : 0;
-		didx = (direction == PF_IN) ? 0 : 1;
-
-		if (!pnl->proto ||
-		    PF_AZERO(&pnl->saddr, pnl->af) ||
-		    PF_AZERO(&pnl->daddr, pnl->af) ||
-		    ((pnl->proto == IPPROTO_TCP ||
-		    pnl->proto == IPPROTO_UDP) &&
-		    (!pnl->dport || !pnl->sport)))
-			error = EINVAL;
-		else {
-			bzero(&key, sizeof(key));
-			key.af = pnl->af;
-			key.proto = pnl->proto;
-			pf_addrcpy(&key.addr[sidx], &pnl->saddr, pnl->af);
-			key.port[sidx] = pnl->sport;
-			pf_addrcpy(&key.addr[didx], &pnl->daddr, pnl->af);
-			key.port[didx] = pnl->dport;
-
-			state = pf_find_state_all(&key, direction, &m);
-			if (state == NULL) {
-				error = ENOENT;
-			} else {
-				if (m > 1) {
-					PF_STATE_UNLOCK(state);
-					error = E2BIG;	/* more than one state */
-				} else {
-					sk = state->key[sidx];
-					pf_addrcpy(&pnl->rsaddr,
-					    &sk->addr[sidx], sk->af);
-					pnl->rsport = sk->port[sidx];
-					pf_addrcpy(&pnl->rdaddr,
-					    &sk->addr[didx], sk->af);
-					pnl->rdport = sk->port[didx];
-					PF_STATE_UNLOCK(state);
-				}
-			}
-		}
+		error = pf_ioctl_natlook(pnl);
 		break;
 	}
 
@@ -4498,7 +4523,7 @@ DIOCGETSTATESV2_full:
 		struct pf_kruleset	*ruleset;
 		struct pfi_kkif		*kif = NULL;
 
-		pca->anchor[sizeof(pca->anchor) - 1] = 0;
+		pca->anchor[sizeof(pca->anchor) - 1] = '\0';
 
 		if (pca->action < PF_CHANGE_ADD_HEAD ||
 		    pca->action > PF_CHANGE_REMOVE) {
@@ -4629,7 +4654,7 @@ DIOCCHANGEADDR_error:
 	case DIOCGETRULESETS: {
 		struct pfioc_ruleset	*pr = (struct pfioc_ruleset *)addr;
 
-		pr->path[sizeof(pr->path) - 1] = 0;
+		pr->path[sizeof(pr->path) - 1] = '\0';
 
 		error = pf_ioctl_get_rulesets(pr);
 		break;
@@ -4638,7 +4663,7 @@ DIOCCHANGEADDR_error:
 	case DIOCGETRULESET: {
 		struct pfioc_ruleset	*pr = (struct pfioc_ruleset *)addr;
 
-		pr->path[sizeof(pr->path) - 1] = 0;
+		pr->path[sizeof(pr->path) - 1] = '\0';
 
 		error = pf_ioctl_get_ruleset(pr);
 		break;
@@ -5362,7 +5387,7 @@ DIOCCHANGEADDR_error:
 		PF_RULES_WLOCK();
 		/* First makes sure everything will succeed. */
 		for (i = 0, ioe = ioes; i < io->size; i++, ioe++) {
-			ioe->anchor[sizeof(ioe->anchor) - 1] = 0;
+			ioe->anchor[sizeof(ioe->anchor) - 1] = '\0';
 			switch (ioe->rs_num) {
 			case PF_RULESET_ETH:
 				ers = pf_find_keth_ruleset(ioe->anchor);
