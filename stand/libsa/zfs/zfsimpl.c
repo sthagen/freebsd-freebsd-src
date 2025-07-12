@@ -1379,7 +1379,7 @@ spa_create(uint64_t guid, const char *name)
 		free(spa);
 		return (NULL);
 	}
-	spa->spa_root_vdev->v_name = strdup("root");
+	spa->spa_root_vdev->v_name = spa->spa_name;
 	STAILQ_INSERT_TAIL(&zfs_pools, spa, spa_link);
 
 	return (spa);
@@ -2006,7 +2006,7 @@ vdev_probe(vdev_phys_read_t *_read, vdev_phys_write_t *_write, void *priv,
 	vdev_t *vdev;
 	nvlist_t *nvl;
 	uint64_t val;
-	uint64_t guid, vdev_children;
+	uint64_t guid;
 	uint64_t pool_txg, pool_guid;
 	const char *pool_name;
 	int rc, namelen;
@@ -2067,7 +2067,9 @@ vdev_probe(vdev_phys_read_t *_read, vdev_phys_write_t *_write, void *priv,
 	    nvlist_find(nvl, ZPOOL_CONFIG_POOL_GUID, DATA_TYPE_UINT64,
 	    NULL, &pool_guid, NULL) != 0 ||
 	    nvlist_find(nvl, ZPOOL_CONFIG_POOL_NAME, DATA_TYPE_STRING,
-	    NULL, &pool_name, &namelen) != 0) {
+	    NULL, &pool_name, &namelen) != 0 ||
+	    nvlist_find(nvl, ZPOOL_CONFIG_GUID, DATA_TYPE_UINT64,
+	    NULL, &guid, NULL) != 0) {
 		/*
 		 * Cache and spare devices end up here - just ignore
 		 * them.
@@ -2083,8 +2085,6 @@ vdev_probe(vdev_phys_read_t *_read, vdev_phys_write_t *_write, void *priv,
 	if (spa == NULL) {
 		char *name;
 
-		nvlist_find(nvl, ZPOOL_CONFIG_VDEV_CHILDREN,
-		    DATA_TYPE_UINT64, NULL, &vdev_children, NULL);
 		name = malloc(namelen + 1);
 		if (name == NULL) {
 			nvlist_destroy(nvl);
@@ -2098,7 +2098,6 @@ vdev_probe(vdev_phys_read_t *_read, vdev_phys_write_t *_write, void *priv,
 			nvlist_destroy(nvl);
 			return (ENOMEM);
 		}
-		spa->spa_root_vdev->v_nchildren = vdev_children;
 	}
 	if (pool_txg > spa->spa_txg)
 		spa->spa_txg = pool_txg;
@@ -2109,11 +2108,6 @@ vdev_probe(vdev_phys_read_t *_read, vdev_phys_write_t *_write, void *priv,
 	 * be some kind of alias (overlapping slices, dangerously dedicated
 	 * disks etc).
 	 */
-	if (nvlist_find(nvl, ZPOOL_CONFIG_GUID, DATA_TYPE_UINT64,
-	    NULL, &guid, NULL) != 0) {
-		nvlist_destroy(nvl);
-		return (EIO);
-	}
 	vdev = vdev_find(guid);
 	/* Has this vdev already been inited? */
 	if (vdev && vdev->v_phys_read) {
@@ -3541,8 +3535,10 @@ zfs_spa_init(spa_t *spa)
 		return (EIO);
 	}
 	rc = load_nvlist(spa, config_object, &nvlist);
-	if (rc != 0)
+	if (rc != 0) {
+		printf("ZFS: failed to load pool %s nvlist\n", spa->spa_name);
 		return (rc);
+	}
 
 	rc = zap_lookup(spa, &dir, DMU_POOL_ZPOOL_CHECKPOINT,
 	    sizeof(uint64_t), sizeof(checkpoint) / sizeof(uint64_t),
