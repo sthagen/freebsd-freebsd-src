@@ -5901,8 +5901,6 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 		M_SETFIB(pd->m, pd->act.rtableid);
 
 	if (r->rt) {
-		struct pf_ksrc_node	*sn = NULL;
-		struct pf_srchash	*snh = NULL;
 		/*
 		 * Set act.rt here instead of in pf_rule_to_actions() because
 		 * it is applied only from the last pass rule.
@@ -5910,7 +5908,7 @@ pf_test_rule(struct pf_krule **rm, struct pf_kstate **sm,
 		pd->act.rt = r->rt;
 		/* Don't use REASON_SET, pf_map_addr increases the reason counters */
 		ctx.reason = pf_map_addr_sn(pd->af, r, pd->src, &pd->act.rt_addr,
-		    &pd->act.rt_kif, NULL, &sn, &snh, &(r->route), PF_SN_ROUTE);
+		    &pd->act.rt_kif, NULL, &(r->route), PF_SN_ROUTE);
 		if (ctx.reason != 0)
 			goto cleanup;
 	}
@@ -6056,9 +6054,16 @@ pf_create_state(struct pf_krule *r, struct pf_test_ctx *ctx,
 	/* src node for translation rule */
 	if (ctx->nr != NULL) {
 		KASSERT(ctx->nat_pool != NULL, ("%s: nat_pool is NULL", __func__));
+		/*
+		 * The NAT addresses are chosen during ruleset parsing.
+		 * The new afto code stores post-nat addresses in nsaddr.
+		 * The old nat code (also used for new nat-to rules) creates
+		 * state keys and stores addresses in them.
+		 */
 		if ((ctx->nat_pool->opts & PF_POOL_STICKYADDR) &&
 		    (sn_reason = pf_insert_src_node(sns, snhs, ctx->nr,
-		    &ctx->sk->addr[pd->sidx], pd->af, &ctx->nk->addr[1], NULL,
+		    ctx->sk ? &(ctx->sk->addr[pd->sidx]) : pd->src, pd->af,
+		    ctx->nk ? &(ctx->nk->addr[1]) : &(pd->nsaddr), NULL,
 		    PF_SN_NAT)) != 0 ) {
 			REASON_SET(&ctx->reason, sn_reason);
 			goto csfailed;

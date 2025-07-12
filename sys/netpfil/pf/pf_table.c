@@ -2074,17 +2074,16 @@ pfr_lookup_table(struct pfr_table *tbl)
 	    (struct pfr_ktable *)tbl));
 }
 
-int
-pfr_match_addr(struct pfr_ktable *kt, struct pf_addr *a, sa_family_t af)
+static struct pfr_kentry *
+pfr_kentry_byaddr(struct pfr_ktable *kt, struct pf_addr *a, sa_family_t af,
+    int exact)
 {
 	struct pfr_kentry	*ke = NULL;
-	int			 match;
 
 	PF_RULES_RASSERT();
 
-	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE) && kt->pfrkt_root != NULL)
-		kt = kt->pfrkt_root;
-	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE))
+	kt = pfr_ktable_select_active(kt);
+	if (kt == NULL)
 		return (0);
 
 	switch (af) {
@@ -2121,11 +2120,26 @@ pfr_match_addr(struct pfr_ktable *kt, struct pf_addr *a, sa_family_t af)
 	default:
 		unhandled_af(af);
 	}
+	if (exact && ke && KENTRY_NETWORK(ke))
+		ke = NULL;
+
+	return (ke);
+}
+
+int
+pfr_match_addr(struct pfr_ktable *kt, struct pf_addr *a, sa_family_t af)
+{
+	struct pfr_kentry	*ke = NULL;
+	int match;
+
+	ke = pfr_kentry_byaddr(kt, a, af, 0);
+
 	match = (ke && !ke->pfrke_not);
 	if (match)
 		pfr_kstate_counter_add(&kt->pfrkt_match, 1);
 	else
 		pfr_kstate_counter_add(&kt->pfrkt_nomatch, 1);
+
 	return (match);
 }
 
@@ -2135,9 +2149,8 @@ pfr_update_stats(struct pfr_ktable *kt, struct pf_addr *a, sa_family_t af,
 {
 	struct pfr_kentry	*ke = NULL;
 
-	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE) && kt->pfrkt_root != NULL)
-		kt = kt->pfrkt_root;
-	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE))
+	kt = pfr_ktable_select_active(kt);
+	if (kt == NULL)
 		return;
 
 	switch (af) {
@@ -2306,9 +2319,8 @@ pfr_pool_get(struct pfr_ktable *kt, int *pidx, struct pf_addr *counter,
 		unhandled_af(af);
 	}
 
-	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE) && kt->pfrkt_root != NULL)
-		kt = kt->pfrkt_root;
-	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE))
+	kt = pfr_ktable_select_active(kt);
+	if (kt == NULL)
 		return (-1);
 
 	idx = *pidx;
@@ -2454,4 +2466,15 @@ pfr_dynaddr_update(struct pfr_ktable *kt, struct pfi_dynaddr *dyn)
 	default:
 		unhandled_af(dyn->pfid_af);
 	}
+}
+
+struct pfr_ktable *
+pfr_ktable_select_active(struct pfr_ktable *kt)
+{
+	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE) && kt->pfrkt_root != NULL)
+		kt = kt->pfrkt_root;
+	if (!(kt->pfrkt_flags & PFR_TFLAG_ACTIVE))
+		return (NULL);
+
+	return (kt);
 }

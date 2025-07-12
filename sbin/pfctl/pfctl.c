@@ -1340,17 +1340,12 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 		u_int32_t                mnr, nr;
 
 		memset(&prs, 0, sizeof(prs));
-		if ((ret = pfctl_get_rulesets(pfh, npath, &mnr)) != 0) {
-			if (ret == EINVAL)
-				fprintf(stderr, "Anchor '%s' "
-				    "not found.\n", anchorname);
-			else
-				errc(1, ret, "DIOCGETRULESETS");
-		}
+		if ((ret = pfctl_get_rulesets(pfh, npath, &mnr)) != 0)
+			errx(1, "%s", pf_strerror(ret));
 
 		for (nr = 0; nr < mnr; ++nr) {
 			if ((ret = pfctl_get_ruleset(pfh, npath, nr, &prs)) != 0)
-				errc(1, ret, "DIOCGETRULESET");
+				errx(1, "%s", pf_strerror(ret));
 			INDENT(depth, !(opts & PF_OPT_VERBOSE));
 			printf("anchor \"%s\" all {\n", prs.name);
 			pfctl_show_rules(dev, npath, opts,
@@ -1365,14 +1360,14 @@ pfctl_show_rules(int dev, char *path, int opts, enum pfctl_show format,
 	if (opts & PF_OPT_SHOWALL) {
 		ret = pfctl_get_rules_info_h(pfh, &ri, PF_PASS, path);
 		if (ret != 0) {
-			warnc(ret, "DIOCGETRULES");
+			warnx("%s", pf_strerror(ret));
 			goto error;
 		}
 		header++;
 	}
 	ret = pfctl_get_rules_info_h(pfh, &ri, PF_SCRUB, path);
 	if (ret != 0) {
-		warnc(ret, "DIOCGETRULES");
+		warnx("%s", pf_strerror(ret));
 		goto error;
 	}
 	if (opts & PF_OPT_SHOWALL) {
@@ -1565,12 +1560,12 @@ pfctl_show_nat(int dev, const char *path, int opts, char *anchorname, int depth,
 				fprintf(stderr, "NAT anchor '%s' "
 				    "not found.\n", anchorname);
 			else
-				errc(1, ret, "DIOCGETRULESETS");
+				errx(1, "%s", pf_strerror(ret));
 		}
 
 		for (nr = 0; nr < mnr; ++nr) {
 			if ((ret = pfctl_get_ruleset(pfh, npath, nr, &prs)) != 0)
-				errc(1, ret, "DIOCGETRULESET");
+				errx(1, "%s", pf_strerror(ret));
 			INDENT(depth, !(opts & PF_OPT_VERBOSE));
 			printf("nat-anchor \"%s\" all {\n", prs.name);
 			pfctl_show_nat(dev, npath, opts,
@@ -2962,13 +2957,8 @@ pfctl_walk_anchors(int dev, int opts, const char *anchor,
 	int			 ret;
 
 	memset(&pr, 0, sizeof(pr));
-	if ((ret = pfctl_get_rulesets(pfh, anchor, &mnr)) != 0) {
-		if (ret == EINVAL)
-			fprintf(stderr, "Anchor '%s' not found.\n", anchor);
-		else
-			errc(1, ret, "DIOCGETRULESETS");
-		return (-1);
-	}
+	if ((ret = pfctl_get_rulesets(pfh, anchor, &mnr)) != 0)
+		errx(1, "%s", pf_strerror(ret));
 	for (nr = 0; nr < mnr; ++nr) {
 		char sub[MAXPATHLEN];
 
@@ -3642,4 +3632,18 @@ main(int argc, char *argv[])
 	}
 
 	exit(exit_val);
+}
+
+char *
+pf_strerror(int errnum)
+{
+	switch (errnum) {
+	case ESRCH:
+		return "Table does not exist.";
+	case EINVAL:
+	case ENOENT:
+		return "Anchor does not exist.";
+	default:
+		return strerror(errnum);
+	}
 }

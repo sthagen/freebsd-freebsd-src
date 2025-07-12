@@ -5458,7 +5458,7 @@ process_tabledef(char *name, struct table_opts *opts, int popts)
 			    name);
 		else
 			yyerror("cannot define table %s: %s", name,
-			    pfr_strerror(errno));
+			    pf_strerror(errno));
 
 		goto _error;
 	}
@@ -7202,19 +7202,11 @@ mv_rules(struct pfctl_ruleset *src, struct pfctl_ruleset *dst)
 	struct pfctl_rule *r;
 
 	for (i = 0; i < PF_RULESET_MAX; ++i) {
-		while ((r = TAILQ_FIRST(src->rules[i].active.ptr))
-		    != NULL) {
-			TAILQ_REMOVE(src->rules[i].active.ptr, r, entries);
-			TAILQ_INSERT_TAIL(dst->rules[i].active.ptr, r, entries);
+		TAILQ_FOREACH(r, src->rules[i].active.ptr, entries)
 			dst->anchor->match++;
-		}
+		TAILQ_CONCAT(dst->rules[i].active.ptr, src->rules[i].active.ptr, entries);
 		src->anchor->match = 0;
-		while ((r = TAILQ_FIRST(src->rules[i].inactive.ptr))
-		    != NULL) {
-			TAILQ_REMOVE(src->rules[i].inactive.ptr, r, entries);
-			TAILQ_INSERT_TAIL(dst->rules[i].inactive.ptr,
-				r, entries);
-		}
+		TAILQ_CONCAT(dst->rules[i].inactive.ptr, src->rules[i].inactive.ptr, entries);
 	}
 }
 
