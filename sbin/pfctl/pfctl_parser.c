@@ -928,7 +928,7 @@ print_rule(struct pfctl_rule *r, const char *anchor_call, int verbose, int numer
 				printf("%sall", count++ ? ", " : "");
 			if (r->log & PF_LOG_MATCHES)
 				printf("%smatches", count++ ? ", " : "");
-			if (r->log & PF_LOG_SOCKET_LOOKUP)
+			if (r->log & PF_LOG_USER)
 				printf("%suser", count++ ? ", " : "");
 			if (r->logif)
 				printf("%sto pflog%u", count++ ? ", " : "",
@@ -1483,7 +1483,8 @@ ifa_load(void)
 		err(1, "getifaddrs");
 
 	for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
-		if (!(ifa->ifa_addr->sa_family == AF_INET ||
+		if (ifa->ifa_addr == NULL ||
+		    !(ifa->ifa_addr->sa_family == AF_INET ||
 		    ifa->ifa_addr->sa_family == AF_INET6 ||
 		    ifa->ifa_addr->sa_family == AF_LINK))
 				continue;

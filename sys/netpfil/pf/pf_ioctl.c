@@ -1359,7 +1359,7 @@ static int
 pf_commit_rules(u_int32_t ticket, int rs_num, char *anchor)
 {
 	struct pf_kruleset	*rs;
-	struct pf_krule		*rule, **old_array, *old_rule;
+	struct pf_krule		*rule, *old_rule;
 	struct pf_krulequeue	*old_rules;
 	struct pf_krule_global  *old_tree;
 	int			 error;
@@ -1384,13 +1384,10 @@ pf_commit_rules(u_int32_t ticket, int rs_num, char *anchor)
 	/* Swap rules, keep the old. */
 	old_rules = rs->rules[rs_num].active.ptr;
 	old_rcount = rs->rules[rs_num].active.rcount;
-	old_array = rs->rules[rs_num].active.ptr_array;
 	old_tree = rs->rules[rs_num].active.tree;
 
 	rs->rules[rs_num].active.ptr =
 	    rs->rules[rs_num].inactive.ptr;
-	rs->rules[rs_num].active.ptr_array =
-	    rs->rules[rs_num].inactive.ptr_array;
 	rs->rules[rs_num].active.tree =
 	    rs->rules[rs_num].inactive.tree;
 	rs->rules[rs_num].active.rcount =
@@ -1420,7 +1417,6 @@ pf_commit_rules(u_int32_t ticket, int rs_num, char *anchor)
 	}
 
 	rs->rules[rs_num].inactive.ptr = old_rules;
-	rs->rules[rs_num].inactive.ptr_array = old_array;
 	rs->rules[rs_num].inactive.tree = NULL; /* important for pf_ioctl_addrule */
 	rs->rules[rs_num].inactive.rcount = old_rcount;
 
@@ -1433,9 +1429,6 @@ pf_commit_rules(u_int32_t ticket, int rs_num, char *anchor)
 	while ((rule = TAILQ_FIRST(old_rules)) != NULL)
 		pf_unlink_rule_locked(old_rules, rule);
 	PF_UNLNKDRULES_UNLOCK();
-	if (rs->rules[rs_num].inactive.ptr_array)
-		free(rs->rules[rs_num].inactive.ptr_array, M_TEMP);
-	rs->rules[rs_num].inactive.ptr_array = NULL;
 	rs->rules[rs_num].inactive.rcount = 0;
 	rs->rules[rs_num].inactive.open = 0;
 	pf_remove_if_empty_kruleset(rs);
@@ -1458,24 +1451,11 @@ pf_setup_pfsync_matching(struct pf_kruleset *rs)
 		if (rs_cnt == PF_RULESET_SCRUB)
 			continue;
 
-		if (rs->rules[rs_cnt].inactive.ptr_array)
-			free(rs->rules[rs_cnt].inactive.ptr_array, M_TEMP);
-		rs->rules[rs_cnt].inactive.ptr_array = NULL;
-
 		if (rs->rules[rs_cnt].inactive.rcount) {
-			rs->rules[rs_cnt].inactive.ptr_array =
-			    mallocarray(rs->rules[rs_cnt].inactive.rcount,
-			    sizeof(struct pf_rule **),
-			    M_TEMP, M_NOWAIT);
-
-			if (!rs->rules[rs_cnt].inactive.ptr_array)
-				return (ENOMEM);
-		}
-
-		TAILQ_FOREACH(rule, rs->rules[rs_cnt].inactive.ptr,
-		    entries) {
-			pf_hash_rule_rolling(&ctx, rule);
-			(rs->rules[rs_cnt].inactive.ptr_array)[rule->nr] = rule;
+			TAILQ_FOREACH(rule, rs->rules[rs_cnt].inactive.ptr,
+			    entries) {
+				pf_hash_rule_rolling(&ctx, rule);
+			}
 		}
 	}
 
@@ -2061,6 +2041,19 @@ pf_ioctl_getrules(struct pfioc_rule *pr)
 	return (0);
 }
 
+static int
+pf_validate_range(uint8_t op, uint16_t port[2])
+{
+	uint16_t a = ntohs(port[0]);
+	uint16_t b = ntohs(port[1]);
+
+	if ((op == PF_OP_RRG && a > b) ||  /* 34:12,  i.e. none */
+	    (op == PF_OP_IRG && a >= b) || /* 34><12, i.e. none */
+	    (op == PF_OP_XRG && a > b))	   /* 34<>22, i.e. all */
+		return 1;
+	return 0;
+}
+
 int
 pf_ioctl_addrule(struct pf_krule *rule, uint32_t ticket,
     uint32_t pool_ticket, const char *anchor, const char *anchor_call,
@@ -2079,6 +2072,11 @@ pf_ioctl_addrule(struct pf_krule *rule, uint32_t ticket,
 	}
 
 #define	ERROUT(x)	ERROUT_FUNCTION(errout, x)
+
+	if (pf_validate_range(rule->src.port_op, rule->src.port))
+		ERROUT(EINVAL);
+	if (pf_validate_range(rule->dst.port_op, rule->dst.port))
+		ERROUT(EINVAL);
 
 	if (rule->ifname[0])
 		kif = pf_kkif_create(M_WAITOK);

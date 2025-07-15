@@ -415,7 +415,7 @@ SYSCTL_INT(_machdep, OID_AUTO, nkpt, CTLFLAG_RD, &nkpt, 0,
 
 static int ndmpdp;
 vm_paddr_t dmaplimit;
-vm_offset_t kernel_vm_end = VM_MIN_KERNEL_ADDRESS;
+vm_offset_t kernel_vm_end = VM_MIN_KERNEL_ADDRESS_LA48;
 pt_entry_t pg_nx;
 
 static SYSCTL_NODE(_vm, OID_AUTO, pmap, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
@@ -475,10 +475,35 @@ _Static_assert(DMPML4I + NDMPML4E <= KMSANSHADPML4I, "direct map overflow");
 static pml4_entry_t	*kernel_pml4;
 static u_int64_t	DMPDphys;	/* phys addr of direct mapped level 2 */
 static u_int64_t	DMPDPphys;	/* phys addr of direct mapped level 3 */
+static u_int64_t	DMPML4phys;	/* ... level 4, for la57 */
 static int		ndmpdpphys;	/* number of DMPDPphys pages */
 
 vm_paddr_t		kernphys;	/* phys addr of start of bootstrap data */
 vm_paddr_t		KERNend;	/* and the end */
+
+struct kva_layout_s	kva_layout = {
+	.kva_min =	KV4ADDR(PML4PML4I, 0, 0, 0),
+	.dmap_low =	KV4ADDR(DMPML4I, 0, 0, 0),
+	.dmap_high =	KV4ADDR(DMPML4I + NDMPML4E, 0, 0, 0),
+	.lm_low =	KV4ADDR(LMSPML4I, 0, 0, 0),
+	.lm_high =	KV4ADDR(LMEPML4I + 1, 0, 0, 0),
+	.km_low =	KV4ADDR(KPML4BASE, 0, 0, 0),
+	.km_high =	KV4ADDR(KPML4BASE + NKPML4E - 1, NPDPEPG - 1,
+			    NPDEPG - 1, NPTEPG - 1),
+	.rec_pt =	KV4ADDR(PML4PML4I, 0, 0, 0),
+};
+
+struct kva_layout_s	kva_layout_la57 = {
+	.kva_min =	KV5ADDR(NPML5EPG / 2, 0, 0, 0, 0),	/* == rec_pt */
+	.dmap_low =	KV5ADDR(DMPML5I, 0, 0, 0, 0),
+	.dmap_high =	KV5ADDR(DMPML5I + NDMPML5E, 0, 0, 0, 0),
+	.lm_low =	KV4ADDR(LMSPML4I, 0, 0, 0),
+	.lm_high =	KV4ADDR(LMEPML4I + 1, 0, 0, 0),
+	.km_low =	KV4ADDR(KPML4BASE, 0, 0, 0),
+	.km_high =	KV4ADDR(KPML4BASE + NKPML4E - 1, NPDPEPG - 1,
+			    NPDEPG - 1, NPTEPG - 1),
+	.rec_pt =	KV5ADDR(PML5PML5I, 0, 0, 0, 0),
+};
 
 /*
  * pmap_mapdev support pre initialization (i.e. console)
@@ -549,8 +574,8 @@ static int pmap_flags = PMAP_PDE_SUPERPAGE;	/* flags for x86 pmaps */
 
 static vmem_t *large_vmem;
 static u_int lm_ents;
-#define	PMAP_ADDRESS_IN_LARGEMAP(va)	((va) >= LARGEMAP_MIN_ADDRESS && \
-	(va) < LARGEMAP_MIN_ADDRESS + NBPML4 * (u_long)lm_ents)
+#define	PMAP_ADDRESS_IN_LARGEMAP(va)	((va) >= kva_layout.lm_low && \
+	(va) < kva_layout.lm_high)
 
 int pmap_pcid_enabled = 1;
 SYSCTL_INT(_vm_pmap, OID_AUTO, pcid_enabled, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
@@ -1722,7 +1747,7 @@ create_pagetables(vm_paddr_t *firstaddr)
 {
 	pd_entry_t *pd_p;
 	pdp_entry_t *pdp_p;
-	pml4_entry_t *p4_p;
+	pml4_entry_t *p4_p, *p4d_p;
 	pml5_entry_t *p5_p;
 	uint64_t DMPDkernphys;
 	vm_paddr_t pax;
@@ -1732,7 +1757,7 @@ create_pagetables(vm_paddr_t *firstaddr)
 	vm_offset_t kasankernbase;
 	int kasankpdpi, kasankpdi, nkasanpte;
 #endif
-	int i, j, ndm1g, nkpdpe, nkdmpde;
+	int i, j, ndm1g, nkpdpe, nkdmpde, ndmpml4phys;
 
 	TSENTER();
 	/* Allocate page table pages for the direct map */
@@ -1740,15 +1765,30 @@ create_pagetables(vm_paddr_t *firstaddr)
 	if (ndmpdp < 4)		/* Minimum 4GB of dirmap */
 		ndmpdp = 4;
 	ndmpdpphys = howmany(ndmpdp, NPDPEPG);
-	if (ndmpdpphys > NDMPML4E) {
-		/*
-		 * Each NDMPML4E allows 512 GB, so limit to that,
-		 * and then readjust ndmpdp and ndmpdpphys.
-		 */
-		printf("NDMPML4E limits system to %d GB\n", NDMPML4E * 512);
-		Maxmem = atop(NDMPML4E * NBPML4);
-		ndmpdpphys = NDMPML4E;
-		ndmpdp = NDMPML4E * NPDEPG;
+	if (la57) {
+		ndmpml4phys = howmany(ndmpdpphys, NPML4EPG);
+		if (ndmpml4phys > NDMPML5E) {
+			printf("NDMPML5E limits system to %ld GB\n",
+			    (u_long)NDMPML5E * NBPML5 / 1024 / 1024 / 1024);
+			Maxmem = atop(NDMPML5E * NBPML5);
+			ndmpml4phys = NDMPML5E;
+			ndmpdpphys = ndmpml4phys * NPML4EPG;
+			ndmpdp = ndmpdpphys * NPDEPG;
+		}
+		DMPML4phys = allocpages(firstaddr, ndmpml4phys);
+	} else {
+		if (ndmpdpphys > NDMPML4E) {
+			/*
+			 * Each NDMPML4E allows 512 GB, so limit to
+			 * that, and then readjust ndmpdp and
+			 * ndmpdpphys.
+			 */
+			printf("NDMPML4E limits system to %d GB\n",
+			    NDMPML4E * 512);
+			Maxmem = atop(NDMPML4E * NBPML4);
+			ndmpdpphys = NDMPML4E;
+			ndmpdp = NDMPML4E * NPDEPG;
+		}
 	}
 	DMPDPphys = allocpages(firstaddr, ndmpdpphys);
 	ndm1g = 0;
@@ -1773,7 +1813,13 @@ create_pagetables(vm_paddr_t *firstaddr)
 	dmaplimit = (vm_paddr_t)ndmpdp << PDPSHIFT;
 
 	/* Allocate pages. */
+	if (la57) {
+		KPML5phys = allocpages(firstaddr, 1);
+		p5_p = (pml5_entry_t *)KPML5phys;
+	}
 	KPML4phys = allocpages(firstaddr, 1);
+	p4_p = (pml4_entry_t *)KPML4phys;
+
 	KPDPphys = allocpages(firstaddr, NKPML4E);
 #ifdef KASAN
 	KASANPDPphys = allocpages(firstaddr, NKASANPML4E);
@@ -1893,6 +1939,16 @@ create_pagetables(vm_paddr_t *firstaddr)
 	}
 
 	/*
+	 * Connect the Direct Map slots up to the PML4.
+	 * pml5 entries for DMAP are handled below in global pml5 loop.
+	 */
+	p4d_p = la57 ? (pml4_entry_t *)DMPML4phys : &p4_p[DMPML4I];
+	for (i = 0; i < ndmpdpphys; i++) {
+		p4d_p[i] = (DMPDPphys + ptoa(i)) | X86_PG_RW | X86_PG_V |
+		    pg_nx;
+	}
+
+	/*
 	 * Instead of using a 1G page for the memory containing the kernel,
 	 * use 2M pages with read-only and no-execute permissions.  (If using 1G
 	 * pages, this will partially overwrite the PDPEs above.)
@@ -1910,11 +1966,6 @@ create_pagetables(vm_paddr_t *firstaddr)
 			    X86_PG_RW | X86_PG_V | pg_nx;
 		}
 	}
-
-	/* And recursively map PML4 to itself in order to get PTmap */
-	p4_p = (pml4_entry_t *)KPML4phys;
-	p4_p[PML4PML4I] = KPML4phys;
-	p4_p[PML4PML4I] |= X86_PG_RW | X86_PG_V | pg_nx;
 
 #ifdef KASAN
 	/* Connect the KASAN shadow map slots up to the PML4. */
@@ -1938,25 +1989,15 @@ create_pagetables(vm_paddr_t *firstaddr)
 	}
 #endif
 
-	/* Connect the Direct Map slots up to the PML4. */
-	for (i = 0; i < ndmpdpphys; i++) {
-		p4_p[DMPML4I + i] = DMPDPphys + ptoa(i);
-		p4_p[DMPML4I + i] |= X86_PG_RW | X86_PG_V | pg_nx;
-	}
-
 	/* Connect the KVA slots up to the PML4 */
 	for (i = 0; i < NKPML4E; i++) {
 		p4_p[KPML4BASE + i] = KPDPphys + ptoa(i);
 		p4_p[KPML4BASE + i] |= X86_PG_RW | X86_PG_V;
 	}
 
-	kernel_pml4 = (pml4_entry_t *)PHYS_TO_DMAP(KPML4phys);
-
 	if (la57) {
 		/* XXXKIB bootstrap KPML5phys page is lost */
-		KPML5phys = allocpages(firstaddr, 1);
-		for (i = 0, p5_p = (pml5_entry_t *)KPML5phys; i < NPML5EPG;
-		    i++) {
+		for (i = 0; i < NPML5EPG; i++) {
 			if (i == PML5PML5I) {
 				/*
 				 * Recursively map PML5 to itself in
@@ -1964,6 +2005,10 @@ create_pagetables(vm_paddr_t *firstaddr)
 				 */
 				p5_p[i] = KPML5phys | X86_PG_RW | X86_PG_A |
 				    X86_PG_M | X86_PG_V | pg_nx;
+			} else if (i >= DMPML5I && i < DMPML5I + NDMPML5E) {
+				/* Connect DMAP pml4 pages to PML5. */
+				p5_p[i] = (DMPML4phys + ptoa(i - DMPML5I)) |
+				    X86_PG_RW | X86_PG_V | pg_nx;
 			} else if (i == pmap_pml5e_index(UPT_MAX_ADDRESS)) {
 				p5_p[i] = KPML4phys | X86_PG_RW | X86_PG_A |
 				    X86_PG_M | X86_PG_V;
@@ -1971,6 +2016,10 @@ create_pagetables(vm_paddr_t *firstaddr)
 				p5_p[i] = 0;
 			}
 		}
+	} else {
+		/* Recursively map PML4 to itself in order to get PTmap */
+		p4_p[PML4PML4I] = KPML4phys;
+		p4_p[PML4PML4I] |= X86_PG_RW | X86_PG_V | pg_nx;
 	}
 	TSEXIT();
 }
@@ -2024,7 +2073,7 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	 */
 	virtual_avail = (vm_offset_t)KERNSTART + round_2mpage(KERNend -
 	    (vm_paddr_t)kernphys);
-	virtual_end = VM_MAX_KERNEL_ADDRESS;
+	virtual_end = kva_layout.km_high;
 
 	/*
 	 * Enable PG_G global pages, then switch to the kernel page
@@ -2046,9 +2095,13 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 	 * Initialize the kernel pmap (which is statically allocated).
 	 * Count bootstrap data as being resident in case any of this data is
 	 * later unmapped (using pmap_remove()) and freed.
+	 *
+	 * DMAP_TO_PHYS()/PHYS_TO_DMAP() are functional only after
+	 * kva_layout is fixed.
 	 */
 	PMAP_LOCK_INIT(kernel_pmap);
 	if (la57) {
+		kva_layout = kva_layout_la57;
 		vtoptem = ((1ul << (NPTEPGSHIFT + NPDEPGSHIFT + NPDPEPGSHIFT +
 		    NPML4EPGSHIFT + NPML5EPGSHIFT)) - 1) << 3;
 		PTmap = (vm_offset_t)P5Tmap;
@@ -2059,6 +2112,7 @@ pmap_bootstrap(vm_paddr_t *firstaddr)
 		kernel_pmap->pm_cr3 = KPML5phys;
 		pmap_pt_page_count_adj(kernel_pmap, 1);	/* top-level page */
 	} else {
+		kernel_pml4 = (pml4_entry_t *)PHYS_TO_DMAP(KPML4phys);
 		kernel_pmap->pm_pmltop = kernel_pml4;
 		kernel_pmap->pm_cr3 = KPML4phys;
 	}
@@ -2420,6 +2474,7 @@ pmap_init(void)
 {
 	struct pmap_preinit_mapping *ppim;
 	vm_page_t m, mpte;
+	pml4_entry_t *pml4e;
 	int error, i, ret, skz63;
 
 	/* L1TF, reserve page @0 unconditionally */
@@ -2559,18 +2614,19 @@ pmap_init(void)
 		printf("pmap: large map %u PML4 slots (%lu GB)\n",
 		    lm_ents, (u_long)lm_ents * (NBPML4 / 1024 / 1024 / 1024));
 	if (lm_ents != 0) {
-		large_vmem = vmem_create("large", LARGEMAP_MIN_ADDRESS,
-		    (vmem_size_t)lm_ents * NBPML4, PAGE_SIZE, 0, M_WAITOK);
+		large_vmem = vmem_create("large", kva_layout.lm_low,
+		    (vmem_size_t)kva_layout.lm_high - kva_layout.lm_low,
+		    PAGE_SIZE, 0, M_WAITOK);
 		if (large_vmem == NULL) {
 			printf("pmap: cannot create large map\n");
 			lm_ents = 0;
 		}
 		for (i = 0; i < lm_ents; i++) {
 			m = pmap_large_map_getptp_unlocked();
-			/* XXXKIB la57 */
-			kernel_pml4[LMSPML4I + i] = X86_PG_V |
-			    X86_PG_RW | X86_PG_A | X86_PG_M | pg_nx |
-			    VM_PAGE_TO_PHYS(m);
+			pml4e = pmap_pml4e(kernel_pmap, kva_layout.lm_low +
+			    (u_long)i * NBPML4);
+			*pml4e = X86_PG_V | X86_PG_RW | X86_PG_A | X86_PG_M |
+			    pg_nx | VM_PAGE_TO_PHYS(m);
 		}
 	}
 }
@@ -3899,7 +3955,7 @@ pmap_kextract(vm_offset_t va)
 	pd_entry_t pde;
 	vm_paddr_t pa;
 
-	if (va >= DMAP_MIN_ADDRESS && va < DMAP_MAX_ADDRESS) {
+	if (va >= kva_layout.dmap_low && va < kva_layout.dmap_high) {
 		pa = DMAP_TO_PHYS(va);
 	} else if (PMAP_ADDRESS_IN_LARGEMAP(va)) {
 		pa = pmap_large_map_kextract(va);
@@ -4040,7 +4096,7 @@ pmap_qremove(vm_offset_t sva, int count)
 		 * enough to one of those pmap_enter() calls for it to
 		 * be caught up in a promotion.
 		 */
-		KASSERT(va >= VM_MIN_KERNEL_ADDRESS, ("usermode va %lx", va));
+		KASSERT(va >= kva_layout.km_low, ("usermode va %lx", va));
 		KASSERT((*vtopde(va) & X86_PG_PS) == 0,
 		    ("pmap_qremove on promoted va %#lx", va));
 
@@ -4328,21 +4384,13 @@ void
 pmap_pinit_pml5(vm_page_t pml5pg)
 {
 	pml5_entry_t *pm_pml5;
+	int i;
 
 	pm_pml5 = (pml5_entry_t *)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(pml5pg));
-
-	/*
-	 * Add pml5 entry at top of KVA pointing to existing pml4 table,
-	 * entering all existing kernel mappings into level 5 table.
-	 */
-	pm_pml5[pmap_pml5e_index(UPT_MAX_ADDRESS)] = KPML4phys | X86_PG_V |
-	    X86_PG_RW | X86_PG_A | X86_PG_M;
-
-	/*
-	 * Install self-referential address mapping entry.
-	 */
-	pm_pml5[PML5PML5I] = VM_PAGE_TO_PHYS(pml5pg) |
-	    X86_PG_RW | X86_PG_V | X86_PG_M | X86_PG_A;
+	for (i = 0; i < NPML5EPG / 2; i++)
+		pm_pml5[i] = 0;
+	for (; i < NPML5EPG; i++)
+		pm_pml5[i] = kernel_pmap->pm_pmltop[i];
 }
 
 static void
@@ -4899,8 +4947,8 @@ pmap_release(pmap_t pmap)
 	m = PHYS_TO_VM_PAGE(DMAP_TO_PHYS((vm_offset_t)pmap->pm_pmltop));
 
 	if (pmap_is_la57(pmap)) {
-		pmap->pm_pmltop[pmap_pml5e_index(UPT_MAX_ADDRESS)] = 0;
-		pmap->pm_pmltop[PML5PML5I] = 0;
+		for (i = NPML5EPG / 2; i < NPML5EPG; i++)
+			pmap->pm_pmltop[i] = 0;
 	} else {
 		for (i = 0; i < NKPML4E; i++)	/* KVA */
 			pmap->pm_pmltop[KPML4BASE + i] = 0;
@@ -4942,7 +4990,7 @@ pmap_release(pmap_t pmap)
 static int
 kvm_size(SYSCTL_HANDLER_ARGS)
 {
-	unsigned long ksize = VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS;
+	unsigned long ksize = kva_layout.km_high - kva_layout.km_low;
 
 	return sysctl_handle_long(oidp, &ksize, 0, req);
 }
@@ -4953,7 +5001,7 @@ SYSCTL_PROC(_vm, OID_AUTO, kvm_size, CTLTYPE_LONG | CTLFLAG_RD | CTLFLAG_MPSAFE,
 static int
 kvm_free(SYSCTL_HANDLER_ARGS)
 {
-	unsigned long kfree = VM_MAX_KERNEL_ADDRESS - kernel_vm_end;
+	unsigned long kfree = kva_layout.km_high - kernel_vm_end;
 
 	return sysctl_handle_long(oidp, &kfree, 0, req);
 }
@@ -5031,7 +5079,7 @@ pmap_page_array_startup(long pages)
 
 	vm_page_array_size = pages;
 
-	start = VM_MIN_KERNEL_ADDRESS;
+	start = kva_layout.km_low;
 	end = start + pages * sizeof(struct vm_page);
 	for (va = start; va < end; va += NBPDR) {
 		pfn = first_page + (va - start) / sizeof(struct vm_page);
@@ -6067,8 +6115,8 @@ pmap_demote_pde_mpte(pmap_t pmap, pd_entry_t *pde, vm_offset_t va,
 			 * so the direct map region is the only part of the
 			 * kernel address space that must be handled here.
 			 */
-			KASSERT(!in_kernel || (va >= DMAP_MIN_ADDRESS &&
-			    va < DMAP_MAX_ADDRESS),
+			KASSERT(!in_kernel || (va >= kva_layout.dmap_low &&
+			    va < kva_layout.dmap_high),
 			    ("pmap_demote_pde: No saved mpte for va %#lx", va));
 
 			/*
@@ -7184,7 +7232,7 @@ pmap_enter(pmap_t pmap, vm_offset_t va, vm_page_t m, vm_prot_t prot,
 	PG_RW = pmap_rw_bit(pmap);
 
 	va = trunc_page(va);
-	KASSERT(va <= VM_MAX_KERNEL_ADDRESS, ("pmap_enter: toobig"));
+	KASSERT(va <= kva_layout.km_high, ("pmap_enter: toobig"));
 	KASSERT(va < UPT_MIN_ADDRESS || va >= UPT_MAX_ADDRESS,
 	    ("pmap_enter: invalid to pmap_enter page table pages (va: 0x%lx)",
 	    va));
@@ -9550,7 +9598,7 @@ pmap_unmapdev(void *p, vm_size_t size)
 	va = (vm_offset_t)p;
 
 	/* If we gave a direct map region in pmap_mapdev, do nothing */
-	if (va >= DMAP_MIN_ADDRESS && va < DMAP_MAX_ADDRESS)
+	if (va >= kva_layout.dmap_low && va < kva_layout.dmap_high)
 		return;
 	offset = va & PAGE_MASK;
 	size = round_page(offset + size);
@@ -9729,7 +9777,7 @@ pmap_change_prot(vm_offset_t va, vm_size_t size, vm_prot_t prot)
 	int error;
 
 	/* Only supported within the kernel map. */
-	if (va < VM_MIN_KERNEL_ADDRESS)
+	if (va < kva_layout.km_low)
 		return (EINVAL);
 
 	PMAP_LOCK(kernel_pmap);
@@ -9760,7 +9808,7 @@ pmap_change_props_locked(vm_offset_t va, vm_size_t size, vm_prot_t prot,
 	 * Only supported on kernel virtual addresses, including the direct
 	 * map but excluding the recursive map.
 	 */
-	if (base < DMAP_MIN_ADDRESS)
+	if (base < kva_layout.dmap_low)
 		return (EINVAL);
 
 	/*
@@ -9783,7 +9831,7 @@ pmap_change_props_locked(vm_offset_t va, vm_size_t size, vm_prot_t prot,
 			pte_bits |= X86_PG_RW;
 		}
 		if ((prot & VM_PROT_EXECUTE) == 0 ||
-		    va < VM_MIN_KERNEL_ADDRESS) {
+		    va < kva_layout.km_low) {
 			pde_bits |= pg_nx;
 			pte_bits |= pg_nx;
 		}
@@ -9879,7 +9927,7 @@ pmap_change_props_locked(vm_offset_t va, vm_size_t size, vm_prot_t prot,
 				pmap_pte_props(pdpe, pde_bits, pde_mask);
 				changed = true;
 			}
-			if (tmpva >= VM_MIN_KERNEL_ADDRESS &&
+			if (tmpva >= kva_layout.km_low &&
 			    (*pdpe & PG_PS_FRAME) < dmaplimit) {
 				if (pa_start == pa_end) {
 					/* Start physical address run. */
@@ -9909,7 +9957,7 @@ pmap_change_props_locked(vm_offset_t va, vm_size_t size, vm_prot_t prot,
 				pmap_pte_props(pde, pde_bits, pde_mask);
 				changed = true;
 			}
-			if (tmpva >= VM_MIN_KERNEL_ADDRESS &&
+			if (tmpva >= kva_layout.km_low &&
 			    (*pde & PG_PS_FRAME) < dmaplimit) {
 				if (pa_start == pa_end) {
 					/* Start physical address run. */
@@ -9937,7 +9985,7 @@ pmap_change_props_locked(vm_offset_t va, vm_size_t size, vm_prot_t prot,
 				pmap_pte_props(pte, pte_bits, pte_mask);
 				changed = true;
 			}
-			if (tmpva >= VM_MIN_KERNEL_ADDRESS &&
+			if (tmpva >= kva_layout.km_low &&
 			    (*pte & PG_FRAME) < dmaplimit) {
 				if (pa_start == pa_end) {
 					/* Start physical address run. */
@@ -10909,8 +10957,8 @@ pmap_large_unmap(void *svaa, vm_size_t len)
 	struct spglist spgf;
 
 	sva = (vm_offset_t)svaa;
-	if (len == 0 || sva + len < sva || (sva >= DMAP_MIN_ADDRESS &&
-	    sva + len <= DMAP_MIN_ADDRESS + dmaplimit))
+	if (len == 0 || sva + len < sva || (sva >= kva_layout.dmap_low &&
+	    sva + len < kva_layout.dmap_high))
 		return;
 
 	SLIST_INIT(&spgf);
@@ -11156,11 +11204,10 @@ pmap_large_map_wb(void *svap, vm_size_t len)
 	sva = (vm_offset_t)svap;
 	eva = sva + len;
 	pmap_large_map_wb_fence();
-	if (sva >= DMAP_MIN_ADDRESS && eva <= DMAP_MIN_ADDRESS + dmaplimit) {
+	if (sva >= kva_layout.dmap_low && eva < kva_layout.dmap_high) {
 		pmap_large_map_flush_range(sva, len);
 	} else {
-		KASSERT(sva >= LARGEMAP_MIN_ADDRESS &&
-		    eva <= LARGEMAP_MIN_ADDRESS + lm_ents * NBPML4,
+		KASSERT(sva >= kva_layout.lm_low && eva < kva_layout.lm_high,
 		    ("pmap_large_map_wb: not largemap %#lx %#lx", sva, len));
 		pmap_large_map_wb_large(sva, eva);
 	}
@@ -11201,8 +11248,8 @@ pmap_pti_init(void)
 	VM_OBJECT_WLOCK(pti_obj);
 	pml4_pg = pmap_pti_alloc_page();
 	pti_pml4 = (pml4_entry_t *)PHYS_TO_DMAP(VM_PAGE_TO_PHYS(pml4_pg));
-	for (va = VM_MIN_KERNEL_ADDRESS; va <= VM_MAX_KERNEL_ADDRESS &&
-	    va >= VM_MIN_KERNEL_ADDRESS && va > NBPML4; va += NBPML4) {
+	for (va = kva_layout.km_low; va <= kva_layout.km_high &&
+	    va >= kva_layout.km_low && va > NBPML4; va += NBPML4) {
 		pdpe = pmap_pti_pdpe(va);
 		pmap_pti_wire_pte(pdpe);
 	}
