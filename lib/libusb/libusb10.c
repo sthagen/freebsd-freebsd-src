@@ -1530,6 +1530,7 @@ found:
 		libusb20_tr_set_callback(pxfer0, libusb10_isoc_proxy);
 		break;
 	case LIBUSB_TRANSFER_TYPE_BULK:
+	case LIBUSB_TRANSFER_TYPE_BULK_STREAM:
 	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 		libusb20_tr_set_callback(pxfer0, libusb10_bulk_intr_proxy);
 		break;
@@ -1903,4 +1904,17 @@ libusb_setlocale(const char *locale)
 	}
 
 	return (LIBUSB_ERROR_INVALID_PARAM);
+}
+
+unsigned char *
+libusb_dev_mem_alloc(libusb_device_handle *devh)
+{
+	return (NULL);
+}
+
+int
+libusb_dev_mem_free(libusb_device_handle *devh, unsigned char *buffer,
+    size_t size)
+{
+	return (LIBUSB_ERROR_NOT_SUPPORTED);
 }

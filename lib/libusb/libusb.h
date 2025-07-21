@@ -122,6 +122,7 @@ enum libusb_transfer_type {
 	LIBUSB_TRANSFER_TYPE_ISOCHRONOUS = 1,
 	LIBUSB_TRANSFER_TYPE_BULK = 2,
 	LIBUSB_TRANSFER_TYPE_INTERRUPT = 3,
+	LIBUSB_TRANSFER_TYPE_BULK_STREAM = 4,
 };
 
 enum libusb_standard_request {
@@ -513,6 +514,9 @@ int 	libusb_detach_kernel_driver(libusb_device_handle * devh, int interface);
 int 	libusb_attach_kernel_driver(libusb_device_handle * devh, int interface);
 int	libusb_set_auto_detach_kernel_driver(libusb_device_handle *dev, int enable);
 int	libusb_set_interface_alt_setting(libusb_device_handle * devh, int interface_number, int alternate_setting);
+unsigned char *libusb_dev_mem_alloc(libusb_device_handle *devh);
+int	libusb_dev_mem_free(libusb_device_handle *devh, unsigned char *buffer,
+    size_t size);
 
 /* USB Descriptors */
 
@@ -573,7 +577,8 @@ int	libusb_handle_events(libusb_context * ctx);
 int	libusb_handle_events_locked(libusb_context * ctx, struct timeval *tv);
 int	libusb_get_next_timeout(libusb_context * ctx, struct timeval *tv);
 void	libusb_set_pollfd_notifiers(libusb_context * ctx, libusb_pollfd_added_cb added_cb, libusb_pollfd_removed_cb removed_cb, void *user_data);
-const struct libusb_pollfd **libusb_get_pollfds(libusb_context * ctx);
+const struct libusb_pollfd **libusb_get_pollfds(libusb_context *ctx);
+void    libusb_free_pollfds(const struct libusb_pollfd **pollfds);
 
 /* Synchronous device I/O */
 
@@ -593,6 +598,8 @@ typedef int (*libusb_hotplug_callback_fn)(libusb_context *ctx,
 
 int	libusb_hotplug_register_callback(libusb_context *ctx, libusb_hotplug_event events, libusb_hotplug_flag flags, int vendor_id, int product_id, int dev_class, libusb_hotplug_callback_fn cb_fn, void *user_data, libusb_hotplug_callback_handle *handle);
 void	libusb_hotplug_deregister_callback(libusb_context *ctx, libusb_hotplug_callback_handle handle);
+void   *libusb_hotplug_get_user_data(struct libusb_context *ctx,
+    libusb_hotplug_callback_handle callback_handle);
 
 /* Streams support */
 
