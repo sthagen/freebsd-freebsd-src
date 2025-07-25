@@ -51,6 +51,29 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20250725: Files which were briefly installed by WITH_MITKRB5 in 15.0.
+OLD_FILES+=usr/include/kadm5/admin_internal.h
+OLD_FILES+=usr/include/kadm5/admin_xdr.h
+OLD_FILES+=usr/include/kadm5/kadm_rpc.h
+OLD_FILES+=usr/include/kadm5/server_internal.h
+OLD_FILES+=usr/include/internal.h
+OLD_FILES+=usr/include/t_daemon.h
+OLD_FILES+=usr/include/t_test.h
+OLD_FILES+=usr/include/dyn.h
+OLD_FILES+=usr/include/dynP.h
+OLD_FILES+=usr/include/gssrpcint.h
+OLD_FILES+=usr/include/import_err.h
+OLD_FILES+=usr/share/man/man3/db_btree.3.gz
+OLD_FILES+=usr/share/man/man3/db_hash.3.gz
+OLD_FILES+=usr/share/man/man3/db_lock.3.gz
+OLD_FILES+=usr/share/man/man3/db_log.3.gz
+OLD_FILES+=usr/share/man/man3/db_mpool.3.gz
+OLD_FILES+=usr/share/man/man3/db_open.3.gz
+OLD_FILES+=usr/share/man/man3/db_recno.3.gz
+OLD_FILES+=usr/share/man/man3/db_txn.3.gz
+OLD_FILES+=usr/share/man/man5/profile.5.gz
+OLD_FILES+=usr/share/man/man8/kamdin.local.8.gz
+
 # 20250716: Remove an old manual page, vn(4) was removed in FreeBSD 5.0
 OLD_FILES+=usr/share/man/man4/vn.4.gz
 
