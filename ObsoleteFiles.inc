@@ -51,6 +51,39 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20250728: zfsboot (MBR) removed
+OLD_FILES+=boot/zfsboot
+OLD_FILES+=usr/share/man/man8/zfsboot.8.gz
+
+# 20250728: Machine versions of 'runq.h' do not exist anymore
+OLD_FILES+=usr/include/machine/runq.h
+
+# 20250726: MIT KRB5 DSO bump
+OLD_LIBS+=usr/lib/libcom_err.so.121
+OLD_LIBS+=usr/lib/libgssapi_krb5.so.121
+OLD_LIBS+=usr/lib/libgssrpc.so.121
+OLD_LIBS+=usr/lib/libk5crypto.so.121
+OLD_LIBS+=usr/lib/libkadm5clnt_mit.so.121
+OLD_LIBS+=usr/lib/libkadm5srv_mit.so.121
+OLD_LIBS+=usr/lib/libkdb5.so.121
+OLD_LIBS+=usr/lib/libkrad.so.121
+OLD_LIBS+=usr/lib/libkrb5.so.121
+OLD_LIBS+=usr/lib/libkrb5profile.so.121
+OLD_LIBS+=usr/lib/libkrb5support.so.121
+OLD_LIBS+=usr/lib/libverto.so.121
+OLD_LIBS+=usr/lib/libcom_err.so.121
+OLD_LIBS+=usr/lib/libgssapi_krb5.so.121
+OLD_LIBS+=usr/lib/libgssrpc.so.121
+OLD_LIBS+=usr/lib/libk5crypto.so.121
+OLD_LIBS+=usr/lib/libkadm5clnt_mit.so.121
+OLD_LIBS+=usr/lib/libkadm5srv_mit.so.121
+OLD_LIBS+=usr/lib/libkdb5.so.121
+OLD_LIBS+=usr/lib/libkrad.so.121
+OLD_LIBS+=usr/lib/libkrb5.so.121
+OLD_LIBS+=usr/lib/libkrb5profile.so.121
+OLD_LIBS+=usr/lib/libkrb5support.so.121
+OLD_LIBS+=usr/lib/libverto.so.121
+
 # 20250726: xargs tests rewritten
 OLD_FILES+=usr/tests/usr.bin/xargs/legacy_test
 OLD_FILES+=usr/tests/usr.bin/xargs/regress.n2147483647.out
