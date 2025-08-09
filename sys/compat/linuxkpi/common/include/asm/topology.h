@@ -1,7 +1,8 @@
 /*-
- * Copyright (c) 2020 The FreeBSD Foundation
+ * Copyright (c) 2025 The FreeBSD Foundation
+ * Copyright (c) 2025 Jean-Sébastien Pédron <dumbbell@FreeBSD.org>
  *
- * This software was developed by Emmanuel Vadot under sponsorship
+ * This software was developed by Jean-Sébastien Pédron under sponsorship
  * from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -16,7 +17,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -26,60 +27,28 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _LINUXKPI_LINUX_REFCOUNT_H
-#define _LINUXKPI_LINUX_REFCOUNT_H
+#ifndef	_LINUXKPI_ASM_TOPOLOGY_H_
+#define	_LINUXKPI_ASM_TOPOLOGY_H_
 
-#include <linux/atomic.h>
-#include <linux/spinlock.h>
+#if defined(__i386__) || defined(__amd64__)
+#include <sys/smp.h>
 
-typedef atomic_t refcount_t;
+/*
+ * The following functions are defined in `arch/x86/include/asm/topology.h`
+ * and thus are specific to i386 and amd64.
+ */
 
-static inline void
-refcount_set(refcount_t *ref, unsigned int i)
+static inline unsigned int
+topology_num_cores_per_package(void)
 {
-	atomic_set(ref, i);
-}
-
-static inline void
-refcount_inc(refcount_t *ref)
-{
-	atomic_inc(ref);
-}
-
-static inline bool
-refcount_inc_not_zero(refcount_t *ref)
-{
-	return (atomic_inc_not_zero(ref));
-}
-
-static inline void
-refcount_dec(refcount_t *ref)
-{
-	atomic_dec(ref);
+	return (mp_ncores);
 }
 
 static inline unsigned int
-refcount_read(refcount_t *ref)
+topology_num_threads_per_package(void)
 {
-	return atomic_read(ref);
+	return (mp_ncpus);
 }
+#endif
 
-static inline bool
-refcount_dec_and_lock_irqsave(refcount_t *ref, spinlock_t *lock,
-    unsigned long *flags)
-{
-	if (atomic_dec_and_test(ref) == true) {
-		spin_lock_irqsave(lock, flags);
-		return (true);
-	}
-	return (false);
-}
-
-static inline bool
-refcount_dec_and_test(refcount_t *r)
-{
-
-	return (atomic_dec_and_test(r));
-}
-
-#endif /* __LINUXKPI_LINUX_REFCOUNT_H__ */
+#endif /* _LINUXKPI_ASM_TOPOLOGY_H_ */
