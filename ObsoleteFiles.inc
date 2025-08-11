@@ -51,6 +51,10 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20250810: Removal of remaining Secure RPC (DES) bits
+OLD_FILES+=usr/sbin/rpc.ypupdated
+OLD_FILES+=etc/rc.d/ypupdated
+
 # 20250808: nvmfd removed from base install
 OLD_FILES+=usr/sbin/nvmfd
 OLD_FILES+=usr/share/man/man8/nvmfd.8.gz
@@ -79,6 +83,9 @@ OLD_FILES+=usr/share/man/man8/zfsboot.8.gz
 
 # 20250728: Machine versions of 'runq.h' do not exist anymore
 OLD_FILES+=usr/include/machine/runq.h
+
+# 20250727: libvmmapi bumped to 7
+OLD_LIBS+=usr/lib/libvmmapi.so.6
 
 # 20250726: MIT KRB5 DSO bump
 OLD_LIBS+=usr/lib/libcom_err.so.121
