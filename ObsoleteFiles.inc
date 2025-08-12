@@ -51,6 +51,9 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20250812: Remove a bogus manlink
+OLD_FILES+=usr/share/man/man3/quota_statfs.3.gz
+
 # 20250810: Removal of remaining Secure RPC (DES) bits
 OLD_FILES+=usr/sbin/rpc.ypupdated
 OLD_FILES+=etc/rc.d/ypupdated
@@ -61,6 +64,8 @@ OLD_FILES+=usr/share/man/man8/nvmfd.8.gz
 
 # 20250807: Replace lib/libgssapi with krb5/lib/gssapi
 OLD_FILES+=usr/include/gssapi_krb5/gssapi.h
+OLD_FILES+=usr/include/gssapi_krb5/gssapi/gssapi.h
+OLD_FILES+=usr/include/gssapi_krb5/gssapi/mechglue.h
 OLD_DIRS+=usr/include/gssapi_krb5/gssapi
 OLD_DIRS+=usr/include/gssapi_krb5
 OLD_FILES+=etc/gssapi/qop
