@@ -82,12 +82,9 @@ _nl_modify_ifp_generic(struct ifnet *ifp, struct nl_parsed_link *lattrs,
 		}
 	}
 
-	if ((lattrs->ifi_change & IFF_UP) != 0 || lattrs->ifi_change == 0) {
-		/* Request to up or down the interface */
-		if (lattrs->ifi_flags & IFF_UP)
-			if_up(ifp);
-		else
-			if_down(ifp);
+	if ((lattrs->ifi_change & IFF_UP) && (lattrs->ifi_flags & IFF_UP) == 0) {
+		/* Request to down the interface */
+		if_down(ifp);
 	}
 
 	if (lattrs->ifla_mtu > 0) {
@@ -100,12 +97,29 @@ _nl_modify_ifp_generic(struct ifnet *ifp, struct nl_parsed_link *lattrs,
 		}
 	}
 
-	if ((lattrs->ifi_change & IFF_PROMISC) != 0 ||
-	    lattrs->ifi_change == 0) {
+	if (lattrs->ifi_change & IFF_PROMISC) {
 		error = ifpromisc(ifp, lattrs->ifi_flags & IFF_PROMISC);
 		if (error != 0) {
 			nlmsg_report_err_msg(npt, "unable to set promisc");
 			return (error);
+		}
+	}
+
+	if (lattrs->ifla_address != NULL) {
+		if (nlp_has_priv(npt->nlp, PRIV_NET_SETIFMAC)) {
+			error = if_setlladdr(ifp,
+			    NLA_DATA(lattrs->ifla_address),
+			    NLA_DATA_LEN(lattrs->ifla_address));
+			if (error != 0) {
+				nlmsg_report_err_msg(npt,
+				    "setting IFLA_ADDRESS failed with error code: %d",
+				    error);
+				return (error);
+			}
+		} else {
+			nlmsg_report_err_msg(npt,
+			    "Not enough privileges to set IFLA_ADDRESS");
+			return (EPERM);
 		}
 	}
 
