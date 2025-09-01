@@ -61,7 +61,7 @@ ufshci_ctrlr_enable_host_ctrlr(struct ufshci_controller *ctrlr)
 int
 ufshci_ctrlr_construct(struct ufshci_controller *ctrlr, device_t dev)
 {
-	uint32_t ver, cap, hcs, ie;
+	uint32_t ver, cap, hcs, ie, ahit;
 	uint32_t timeout_period, retry_count;
 	int error;
 
@@ -127,6 +127,13 @@ ufshci_ctrlr_construct(struct ufshci_controller *ctrlr, device_t dev)
 	if (error)
 		return (error);
 
+	/* Read the UECPA register to clear */
+	ufshci_mmio_read_4(ctrlr, uecpa);
+
+	/* Diable Auto-hibernate */
+	ahit = 0;
+	ufshci_mmio_write_4(ctrlr, ahit, ahit);
+
 	/*
 	 * The device_present(UFSHCI_HCS_REG_DP) bit becomes true if the host
 	 * controller has successfully received a Link Startup UIC command
@@ -138,6 +145,16 @@ ufshci_ctrlr_construct(struct ufshci_controller *ctrlr, device_t dev)
 		ufshci_printf(ctrlr, "UFS device not found\n");
 		return (ENXIO);
 	}
+
+	/* Allocate and initialize UTP Task Management Request List. */
+	error = ufshci_utmr_req_queue_construct(ctrlr);
+	if (error)
+		return (error);
+
+	/* Allocate and initialize UTP Transfer Request List or SQ/CQ. */
+	error = ufshci_utr_req_queue_construct(ctrlr);
+	if (error)
+		return (error);
 
 	/* Enable additional interrupts by programming the IE register. */
 	ie = ufshci_mmio_read_4(ctrlr, ie);
@@ -153,19 +170,12 @@ ufshci_ctrlr_construct(struct ufshci_controller *ctrlr, device_t dev)
 
 	/* TODO: Initialize interrupt Aggregation Control Register (UTRIACR) */
 
-	/* Allocate and initialize UTP Task Management Request List. */
-	error = ufshci_utmr_req_queue_construct(ctrlr);
-	if (error)
-		return (error);
-
-	/* Allocate and initialize UTP Transfer Request List or SQ/CQ. */
-	error = ufshci_utr_req_queue_construct(ctrlr);
-	if (error)
-		return (error);
-
 	/* TODO: Separate IO and Admin slot */
-	/* max_hw_pend_io is the number of slots in the transfer_req_queue */
-	ctrlr->max_hw_pend_io = ctrlr->transfer_req_queue.num_entries;
+	/*
+	 * max_hw_pend_io is the number of slots in the transfer_req_queue.
+	 * Reduce num_entries by one to reserve an admin slot.
+	 */
+	ctrlr->max_hw_pend_io = ctrlr->transfer_req_queue.num_entries - 1;
 
 	return (0);
 }
@@ -342,17 +352,18 @@ ufshci_ctrlr_start(struct ufshci_controller *ctrlr)
 		return;
 	}
 
-	/* Read Controller Descriptor (Device, Geometry)*/
+	/* Read Controller Descriptor (Device, Geometry) */
 	if (ufshci_dev_get_descriptor(ctrlr) != 0) {
 		ufshci_ctrlr_fail(ctrlr, false);
 		return;
 	}
 
-	/* TODO: Configure Write Protect */
+	if (ufshci_dev_config_write_booster(ctrlr)) {
+		ufshci_ctrlr_fail(ctrlr, false);
+		return;
+	}
 
 	/* TODO: Configure Background Operations */
-
-	/* TODO: Configure Write Booster */
 
 	if (ufshci_sim_attach(ctrlr) != 0) {
 		ufshci_ctrlr_fail(ctrlr, false);
