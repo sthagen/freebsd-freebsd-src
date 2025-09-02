@@ -1890,7 +1890,25 @@ lkpi_update_dtim_tsf(struct ieee80211_vif *vif, struct ieee80211_node *ni,
 			vif->bss_conf.beacon_int = 16;
 		bss_changed |= BSS_CHANGED_BEACON_INT;
 	}
-	if (vif->bss_conf.dtim_period != ni->ni_dtim_period &&
+
+	/*
+	 * lkpi_iv_sta_recv_mgmt() will directly call into this function.
+	 * iwlwifi(4) in iwl_mvm_bss_info_changed_station_common() will
+	 * stop seesion protection the moment it sees
+	 * BSS_CHANGED_BEACON_INFO (with the expectations that it was
+	 * "a beacon from the associated AP"). It will also update
+	 * the beacon filter in that case.  This is the only place
+	 * we set the BSS_CHANGED_BEACON_INFO on the non-teardown
+	 * path so make sure we only do run this check once we are
+	 * assoc. (*iv_recv_mgmt)() will be called before we enter
+	 * here so the ni will be updates with information from the
+	 * beacon via net80211::sta_recv_mgmt().  We also need to
+	 * make sure we do not do it on every beacon we still may
+	 * get so only do if something changed.  vif->bss_conf.dtim_period
+	 * should be 0 as we start up (we also reset it on teardown).
+	 */
+	if (vif->cfg.assoc &&
+	    vif->bss_conf.dtim_period != ni->ni_dtim_period &&
 	    ni->ni_dtim_period > 0) {
 		vif->bss_conf.dtim_period = ni->ni_dtim_period;
 		bss_changed |= BSS_CHANGED_BEACON_INFO;
@@ -3810,6 +3828,7 @@ lkpi_iv_sta_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m0,
 	enum ieee80211_bss_changed bss_changed;
 
 	lvif = VAP_TO_LVIF(ni->ni_vap);
+	vif = LVIF_TO_VIF(lvif);
 
 	lvif->iv_recv_mgmt(ni, m0, subtype, rxs, rssi, nf);
 
@@ -3817,13 +3836,18 @@ lkpi_iv_sta_recv_mgmt(struct ieee80211_node *ni, struct mbuf *m0,
 	case IEEE80211_FC0_SUBTYPE_PROBE_RESP:
 		break;
 	case IEEE80211_FC0_SUBTYPE_BEACON:
-		lvif->beacons++;
+		/*
+		 * Only count beacons when assoc. SCAN has its own logging.
+		 * This is for connection/beacon loss/session protection almost
+		 * over debugging when trying to get into a stable RUN state.
+		 */
+		if (vif->cfg.assoc)
+			lvif->beacons++;
 		break;
 	default:
 		return;
 	}
 
-	vif = LVIF_TO_VIF(lvif);
 	lhw = ni->ni_ic->ic_softc;
 	hw = LHW_TO_HW(lhw);
 
@@ -4059,12 +4083,8 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 	 * Modern chipset/fw/drv will do A-MPDU in drv/fw and fail
 	 * to do so if they cannot do the crypto too.
 	 */
-	if (!lkpi_hwcrypto && ieee80211_hw_check(hw, AMPDU_AGGREGATION))
+	if (!lkpi_hwcrypto && IEEE80211_CONF_AMPDU_OFFLOAD(ic))
 		vap->iv_flags_ht &= ~IEEE80211_FHT_AMPDU_RX;
-#endif
-#if defined(LKPI_80211_HT)
-	/* 20250125-BZ Keep A-MPDU TX cleared until we sorted out AddBA for all drivers. */
-	vap->iv_flags_ht &= ~IEEE80211_FHT_AMPDU_TX;
 #endif
 
 	if (hw->max_listen_interval == 0)
@@ -6608,6 +6628,14 @@ linuxkpi_ieee80211_ifattach(struct ieee80211_hw *hw)
 	/* Does HW support Fragmentation offload? */
 	if (ieee80211_hw_check(hw, SUPPORTS_TX_FRAG))
 		ic->ic_flags_ext |= IEEE80211_FEXT_FRAG_OFFLOAD;
+
+	/* Does HW support full AMPDU[-TX] offload? */
+	if (ieee80211_hw_check(hw, AMPDU_AGGREGATION))
+		ic->ic_flags_ext |= IEEE80211_FEXT_AMPDU_OFFLOAD;
+#ifdef __notyet__
+	if (ieee80211_hw_check(hw, TX_AMSDU))
+	if (ieee80211_hw_check(hw, SUPPORTS_AMSDU_IN_AMPDU))
+#endif
 
 	/*
 	 * The wiphy variables report bitmasks of avail antennas.
