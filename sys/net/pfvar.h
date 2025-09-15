@@ -1751,6 +1751,7 @@ struct pf_kstatus {
 	counter_u64_t	lcounters[KLCNT_MAX]; /* limit counters */
 	struct pf_counter_u64	fcounters[FCNT_MAX]; /* state operation counters */
 	counter_u64_t	scounters[SCNT_MAX]; /* src_node operation counters */
+	counter_u64_t	ncounters[NCNT_MAX];
 	uint32_t	states;
 	uint32_t	src_nodes;
 	uint32_t	running;
@@ -2391,8 +2392,6 @@ extern u_int16_t		 pf_cksum_fixup(u_int16_t, u_int16_t, u_int16_t,
 extern u_int16_t		 pf_proto_cksum_fixup(struct mbuf *, u_int16_t,
 				    u_int16_t, u_int16_t, u_int8_t);
 
-VNET_DECLARE(struct ifnet *,		 sync_ifp);
-#define	V_sync_ifp		 	 VNET(sync_ifp);
 VNET_DECLARE(struct pf_krule,		 pf_default_rule);
 #define	V_pf_default_rule		  VNET(pf_default_rule)
 extern void			 pf_addrcpy(struct pf_addr *, const struct pf_addr *,
@@ -2440,6 +2439,7 @@ int	pf_match_port(u_int8_t, u_int16_t, u_int16_t, u_int16_t);
 
 void	pf_normalize_init(void);
 void	pf_normalize_cleanup(void);
+uint64_t pf_normalize_get_frag_count(void);
 int	pf_normalize_tcp(struct pf_pdesc *);
 void	pf_normalize_tcp_cleanup(struct pf_kstate *);
 int	pf_normalize_tcp_init(struct pf_pdesc *,
