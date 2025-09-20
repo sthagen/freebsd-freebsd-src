@@ -1992,7 +1992,15 @@ PKG_ABI!=	${PKG_CMD} -o ABI_FILE=${PKG_ABI_FILE} config ABI
 
 _pkgbootstrap: .PHONY
 .if make(*package*) && !exists(${LOCALBASE}/sbin/pkg)
+.if defined(BOOTSTRAP_PKG_FROM_PORTS)
+	env - UNAME_r=${UNAME_r} PATH=$$PATH \
+	    make -C ${PORTSDIR}/ports-mgmt/pkg \
+	    I_DONT_CARE_IF_MY_BUILDS_TARGET_THE_WRONG_RELEASE=1 \
+	    BATCH=1 WRKDIRPREFIX=/tmp/ports DISTDIR=/tmp/distfiles \
+	    all install clean
+.else
 	@env ASSUME_ALWAYS_YES=YES pkg bootstrap
+.endif
 .endif
 
 PKG_BIN_VERSION!=${PKG_CMD} --version </dev/null 2>/dev/null |\
@@ -2039,6 +2047,7 @@ update-packages: .PHONY
 	${_+_}${MAKE} -C ${.CURDIR} ${PKGMAKEARGS} real-update-packages
 
 package-pkg: _pkgbootstrap _repodir .PHONY
+.if defined(INCLUDE_PKG_IN_PKGBASE_REPO)
 .if exists(${PORTSDIR})
 	rm -rf /tmp/ports.${TARGET} || :
 	env ${WMAKEENV} SRCDIR=${.CURDIR} PORTSDIR=${PORTSDIR} REVISION=${_REVISION} \
@@ -2046,6 +2055,7 @@ package-pkg: _pkgbootstrap _repodir .PHONY
 		WSTAGEDIR=${WSTAGEDIR} \
 		OSVERSION="${SRCRELDATE}" \
 		sh ${.CURDIR}/release/scripts/make-pkg-package.sh
+.endif
 .endif
 
 real-packages:	stage-packages create-packages sign-packages .PHONY
