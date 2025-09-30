@@ -16,13 +16,25 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-comment = "YACC runtime library"
+/*
+ * Note: Do not use the text from ctf(5) to describe this package, since that
+ * text is licensed under the CDDL.
+ */
+
+comment = "Compact C Type Format (CTF)"
 
 desc = <<EOD
-liby provides default implementations of main() and yyerror() for applications
-which use the yacc(1) parser generator.
+The Compact C Type Format (CTF) is a method of encoding type information for C
+programs inside ELF objects.  Compared to the common DWARF debug symbol format,
+CTF is intended specifically for runtime program analyzers such as DTrace.
+
+This package provides the ctfconvert(1), ctfdump(1) and ctfmerge(1) utilities
+which are used to work with CTF data, and the libctf library which allows
+application to access CTF debugging information programatically.
 EOD
 
+licenses = [ "CDDL-1.0" ]
+
 annotations {
-	set = "base,base-jail"
+	set = devel
 }
