@@ -75,11 +75,19 @@ VOLUME_LABEL=	${REVISION:C/[.-]/_/g}_${BRANCH:C/[.-]/_/g}_${TARGET_ARCH}
 .endfor
 .endif
 
+.if !defined(NOPKGBASE) || empty(NOPKGBASE)
+PKGBASE_REPO_DIR= pkgbase-repo-dir
+WSTAGEDIR!=	${IMAKE} -f Makefile.inc1 -C ${WORLDDIR} -V WSTAGEDIR
+PKG_ABI_FILE=	${WSTAGEDIR}/usr/bin/uname
+PKG_ABI=	$$(${PKG_CMD} -o ABI_FILE=${PKG_ABI_FILE} config ABI)
+.endif
+
 .if ${.MAKE.OS} == "FreeBSD"
 # For installing packages into the release media.
 PKG_ENV+=	INSTALL_AS_USER=yes
 PKG_ENV+=	ASSUME_ALWAYS_YES=yes
 PKG_ARGS+=	-o METALOG=METALOG
+PKG_ARGS+=	-o ABI=${PKG_ABI}
 PKG_ARGS+=	-r ${.TARGET}
 PKG_REPO_ARGS=	-o REPOS_DIR=${.CURDIR}/pkg_repos
 PKGBASE_REPO_ARGS=-o REPOS_DIR=${.OBJDIR}/pkgbase-repo-dir
@@ -193,12 +201,10 @@ disc1: packagesystem
 bootonly: packagesystem
 dvd: packagesystem
 .endif
-
 .if !defined(NOPKGBASE) || empty(NOPKGBASE)
-PKGBASE_REPO_DIR= pkgbase-repo-dir
-WSTAGEDIR!=	${IMAKE} -f Makefile.inc1 -C ${WORLDDIR} -V WSTAGEDIR
-PKG_ABI_FILE=	${WSTAGEDIR}/usr/bin/uname
-PKG_ABI=	$$(${PKG_CMD} -o ABI_FILE=${PKG_ABI_FILE} config ABI)
+disc1: pkgbase-repo-dir
+bootonly: pkgbase-repo-dir
+dvd: pkgbase-repo-dir
 .endif
 
 pkgbase-repo:
@@ -213,7 +219,7 @@ pkgbase-repo-dir: pkgbase-repo
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest \
 	    > pkgbase-repo-dir/FreeBSD-base.conf
 
-disc1: ${PKGBASE_REPO_DIR}
+disc1:
 # Install system
 	mkdir -p ${.TARGET}
 	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
@@ -278,7 +284,7 @@ disc1: ${PKGBASE_REPO_DIR}
 	echo "./etc/rc.local type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	touch ${.TARGET}
 
-bootonly: ${PKGBASE_REPO_DIR}
+bootonly:
 # Install system
 	mkdir -p ${.TARGET}
 	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \
@@ -322,7 +328,7 @@ bootonly: ${PKGBASE_REPO_DIR}
 	echo "./boot/loader.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	echo "./etc/rc.local type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 
-dvd: ${PKGBASE_REPO_DIR}
+dvd:
 # Install system
 	mkdir -p ${.TARGET}
 	( cd ${WORLDDIR} && ${IMAKE} installworld installkernel distribution \

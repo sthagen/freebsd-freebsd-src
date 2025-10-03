@@ -94,7 +94,10 @@ vm_install_base() {
 		local pkg_cmd
 		pkg_cmd="pkg --rootdir ${DESTDIR} --repo-conf-dir ${PKGBASE_REPO_DIR}
 			-o ASSUME_ALWAYS_YES=yes -o IGNORE_OSVERSION=yes
-			-o INSTALL_AS_USER=yes "
+			-o ABI=${PKG_ABI} -o INSTALL_AS_USER=yes "
+		if [ -n "${NO_ROOT}" ]; then
+			pkg_cmd="$pkg_cmd -o METALOG=METALOG"
+		fi
 		$pkg_cmd update
 		selected=$($pkg_cmd rquery -U -r FreeBSD-base %n | \
 			vm_filter_base_packages | vm_extra_filter_base_packages)
@@ -198,6 +201,7 @@ vm_extra_install_packages() {
 		for pkg in ${VM_EXTRA_PACKAGES}; do
 			INSTALL_AS_USER=yes \
 			${PKG_CMD} \
+			    -o ABI=${PKG_ABI} \
 			    -o METALOG=${DESTDIR}/METALOG.pkg \
 			    -o REPOS_DIR=${PKG_REPOS_DIR} \
 			    -o PKG_DBDIR=${DESTDIR}/var/db/pkg \
@@ -249,9 +253,16 @@ vm_emulation_cleanup() {
 }
 
 vm_extra_pkg_rmcache() {
-	if [ -e ${DESTDIR}/usr/local/sbin/pkg ]; then
-		chroot ${DESTDIR} ${EMULATOR} env ASSUME_ALWAYS_YES=yes \
-			/usr/local/sbin/pkg clean -y -a
+	if [ -n "${NO_ROOT}" ]; then
+		${PKG_CMD} \
+		    -o ASSUME_ALWAYS_YES=yes \
+		    -r ${DESTDIR} \
+		    clean -y -a
+	else
+		if [ -e ${DESTDIR}/usr/local/sbin/pkg ]; then
+			chroot ${DESTDIR} ${EMULATOR} env ASSUME_ALWAYS_YES=yes \
+			    /usr/local/sbin/pkg clean -y -a
+		fi
 	fi
 
 	return 0
