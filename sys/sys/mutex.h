@@ -68,9 +68,9 @@
  */
 #define	MTX_UNOWNED	0x00000000	/* Cookie for free mutex */
 #define	MTX_RECURSED	0x00000001	/* lock recursed (for MTX_DEF only) */
-#define	MTX_CONTESTED	0x00000002	/* lock contested (for MTX_DEF only) */
+#define	MTX_WAITERS	0x00000002	/* lock has waiters (for MTX_DEF only) */
 #define	MTX_DESTROYED	0x00000004	/* lock destroyed */
-#define	MTX_FLAGMASK	(MTX_RECURSED | MTX_CONTESTED | MTX_DESTROYED)
+#define	MTX_FLAGMASK	(MTX_RECURSED | MTX_WAITERS | MTX_DESTROYED)
 
 /*
  * Prototypes
@@ -217,13 +217,9 @@ void	_thread_lock(struct thread *);
 #define _mtx_obtain_lock_fetch(mp, vp, tid)				\
 	atomic_fcmpset_acq_ptr(&(mp)->mtx_lock, vp, (tid))
 
-/* Try to release mtx_lock if it is unrecursed and uncontested. */
+/* Try to release mtx_lock if it is unrecursed and without waiters. */
 #define _mtx_release_lock(mp, tid)					\
 	atomic_cmpset_rel_ptr(&(mp)->mtx_lock, (tid), MTX_UNOWNED)
-
-/* Release mtx_lock quickly, assuming we own it. */
-#define _mtx_release_lock_quick(mp)					\
-	atomic_store_rel_ptr(&(mp)->mtx_lock, MTX_UNOWNED)
 
 #define	_mtx_release_lock_fetch(mp, vp)					\
 	atomic_fcmpset_rel_ptr(&(mp)->mtx_lock, (vp), MTX_UNOWNED)
@@ -332,7 +328,7 @@ void	_thread_lock(struct thread *);
 		(mp)->mtx_recurse--;					\
 	else {								\
 		LOCKSTAT_PROFILE_RELEASE_SPIN_LOCK(spin__release, mp);	\
-		_mtx_release_lock_quick((mp));				\
+		atomic_store_rel_ptr(&(mp)->mtx_lock, MTX_UNOWNED);	\
 	}								\
 	spinlock_exit();						\
 })
