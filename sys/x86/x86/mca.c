@@ -124,6 +124,17 @@ SYSCTL_INT(_hw_mca, OID_AUTO, erratum383, CTLFLAG_RDTUN,
     &workaround_erratum383, 0,
     "Is the workaround for Erratum 383 on AMD Family 10h processors enabled?");
 
+#ifdef DIAGNOSTIC
+static uint64_t fake_status;
+SYSCTL_U64(_hw_mca, OID_AUTO, fake_status, CTLFLAG_RW,
+    &fake_status, 0,
+    "Insert artificial MCA with given status (testing purpose only)");
+static int fake_bank;
+SYSCTL_INT(_hw_mca, OID_AUTO, fake_bank, CTLFLAG_RW,
+    &fake_bank, 0,
+    "Bank to use for artificial MCAs (testing purpose only)");
+#endif
+
 static STAILQ_HEAD(, mca_internal) mca_freelist;
 static int mca_freecount;
 static STAILQ_HEAD(, mca_internal) mca_records;
@@ -701,8 +712,24 @@ mca_check_status(enum scan_mode mode, uint64_t mcg_cap, int bank,
 	bool mce, recover;
 
 	status = rdmsr(mca_msr_ops.status(bank));
-	if (!(status & MC_STATUS_VAL))
+	if (!(status & MC_STATUS_VAL)) {
+#ifdef DIAGNOSTIC
+		/*
+		 * Check if we have a pending artificial event to generate.
+		 * Note that this is potentially racy with the sysctl. The
+		 * tradeoff is deemed acceptable given the test nature
+		 * of the code.
+		 */
+		if (fake_status && bank == fake_bank) {
+			status = fake_status;
+			fake_status = 0;
+		}
+		if (!(status & MC_STATUS_VAL))
+			return (0);
+#else
 		return (0);
+#endif
+	}
 
 	recover = *recoverablep;
 	mce = mca_is_mce(mcg_cap, status, &recover);
@@ -796,9 +823,9 @@ mca_record_entry(enum scan_mode mode, const struct mca_record *record)
 		mtx_lock_spin(&mca_lock);
 		rec = STAILQ_FIRST(&mca_freelist);
 		if (rec == NULL) {
+			mtx_unlock_spin(&mca_lock);
 			printf("MCA: Unable to allocate space for an event.\n");
 			mca_log(record);
-			mtx_unlock_spin(&mca_lock);
 			return;
 		}
 		STAILQ_REMOVE_HEAD(&mca_freelist, link);
@@ -1017,6 +1044,7 @@ static void
 mca_process_records(enum scan_mode mode)
 {
 	struct mca_internal *mca;
+	STAILQ_HEAD(, mca_internal) tmplist;
 
 	/*
 	 * If in an interrupt context, defer the post-scan activities to a
@@ -1028,10 +1056,21 @@ mca_process_records(enum scan_mode mode)
 		return;
 	}
 
+	/*
+	 * Copy the pending list to the stack so we can drop the spin lock
+	 * while we are emitting logs.
+	 */
+	STAILQ_INIT(&tmplist);
 	mtx_lock_spin(&mca_lock);
-	while ((mca = STAILQ_FIRST(&mca_pending)) != NULL) {
-		STAILQ_REMOVE_HEAD(&mca_pending, link);
+	STAILQ_SWAP(&mca_pending, &tmplist, mca_internal);
+	mtx_unlock_spin(&mca_lock);
+
+	STAILQ_FOREACH(mca, &tmplist, link)
 		mca_log(&mca->rec);
+
+	mtx_lock_spin(&mca_lock);
+	while ((mca = STAILQ_FIRST(&tmplist)) != NULL) {
+		STAILQ_REMOVE_HEAD(&tmplist, link);
 		mca_store_record(mca);
 	}
 	mtx_unlock_spin(&mca_lock);
