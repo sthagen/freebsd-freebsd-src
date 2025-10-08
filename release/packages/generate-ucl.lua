@@ -1,4 +1,10 @@
 #!/usr/libexec/flua
+--
+-- Copyright (c) 2024-2025 Baptiste Daroussin <bapt@FreeBSD.org>
+-- Copyright (c) 2025 Lexi Winter <ivy@FreeBSD.org>
+--
+-- SPDX-License-Identifier: BSD-2-Clause
+--
 
 --[[ usage:
 generate-ucl.lua [<variablename> <variablevalue>]... <sourceucl> <destucl>
@@ -161,7 +167,7 @@ if add_gen_dep(pkgname, pkggenname) then
 	end
 	obj["deps"][pkggenname] = {
 		["version"] = pkgversion,
-		["origin"] = "base"
+		["origin"] = "base/"..pkgprefix.."-"..pkggenname,
 	}
 end
 
@@ -217,6 +223,8 @@ if pkgprefix ~= nil and obj["deps"] ~= nil then
 	newdeps = {}
 	for dep, opts in pairs(obj["deps"]) do
 		local newdep = pkgprefix .. "-" .. dep
+		-- Make sure origin is set.
+		opts["origin"] = opts["origin"] or "base/"..newdep
 		newdeps[newdep] = opts
 	end
 	obj["deps"] = newdeps
