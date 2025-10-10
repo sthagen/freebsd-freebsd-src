@@ -35,10 +35,11 @@
 #ifndef	FS_NULL_H
 #define	FS_NULL_H
 
-#define	NULLM_CACHE	0x0001
-
 #include <sys/ck.h>
 #include <vm/uma.h>
+
+#define	NULLM_CACHE		0x0001
+#define	NULLM_NOUNPBYPASS	0x0002
 
 struct null_mount {
 	struct mount	*nullm_vfs;
@@ -82,6 +83,16 @@ struct vnode *null_checkvp(struct vnode *vp, char *fil, int lno);
 #endif
 
 extern struct vop_vector null_vnodeops;
+extern struct vop_vector null_vnodeops_no_unp_bypass;
+
+static inline bool
+null_is_nullfs_vnode(struct vnode *vp)
+{
+	const struct vop_vector *op;
+
+	op = vp->v_op;
+	return (op == &null_vnodeops || op == &null_vnodeops_no_unp_bypass);
+}
 
 extern uma_zone_t null_node_zone;
 
