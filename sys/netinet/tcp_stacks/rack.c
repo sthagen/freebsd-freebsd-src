@@ -4730,7 +4730,7 @@ rack_make_timely_judgement(struct tcp_rack *rack, uint32_t rtt, int32_t rtt_diff
 	return (timely_says);
 }
 
-static __inline int
+static inline int
 rack_in_gp_window(struct tcpcb *tp, struct rack_sendmap *rsm)
 {
 	if (SEQ_GEQ(rsm->r_start, tp->gput_seq) &&
@@ -4767,7 +4767,7 @@ rack_in_gp_window(struct tcpcb *tp, struct rack_sendmap *rsm)
 	return (0);
 }
 
-static __inline void
+static inline void
 rack_mark_in_gp_win(struct tcpcb *tp, struct rack_sendmap *rsm)
 {
 
@@ -4784,7 +4784,7 @@ rack_mark_in_gp_win(struct tcpcb *tp, struct rack_sendmap *rsm)
 		rsm->r_flags &= ~RACK_IN_GP_WIN;
 }
 
-static __inline void
+static inline void
 rack_clear_gp_marks(struct tcpcb *tp, struct tcp_rack *rack)
 {
 	/* A GP measurement is ending, clear all marks on the send map*/
@@ -4802,7 +4802,7 @@ rack_clear_gp_marks(struct tcpcb *tp, struct tcp_rack *rack)
 }
 
 
-static __inline void
+static inline void
 rack_tend_gp_marks(struct tcpcb *tp, struct tcp_rack *rack)
 {
 	struct rack_sendmap *rsm = NULL;
@@ -6864,6 +6864,18 @@ rack_mark_lost(struct tcpcb *tp,
 	}
 }
 
+static inline void
+rack_mark_nolonger_lost(struct tcp_rack *rack, struct rack_sendmap *rsm)
+{
+	KASSERT((rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start)),
+		("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
+	rsm->r_flags &= ~RACK_WAS_LOST;
+	if (rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start))
+		rack->r_ctl.rc_considered_lost -= rsm->r_end - rsm->r_start;
+	else
+		rack->r_ctl.rc_considered_lost = 0;
+}
+
 /*
  * RACK Timer, here we simply do logging and house keeping.
  * the normal rack_output() function will call the
@@ -7005,7 +7017,7 @@ rack_setup_offset_for_rsm(struct tcp_rack *rack, struct rack_sendmap *src_rsm, s
 	rsm->orig_t_space = M_TRAILINGROOM(rsm->m);
 }
 
-static __inline void
+static inline void
 rack_clone_rsm(struct tcp_rack *rack, struct rack_sendmap *nrsm,
 	       struct rack_sendmap *rsm, uint32_t start)
 {
@@ -8130,13 +8142,7 @@ rack_update_rsm(struct tcpcb *tp, struct tcp_rack *rack,
 		 * remove the lost desgination and reduce the
 		 * bytes considered lost.
 		 */
-		rsm->r_flags &= ~RACK_WAS_LOST;
-		KASSERT((rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start)),
-			("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
-		if (rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start))
-			rack->r_ctl.rc_considered_lost -= rsm->r_end - rsm->r_start;
-		else
-			rack->r_ctl.rc_considered_lost = 0;
+		rack_mark_nolonger_lost(rack, rsm);
 	}
 	idx = rsm->r_rtr_cnt - 1;
 	rsm->r_tim_lastsent[idx] = ts;
@@ -9492,6 +9498,11 @@ do_rest_ofb:
 				if (rsm->r_flags & RACK_WAS_LOST) {
 					int my_chg;
 
+					/*
+					 * Note here we do not use our rack_mark_nolonger_lost() function
+					 * since we are moving our data pointer around and the
+					 * ack'ed side is already not considered lost.
+					 */
 					my_chg = (nrsm->r_end - nrsm->r_start);
 					KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
 						("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
@@ -9659,16 +9670,11 @@ do_rest_ofb:
 			changed += (rsm->r_end - rsm->r_start);
 			/* You get a count for acking a whole segment or more */
 			if (rsm->r_flags & RACK_WAS_LOST) {
-				int my_chg;
-
-				my_chg = (rsm->r_end - rsm->r_start);
-				rsm->r_flags &= ~RACK_WAS_LOST;
-				KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
-					("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
-				if (my_chg <= rack->r_ctl.rc_considered_lost)
-					rack->r_ctl.rc_considered_lost -= my_chg;
-				else
-					rack->r_ctl.rc_considered_lost = 0;
+				/*
+				 * Here we can use the inline function since
+				 * the rsm is truly marked lost and now no longer lost.
+				 */
+				rack_mark_nolonger_lost(rack, rsm);
 			}
 			rack->r_ctl.rc_sacked += (rsm->r_end - rsm->r_start);
 			if (rsm->r_in_tmap) /* should be true */
@@ -9851,6 +9857,10 @@ do_rest_ofb:
 			if (rsm->r_flags & RACK_WAS_LOST) {
 				int my_chg;
 
+				/*
+				 * Note here we are using hookery again so we can't
+				 * use our rack_mark_nolonger_lost() function.
+				 */
 				my_chg = (nrsm->r_end - nrsm->r_start);
 				KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
 					("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
@@ -9952,16 +9962,10 @@ do_rest_ofb:
 			rack_update_rtt(tp, rack, rsm, to, cts, SACKED, 0);
 			changed += (rsm->r_end - rsm->r_start);
 			if (rsm->r_flags & RACK_WAS_LOST) {
-				int my_chg;
-
-				my_chg = (rsm->r_end - rsm->r_start);
-				rsm->r_flags &= ~RACK_WAS_LOST;
-				KASSERT((rack->r_ctl.rc_considered_lost >= my_chg),
-					("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
-				if (my_chg <= rack->r_ctl.rc_considered_lost)
-					rack->r_ctl.rc_considered_lost -= my_chg;
-				else
-					rack->r_ctl.rc_considered_lost = 0;
+				/*
+				 * Here it is safe to use our function.
+				 */
+				rack_mark_nolonger_lost(rack, rsm);
 			}
 			rack->r_ctl.rc_sacked += (rsm->r_end - rsm->r_start);
 
@@ -10362,13 +10366,7 @@ more:
 			 * and yet before retransmitting we get an ack
 			 * which can happen due to reordering.
 			 */
-			rsm->r_flags &= ~RACK_WAS_LOST;
-			KASSERT((rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start)),
-				("rsm:%p rack:%p rc_considered_lost goes negative", rsm,  rack));
-			if (rack->r_ctl.rc_considered_lost >= (rsm->r_end - rsm->r_start))
-				rack->r_ctl.rc_considered_lost -= rsm->r_end - rsm->r_start;
-			else
-				rack->r_ctl.rc_considered_lost = 0;
+			rack_mark_nolonger_lost(rack, rsm);
 		}
 		rack_log_map_chg(tp, rack, NULL, rsm, NULL, MAP_FREE, rsm->r_end, __LINE__);
 		rack->r_ctl.rc_holes_rxt -= rsm->r_rtr_bytes;
@@ -10476,12 +10474,7 @@ more:
 		 * which can happen due to reordering. In this
 		 * case its only a partial ack of the send.
 		 */
-		KASSERT((rack->r_ctl.rc_considered_lost >= (th_ack - rsm->r_start)),
-			("rsm:%p rack:%p rc_considered_lost goes negative th_ack:%u", rsm,  rack, th_ack));
-		if (rack->r_ctl.rc_considered_lost >= (th_ack - rsm->r_start))
-			rack->r_ctl.rc_considered_lost -= th_ack - rsm->r_start;
-		else
-			rack->r_ctl.rc_considered_lost = 0;
+		rack_mark_nolonger_lost(rack, rsm);
 	}
 	/*
 	 * Clear the dup ack count for
