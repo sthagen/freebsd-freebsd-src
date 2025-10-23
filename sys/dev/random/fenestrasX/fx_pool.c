@@ -179,6 +179,9 @@ static const struct fxrng_ent_char {
 	[RANDOM_PURE_RDRAND] = {
 		.entc_cls = &fxrng_hi_pull,
 	},
+	[RANDOM_PURE_RDSEED] = {
+		.entc_cls = &fxrng_hi_pull,
+	},
 	[RANDOM_PURE_NEHEMIAH] = {
 		.entc_cls = &fxrng_hi_pull,
 	},
@@ -202,6 +205,15 @@ static const struct fxrng_ent_char {
 	},
 	[RANDOM_PURE_VMGENID] = {
 		.entc_cls = &fxrng_hi_push,
+	},
+	[RANDOM_PURE_QUALCOMM] = {
+		.entc_cls = &fxrng_hi_pull,
+	},
+	[RANDOM_PURE_ARMV8] = {
+		.entc_cls = &fxrng_hi_pull,
+	},
+	[RANDOM_PURE_ARM_TRNG] = {
+		.entc_cls = &fxrng_hi_pull,
 	},
 };
 

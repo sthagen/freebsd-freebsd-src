@@ -127,8 +127,6 @@
         ..
         agp
         ..
-        an
-        ..
         ciss
         ..
         evdev
@@ -190,8 +188,6 @@
         vmm
         ..
         wg
-        ..
-        wi
         ..
     ..
     devdctl
