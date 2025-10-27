@@ -1,10 +1,8 @@
 /*-
- * Copyright (c) 2014 Andrew Turner <andrew@FreeBSD.org>
- * Copyright (c) 2015 The FreeBSD Foundation
- * All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
  *
- * This software was developed by Andrew Turner under sponsorship from
- * the FreeBSD Foundation.
+ * Copyright (c) 2025 Juniper Networks, Inc.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,24 +26,56 @@
  * SUCH DAMAGE.
  */
 
-#ifndef	_MACHINE_SMP_H_
-#define	_MACHINE_SMP_H_
+#ifndef	_SYS_KEXEC_H_
+#define	_SYS_KEXEC_H_
 
-#include <machine/pcb.h>
+#include <sys/types.h>
 
-enum {
-	IPI_AST,
-	IPI_PREEMPT,
-	IPI_RENDEZVOUS,
-	IPI_STOP,
-	IPI_STOP_HARD,
-	IPI_HARDCLOCK,
-	IPI_OFF,
-	INTR_IPI_COUNT,
+struct kexec_segment {
+	void *buf;
+	size_t bufsz;
+	vm_paddr_t mem;
+	vm_size_t memsz;
 };
 
-void	ipi_all_but_self(u_int ipi);
-void	ipi_cpu(int cpu, u_int ipi);
-void	ipi_selected(cpuset_t cpus, u_int ipi);
+/* Flags (aligned with Linux) */
+#define	KEXEC_ON_CRASH		0x1
 
-#endif /* !_MACHINE_SMP_H_ */
+/* Aligned with Linux's limit */
+#define	KEXEC_SEGMENT_MAX	16
+
+#ifdef	_KERNEL
+struct kexec_segment_stage {
+	vm_page_t	first_page;
+	void		*map_buf;
+	vm_paddr_t	target;
+	vm_size_t	size;
+	vm_pindex_t	pindex;
+};
+
+struct kexec_image {
+	struct kexec_segment_stage	 segments[KEXEC_SEGMENT_MAX];
+	vm_paddr_t			 entry;
+	struct vm_object		*map_obj;	/* Containing object */
+	vm_offset_t			 map_addr;	/* Mapped in kernel space */
+	vm_size_t			 map_size;
+	vm_page_t			 first_md_page;
+	void				*md_image;
+};
+
+#endif
+
+#ifndef _KERNEL
+
+__BEGIN_DECLS
+int	kexec_load(uint64_t, unsigned long, struct kexec_segment *, unsigned long);
+__END_DECLS
+
+#else
+
+void	kexec_reboot_md(struct kexec_image *);
+int	kexec_load_md(struct kexec_image *);
+
+#endif
+
+#endif
