@@ -1,8 +1,9 @@
 /*-
- * Copyright (c) 2015 The FreeBSD Foundation
+ * Copyright (c) 2013, 2014 Andrew Turner
+ * Copyright (c) 2015,2021 The FreeBSD Foundation
  *
- * This software was developed by Semihalf under
- * the sponsorship of the FreeBSD Foundation.
+ * Portions of this software were developed by Andrew Turner
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -16,7 +17,7 @@
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
@@ -26,43 +27,31 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/param.h>
-#include <ddb/ddb.h>
-#include <ddb/db_access.h>
-#include <ddb/db_sym.h>
+#if !defined(_MACHINE_ARMREG_H_) && \
+    !defined(_MACHINE_CPU_H_) && \
+    !defined(_MACHINE_HYPERVISOR_H_)
+#error Do not include this file directly
+#endif
 
-#include <machine/armreg.h>
-#include <machine/disassem.h>
+#ifndef _MACHINE__ARMREG_H_
+#define	_MACHINE__ARMREG_H_
 
-static u_int db_disasm_read_word(vm_offset_t);
-static void db_disasm_printaddr(vm_offset_t);
+#define	__MRS_REG_ALT_NAME(op0, op1, crn, crm, op2)			\
+    S##op0##_##op1##_C##crn##_C##crm##_##op2
+#define	_MRS_REG_ALT_NAME(op0, op1, crn, crm, op2)			\
+    __MRS_REG_ALT_NAME(op0, op1, crn, crm, op2)
+#define	MRS_REG_ALT_NAME(reg)						\
+    _MRS_REG_ALT_NAME(reg##_op0, reg##_op1, reg##_CRn, reg##_CRm, reg##_op2)
 
-/* Glue code to interface db_disasm to the generic ARM disassembler */
-static const struct disasm_interface db_disasm_interface = {
-	.di_readword = db_disasm_read_word,
-	.di_printaddr = db_disasm_printaddr,
-	.di_printf = db_printf,
-};
 
-static u_int
-db_disasm_read_word(vm_offset_t address)
-{
+#define	READ_SPECIALREG(reg)						\
+({	uint64_t _val;							\
+	__asm __volatile("mrs	%0, " __STRING(reg) : "=&r" (_val));	\
+	_val;								\
+})
+#define	WRITE_SPECIALREG(reg, _val)					\
+	__asm __volatile("msr	" __STRING(reg) ", %0" : : "r"((uint64_t)_val))
 
-	return (db_get_value(address, INSN_SIZE, 0));
-}
+#define	UL(x)	UINT64_C(x)
 
-static void
-db_disasm_printaddr(vm_offset_t address)
-{
-
-	db_printsym((db_addr_t)address, DB_STGY_ANY);
-}
-
-vm_offset_t
-db_disasm(vm_offset_t loc, bool altfmt)
-{
-
-	return (disasm(&db_disasm_interface, loc, altfmt));
-}
-
-/* End of db_disasm.c */
+#endif /* !_MACHINE__ARMREG_H_ */
