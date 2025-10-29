@@ -204,7 +204,6 @@ MAN=	aac.4 \
 	hidbus.4 \
 	hidquirk.4 \
 	hidraw.4 \
-	hifn.4 \
 	hkbd.4 \
 	hms.4 \
 	hmt.4 \
@@ -893,7 +892,6 @@ _ntb_hw_intel.4=	ntb_hw_intel.4
 _ntb_hw_plx.4=	ntb_hw_plx.4
 _ntb_transport.4=ntb_transport.4
 _nvram.4=	nvram.4
-_padlock.4=	padlock.4
 _pchtherm.4=	pchtherm.4
 _qat.4=		qat.4
 _qat_c2xxx.4=	qat_c2xxx.4
@@ -938,6 +936,10 @@ MLINKS+=sume.4 if_sume.4
 _bhyve.4=	bhyve.4
 _vmm.4=		vmm.4
 .endif
+.endif
+
+.if ${MACHINE_CPUARCH} == "i386"
+_padlock.4=	padlock.4
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
