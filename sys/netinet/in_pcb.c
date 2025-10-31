@@ -3058,7 +3058,7 @@ db_print_inconninfo(struct in_conninfo *inc, const char *name, int indent)
 	    ntohs(inc->inc_fport));
 }
 
-static void
+void
 db_print_inpflags(int inp_flags)
 {
 	int comma;
@@ -3074,10 +3074,6 @@ db_print_inpflags(int inp_flags)
 	}
 	if (inp_flags & INP_RECVDSTADDR) {
 		db_printf("%sINP_RECVDSTADDR", comma ? ", " : "");
-		comma = 1;
-	}
-	if (inp_flags & INP_ORIGDSTADDR) {
-		db_printf("%sINP_ORIGDSTADDR", comma ? ", " : "");
 		comma = 1;
 	}
 	if (inp_flags & INP_HDRINCL) {
@@ -3110,6 +3106,14 @@ db_print_inpflags(int inp_flags)
 	}
 	if (inp_flags & INP_DONTFRAG) {
 		db_printf("%sINP_DONTFRAG", comma ? ", " : "");
+		comma = 1;
+	}
+	if (inp_flags & INP_BINDANY) {
+		db_printf("%sINP_BINDANY", comma ? ", " : "");
+		comma = 1;
+	}
+	if (inp_flags & INP_INHASHLIST) {
+		db_printf("%sINP_INHASHLIST", comma ? ", " : "");
 		comma = 1;
 	}
 	if (inp_flags & INP_RECVTOS) {
@@ -3154,15 +3158,23 @@ db_print_inpflags(int inp_flags)
 	}
 	if (inp_flags & INP_ONESBCAST) {
 		db_printf("%sINP_ONESBCAST", comma ? ", " : "");
-		comma  = 1;
+		comma = 1;
 	}
 	if (inp_flags & INP_DROPPED) {
 		db_printf("%sINP_DROPPED", comma ? ", " : "");
-		comma  = 1;
+		comma = 1;
 	}
 	if (inp_flags & INP_SOCKREF) {
 		db_printf("%sINP_SOCKREF", comma ? ", " : "");
-		comma  = 1;
+		comma = 1;
+	}
+	if (inp_flags & INP_RESERVED_0) {
+		db_printf("%sINP_RESERVED_0", comma ? ", " : "");
+		comma = 1;
+	}
+	if (inp_flags & INP_BOUNDFIB) {
+		db_printf("%sINP_BOUNDFIB", comma ? ", " : "");
+		comma = 1;
 	}
 	if (inp_flags & IN6P_RFC2292) {
 		db_printf("%sIN6P_RFC2292", comma ? ", " : "");
