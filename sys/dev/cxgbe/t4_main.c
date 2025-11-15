@@ -1327,6 +1327,8 @@ t4_attach(device_t dev)
 	sc->dev = dev;
 	sysctl_ctx_init(&sc->ctx);
 	TUNABLE_INT_FETCH("hw.cxgbe.dflags", &sc->debug_flags);
+	if (TUNABLE_INT_FETCH("hw.cxgbe.iflags", &sc->intr_flags) == 0)
+		sc->intr_flags = IHF_INTR_CLEAR_ON_INIT | IHF_CLR_ALL_UNIGNORED;
 
 	if ((pci_get_device(dev) & 0xff00) == 0x5400)
 		t5_attribute_workaround(dev);
@@ -3652,6 +3654,7 @@ port_mword(struct port_info *pi, uint32_t speed)
 	case FW_PORT_TYPE_SFP28:
 	case FW_PORT_TYPE_SFP56:
 	case FW_PORT_TYPE_QSFP56:
+	case FW_PORT_TYPE_QSFPDD:
 		/* Pluggable transceiver */
 		switch (pi->mod_type) {
 		case FW_PORT_MOD_TYPE_LR:
@@ -3671,6 +3674,8 @@ port_mword(struct port_info *pi, uint32_t speed)
 				return (IFM_100G_LR4);
 			case FW_PORT_CAP32_SPEED_200G:
 				return (IFM_200G_LR4);
+			case FW_PORT_CAP32_SPEED_400G:
+				return (IFM_400G_LR8);
 			}
 			break;
 		case FW_PORT_MOD_TYPE_SR:
@@ -3689,6 +3694,8 @@ port_mword(struct port_info *pi, uint32_t speed)
 				return (IFM_100G_SR4);
 			case FW_PORT_CAP32_SPEED_200G:
 				return (IFM_200G_SR4);
+			case FW_PORT_CAP32_SPEED_400G:
+				return (IFM_400G_SR8);
 			}
 			break;
 		case FW_PORT_MOD_TYPE_ER:
@@ -3712,6 +3719,8 @@ port_mword(struct port_info *pi, uint32_t speed)
 				return (IFM_100G_CR4);
 			case FW_PORT_CAP32_SPEED_200G:
 				return (IFM_200G_CR4_PAM4);
+			case FW_PORT_CAP32_SPEED_400G:
+				return (IFM_400G_CR8);
 			}
 			break;
 		case FW_PORT_MOD_TYPE_LRM:
@@ -3723,10 +3732,12 @@ port_mword(struct port_info *pi, uint32_t speed)
 				return (IFM_100G_DR);
 			if (speed == FW_PORT_CAP32_SPEED_200G)
 				return (IFM_200G_DR4);
+			if (speed == FW_PORT_CAP32_SPEED_400G)
+				return (IFM_400G_DR4);
 			break;
 		case FW_PORT_MOD_TYPE_NA:
 			MPASS(0);	/* Not pluggable? */
-			/* fall throough */
+			/* fall through */
 		case FW_PORT_MOD_TYPE_ERROR:
 		case FW_PORT_MOD_TYPE_UNKNOWN:
 		case FW_PORT_MOD_TYPE_NOTSUPPORTED:
@@ -3735,6 +3746,10 @@ port_mword(struct port_info *pi, uint32_t speed)
 			return (IFM_NONE);
 		}
 		break;
+	case M_FW_PORT_CMD_PTYPE:	/* FW_PORT_TYPE_NONE for old firmware */
+		if (chip_id(pi->adapter) >= CHELSIO_T7)
+			return (IFM_UNKNOWN);
+		/* fall through */
 	case FW_PORT_TYPE_NONE:
 		return (IFM_NONE);
 	}
@@ -3930,8 +3945,6 @@ fatal_error_task(void *arg, int pending)
 void
 t4_fatal_err(struct adapter *sc, bool fw_error)
 {
-	const bool verbose = (sc->debug_flags & DF_VERBOSE_SLOWINTR) != 0;
-
 	stop_adapter(sc);
 	if (atomic_testandset_int(&sc->error_flags, ilog2(ADAP_FATAL_ERR)))
 		return;
@@ -3944,7 +3957,7 @@ t4_fatal_err(struct adapter *sc, bool fw_error)
 		 * main INT_CAUSE registers here to make sure we haven't missed
 		 * anything interesting.
 		 */
-		t4_slow_intr_handler(sc, verbose);
+		t4_slow_intr_handler(sc, sc->intr_flags);
 		atomic_set_int(&sc->error_flags, ADAP_CIM_ERR);
 	}
 	t4_report_fw_error(sc);
@@ -7895,6 +7908,9 @@ t4_sysctls(struct adapter *sc)
 	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "dflags", CTLFLAG_RW,
 	    &sc->debug_flags, 0, "flags to enable runtime debugging");
 
+	SYSCTL_ADD_INT(ctx, children, OID_AUTO, "iflags", CTLFLAG_RW,
+	    &sc->intr_flags, 0, "flags for the slow interrupt handler");
+
 	SYSCTL_ADD_STRING(ctx, children, OID_AUTO, "tp_version",
 	    CTLFLAG_RD, sc->tp_version, 0, "TP microcode version");
 
@@ -8991,7 +9007,7 @@ sysctl_requested_fec(SYSCTL_HANDLER_ARGS)
 	struct adapter *sc = pi->adapter;
 	struct link_config *lc = &pi->link_cfg;
 	int rc;
-	int8_t old;
+	int8_t old = lc->requested_fec;
 
 	if (req->newptr == NULL) {
 		struct sbuf *sb;
@@ -9000,16 +9016,15 @@ sysctl_requested_fec(SYSCTL_HANDLER_ARGS)
 		if (sb == NULL)
 			return (ENOMEM);
 
-		sbuf_printf(sb, "%b", lc->requested_fec, t4_fec_bits);
+		sbuf_printf(sb, "%b", old, t4_fec_bits);
 		rc = sbuf_finish(sb);
 		sbuf_delete(sb);
 	} else {
 		char s[8];
 		int n;
 
-		snprintf(s, sizeof(s), "%d",
-		    lc->requested_fec == FEC_AUTO ? -1 :
-		    lc->requested_fec & (M_FW_PORT_CAP32_FEC | FEC_MODULE));
+		snprintf(s, sizeof(s), "%d", old == FEC_AUTO ? -1 :
+		    old & (M_FW_PORT_CAP32_FEC | FEC_MODULE));
 
 		rc = sysctl_handle_string(oidp, s, sizeof(s), req);
 		if (rc != 0)
@@ -9026,7 +9041,10 @@ sysctl_requested_fec(SYSCTL_HANDLER_ARGS)
 		if (rc)
 			return (rc);
 		PORT_LOCK(pi);
-		old = lc->requested_fec;
+		if (lc->requested_fec != old) {
+			rc = EBUSY;
+			goto done;
+		}
 		if (n == FEC_AUTO)
 			lc->requested_fec = FEC_AUTO;
 		else if (n == 0 || n == FEC_NONE)
