@@ -111,9 +111,6 @@ struct domain inet6domain = {
 #ifdef VIMAGE
 	.dom_rtdetach =		in6_detachhead,
 #endif
-	.dom_ifattach =		in6_domifattach,
-	.dom_ifdetach =		in6_domifdetach,
-	.dom_ifmtu    =		in6_domifmtu,
 	.dom_nprotosw =		14,
 	.dom_protosw = {
 		&tcp6_protosw,
