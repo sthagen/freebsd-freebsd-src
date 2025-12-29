@@ -239,7 +239,6 @@ static MALLOC_DEFINE(M_IFDESCR, "ifdescr", "ifnet descriptions");
 static struct sx ifdescr_sx;
 SX_SYSINIT(ifdescr_sx, &ifdescr_sx, "ifnet descr");
 
-void	(*ng_ether_link_state_p)(struct ifnet *ifp, int state);
 void	(*lagg_linkstate_p)(struct ifnet *ifp, int state);
 /* These are external hooks for CARP. */
 void	(*carp_linkstate_p)(struct ifnet *ifp);
@@ -1117,9 +1116,8 @@ if_detach_internal(struct ifnet *ifp, bool vmove)
 #endif
 
 	if_purgeaddrs(ifp);
-	if_purgemaddrs(ifp);
-
 	EVENTHANDLER_INVOKE(ifnet_departure_event, ifp);
+	if_purgemaddrs(ifp);
 	if (IS_DEFAULT_VNET(curvnet))
 		devctl_notify("IFNET", ifp->if_xname, "DETACH", NULL);
 
@@ -2032,10 +2030,6 @@ do_link_state_change(void *arg, int pending)
 	rt_ifmsg(ifp, 0);
 	if (ifp->if_vlantrunk != NULL)
 		(*vlan_link_state_p)(ifp);
-
-	if ((ifp->if_type == IFT_ETHER || ifp->if_type == IFT_L2VLAN) &&
-	    ifp->if_l2com != NULL)
-		(*ng_ether_link_state_p)(ifp, link_state);
 	if (ifp->if_carp)
 		(*carp_linkstate_p)(ifp);
 	if (ifp->if_bridge)
@@ -3036,8 +3030,6 @@ if_rename(struct ifnet *ifp, char *new_name)
 	 */
 	ifp->if_flags |= IFF_RENAMING;
 
-	EVENTHANDLER_INVOKE(ifnet_departure_event, ifp);
-
 	if_printf(ifp, "changing name to '%s'\n", new_name);
 
 	IF_ADDR_WLOCK(ifp);
@@ -3064,7 +3056,7 @@ if_rename(struct ifnet *ifp, char *new_name)
 		sdl->sdl_data[--namelen] = 0xff;
 	IF_ADDR_WUNLOCK(ifp);
 
-	EVENTHANDLER_INVOKE(ifnet_arrival_event, ifp);
+	EVENTHANDLER_INVOKE(ifnet_rename_event, ifp, old_name);
 
 	ifp->if_flags &= ~IFF_RENAMING;
 
