@@ -40,18 +40,17 @@
 #endif
 
 #include <sys/param.h>
+#include <sys/dnv.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/nv.h>
-#include <sys/dnv.h>
+#include <sys/sndstat.h>
 #include <sys/sx.h>
 
 #include <dev/sound/pcm/sound.h>
+#include <dev/sound/sndstat.h>
 
 #include "feeder_if.h"
-
-#define	SS_TYPE_PCM		1
-#define	SS_TYPE_MIDI		2
 
 static d_open_t sndstat_open;
 static void sndstat_close(void *);
@@ -73,7 +72,8 @@ struct sndstat_entry {
 	TAILQ_ENTRY(sndstat_entry) link;
 	device_t dev;
 	char *str;
-	int type, unit;
+	enum sndstat_type type;
+	int unit;
 };
 
 struct sndstat_userdev {
@@ -534,24 +534,24 @@ sndstat_build_sound4_nvlist(struct snddev_info *d, nvlist_t **dip)
 		while (f != NULL) {
 			sbuf_printf(&sb, "%s", f->class->name);
 			if (f->class->type == FEEDER_FORMAT) {
-				snd_afmt2str(f->desc->in, buf, sizeof(buf));
+				snd_afmt2str(f->desc.in, buf, sizeof(buf));
 				sbuf_printf(&sb, "(%s -> ", buf);
-				snd_afmt2str(f->desc->out, buf, sizeof(buf));
+				snd_afmt2str(f->desc.out, buf, sizeof(buf));
 				sbuf_printf(&sb, "%s)", buf);
 			} else if (f->class->type == FEEDER_MATRIX) {
 				sbuf_printf(&sb, "(%d.%dch -> %d.%dch)",
-				    AFMT_CHANNEL(f->desc->in) -
-				    AFMT_EXTCHANNEL(f->desc->in),
-				    AFMT_EXTCHANNEL(f->desc->in),
-				    AFMT_CHANNEL(f->desc->out) -
-				    AFMT_EXTCHANNEL(f->desc->out),
-				    AFMT_EXTCHANNEL(f->desc->out));
+				    AFMT_CHANNEL(f->desc.in) -
+				    AFMT_EXTCHANNEL(f->desc.in),
+				    AFMT_EXTCHANNEL(f->desc.in),
+				    AFMT_CHANNEL(f->desc.out) -
+				    AFMT_EXTCHANNEL(f->desc.out),
+				    AFMT_EXTCHANNEL(f->desc.out));
 			} else if (f->class->type == FEEDER_RATE) {
 				sbuf_printf(&sb, "(%d -> %d)",
 				    FEEDER_GET(f, FEEDRATE_SRC),
 				    FEEDER_GET(f, FEEDRATE_DST));
 			} else {
-				snd_afmt2str(f->desc->out, buf, sizeof(buf));
+				snd_afmt2str(f->desc.out, buf, sizeof(buf));
 				sbuf_printf(&sb, "(%s)", buf);
 			}
 			sbuf_printf(&sb, " -> ");
@@ -686,22 +686,26 @@ sndstat_create_devs_nvlist(nvlist_t **nvlp)
 		return (ENOMEM);
 
 	TAILQ_FOREACH(ent, &sndstat_devlist, link) {
-		struct snddev_info *d;
-		nvlist_t *di;
+		if (ent->type == SNDST_TYPE_PCM) {
+			struct snddev_info *d;
+			nvlist_t *di;
 
-		d = device_get_softc(ent->dev);
-		if (!PCM_REGISTERED(d))
-			continue;
+			d = device_get_softc(ent->dev);
+			if (!PCM_REGISTERED(d))
+				continue;
 
-		err = sndstat_build_sound4_nvlist(d, &di);
-		if (err)
-			goto done;
+			err = sndstat_build_sound4_nvlist(d, &di);
+			if (err)
+				goto done;
 
-		nvlist_append_nvlist_array(nvl, SNDST_DSPS, di);
-		nvlist_destroy(di);
-		err = nvlist_error(nvl);
-		if (err)
-			goto done;
+			nvlist_append_nvlist_array(nvl, SNDST_DSPS, di);
+			nvlist_destroy(di);
+			err = nvlist_error(nvl);
+			if (err)
+				goto done;
+		} else if (ent->type == SNDST_TYPE_MIDI) {
+			/* TODO */
+		}
 	}
 
 	TAILQ_FOREACH(pf, &sndstat_filelist, entry) {
@@ -1152,22 +1156,14 @@ fail:
 
 /************************************************************************/
 
-int
-sndstat_register(device_t dev, char *str)
+void
+sndstat_register(device_t dev, enum sndstat_type type, char *str)
 {
 	struct sndstat_entry *ent;
 	struct sndstat_entry *pre;
-	const char *devtype;
-	int type, unit;
+	int unit;
 
 	unit = device_get_unit(dev);
-	devtype = device_get_name(dev);
-	if (!strcmp(devtype, "pcm"))
-		type = SS_TYPE_PCM;
-	else if (!strcmp(devtype, "midi"))
-		type = SS_TYPE_MIDI;
-	else
-		return (EINVAL);
 
 	ent = malloc(sizeof *ent, M_DEVBUF, M_WAITOK | M_ZERO);
 	ent->dev = dev;
@@ -1193,8 +1189,6 @@ sndstat_register(device_t dev, char *str)
 		TAILQ_INSERT_BEFORE(pre, ent, link);
 	}
 	SNDSTAT_UNLOCK();
-
-	return (0);
 }
 
 int
@@ -1330,25 +1324,25 @@ sndstat_prepare_pcm(struct sbuf *s, device_t dev, int verbose)
 			sbuf_printf(s, "%s", f->class->name);
 			if (f->class->type == FEEDER_FORMAT) {
 				sbuf_printf(s, "(0x%08x -> 0x%08x)",
-				    f->desc->in, f->desc->out);
+				    f->desc.in, f->desc.out);
 			} else if (f->class->type == FEEDER_MATRIX) {
 				sbuf_printf(s, "(%d.%d -> %d.%d)",
-				    AFMT_CHANNEL(f->desc->in) -
-				    AFMT_EXTCHANNEL(f->desc->in),
-				    AFMT_EXTCHANNEL(f->desc->in),
-				    AFMT_CHANNEL(f->desc->out) -
-				    AFMT_EXTCHANNEL(f->desc->out),
-				    AFMT_EXTCHANNEL(f->desc->out));
+				    AFMT_CHANNEL(f->desc.in) -
+				    AFMT_EXTCHANNEL(f->desc.in),
+				    AFMT_EXTCHANNEL(f->desc.in),
+				    AFMT_CHANNEL(f->desc.out) -
+				    AFMT_EXTCHANNEL(f->desc.out),
+				    AFMT_EXTCHANNEL(f->desc.out));
 			} else if (f->class->type == FEEDER_RATE) {
 				sbuf_printf(s,
 				    "(0x%08x q:%d %d -> %d)",
-				    f->desc->out,
+				    f->desc.out,
 				    FEEDER_GET(f, FEEDRATE_QUALITY),
 				    FEEDER_GET(f, FEEDRATE_SRC),
 				    FEEDER_GET(f, FEEDRATE_DST));
 			} else {
 				sbuf_printf(s, "(0x%08x)",
-				    f->desc->out);
+				    f->desc.out);
 			}
 			sbuf_printf(s, " -> ");
 			f = f->parent;
@@ -1386,20 +1380,24 @@ sndstat_prepare(struct sndstat_file *pf_self)
 	/* generate list of installed devices */
 	k = 0;
 	TAILQ_FOREACH(ent, &sndstat_devlist, link) {
-		d = device_get_softc(ent->dev);
-		if (!PCM_REGISTERED(d))
-			continue;
-		if (!k++)
-			sbuf_printf(s, "Installed devices:\n");
-		sbuf_printf(s, "%s:", device_get_nameunit(ent->dev));
-		sbuf_printf(s, " <%s>", device_get_desc(ent->dev));
-		if (snd_verbose > 0)
-			sbuf_printf(s, " %s", ent->str);
-		/* XXX Need Giant magic entry ??? */
-		PCM_ACQUIRE_QUICK(d);
-		sndstat_prepare_pcm(s, ent->dev, snd_verbose);
-		PCM_RELEASE_QUICK(d);
-		sbuf_printf(s, "\n");
+		if (ent->type == SNDST_TYPE_PCM) {
+			d = device_get_softc(ent->dev);
+			if (!PCM_REGISTERED(d))
+				continue;
+			if (!k++)
+				sbuf_printf(s, "Installed devices:\n");
+			sbuf_printf(s, "%s:", device_get_nameunit(ent->dev));
+			sbuf_printf(s, " <%s>", device_get_desc(ent->dev));
+			if (snd_verbose > 0)
+				sbuf_printf(s, " %s", ent->str);
+			/* XXX Need Giant magic entry ??? */
+			PCM_ACQUIRE_QUICK(d);
+			sndstat_prepare_pcm(s, ent->dev, snd_verbose);
+			PCM_RELEASE_QUICK(d);
+			sbuf_printf(s, "\n");
+		} else if (ent->type == SNDST_TYPE_MIDI) {
+			/* TODO */
+		}
 	}
 	if (k == 0)
 		sbuf_printf(s, "No devices installed.\n");
