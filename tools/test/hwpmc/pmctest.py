@@ -20,10 +20,12 @@
 # prompt would go to stdout you won't see it, just press return
 # to continue or Ctrl-D to stop.
 
+import sys
 import subprocess
 from subprocess import PIPE
 import argparse
 import tempfile
+from pathlib import Path
 
 def gather_counters():
     """Run program and return output as array of lines."""
@@ -40,7 +42,8 @@ def main():
     parser = argparse.ArgumentParser(description='Exercise a program under hwpmc')
     parser.add_argument('--program', type=str, required=True, help='target program')
     parser.add_argument('--wait', action='store_true', help='Wait after each counter.')
-    parser.add_argument('--exercise', action='store_true', help='Exercise the program being studied using sampling counters.')
+    parser.add_argument('--count', action='store_true', help='Exercise the program being studied using counting mode pmcs.')
+    parser.add_argument('--sample', action='store_true', help='Exercise the program being studied using sampling mode pmcs.')
 
     args = parser.parse_args()
 
@@ -50,21 +53,38 @@ def main():
         print("no counters found")
         sys.exit()
 
-    if args.exercise == True:
-        tmpdir = tempfile.mkdtemp()
+    if args.count == True and args.sample == True:
+        print("Choose one of --count OR --sample.")
+        sys.exit()
+
+    program = Path(args.program).name
+
+    if args.count == True:
+        tmpdir = tempfile.mkdtemp(prefix=program + "-", suffix="-counting-pmc")
+        print("Exercising program ", args.program, " storing results data in ", tmpdir)
+
+    if args.sample == True:
+        tmpdir = tempfile.mkdtemp(prefix=program + "-", suffix="-sampling-pmc")
         print("Exercising program ", args.program, " storing results data in ", tmpdir)
 
     for counter in counters:
         if counter in notcounter:
             continue
-        if args.exercise == True:
+        if args.count == True:
+            with open(tmpdir + "/" + program + "-" + counter + ".txt", 'w') as file:
+                p = subprocess.Popen(["pmcstat",
+                                      "-p", counter, args.program],
+                                     text=True, stderr=file, stdout=file)
+                result = p.communicate()[1]
+                print(result)
+        elif args.sample == True:
             p = subprocess.Popen(["pmcstat",
-                                  "-O", tmpdir + "/" + args.program + "-" + counter + ".pmc",
-                                  "-g",
+                                  "-O", tmpdir + "/" + program + "-" + counter + ".pmc",
                                   "-P", counter, args.program],
                                  text=True, stderr=PIPE)
             result = p.communicate()[1]
             print(result)
+
         else:
             p = subprocess.Popen(["pmcstat", "-p", counter, args.program],
                              text=True, stderr=PIPE)
