@@ -239,7 +239,8 @@ swap_release_by_cred_rlimit(u_long pdecr, struct ucred *cred)
 #ifdef INVARIANTS
 	prev = atomic_fetchadd_long(&uip->ui_vmsize, -pdecr);
 	KASSERT(prev >= pdecr,
-	    ("negative vmsize for uid %d\n", uip->ui_uid));
+	    ("negative vmsize for uid %d, prev %#jx decr %#jx\n",
+	    uip->ui_uid, (uintmax_t)prev, (uintmax_t)pdecr));
 #else
 	atomic_subtract_long(&uip->ui_vmsize, pdecr);
 #endif
@@ -329,7 +330,7 @@ out_error:
 }
 
 void
-swap_reserve_force(vm_ooffset_t incr)
+swap_reserve_force_by_cred(vm_ooffset_t incr, struct ucred *cred)
 {
 	u_long pincr;
 
@@ -345,7 +346,13 @@ swap_reserve_force(vm_ooffset_t incr)
 #endif
 	pincr = atop(incr);
 	atomic_add_long(&swap_reserved, pincr);
-	swap_reserve_force_rlimit(pincr, curthread->td_ucred);
+	swap_reserve_force_rlimit(pincr, cred);
+}
+
+void
+swap_reserve_force(vm_ooffset_t incr)
+{
+	swap_reserve_force_by_cred(incr, curthread->td_ucred);
 }
 
 void
@@ -373,7 +380,8 @@ swap_release_by_cred(vm_ooffset_t decr, struct ucred *cred)
 	pdecr = atop(decr);
 #ifdef INVARIANTS
 	prev = atomic_fetchadd_long(&swap_reserved, -pdecr);
-	KASSERT(prev >= pdecr, ("swap_reserved < decr"));
+	KASSERT(prev >= pdecr, ("swap_reserved %#jx < decr %#jx",
+	    (uintmax_t)prev, (uintmax_t)pdecr));
 #else
 	atomic_subtract_long(&swap_reserved, pdecr);
 #endif
@@ -776,10 +784,7 @@ swap_pager_init_object(vm_object_t object, void *handle, struct ucred *cred,
 
 	object->un_pager.swp.writemappings = 0;
 	object->handle = handle;
-	if (cred != NULL) {
-		object->cred = cred;
-		object->charge = size;
-	}
+	object->cred = cred;
 	return (true);
 }
 
@@ -892,8 +897,7 @@ swap_pager_dealloc(vm_object_t object)
 	 * Release the allocation charge.
 	 */
 	if (object->cred != NULL) {
-		swap_release_by_cred(object->charge, object->cred);
-		object->charge = 0;
+		swap_release_by_cred(ptoa(object->size), object->cred);
 		crfree(object->cred);
 		object->cred = NULL;
 	}
