@@ -1,7 +1,9 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
+ * Copyright (c) 2025 The FreeBSD Foundation
+ * Copyright (c) 2025 Jean-Sébastien Pédron
  *
- * Copyright (c) 2020 Val Packett
+ * This software was developed by Jean-Sébastien Pédron under sponsorship
+ * from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,35 +27,28 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _SYS_EVENTFD_H_
-#define _SYS_EVENTFD_H_
+#ifndef	_LINUXKPI_LINUX_EVENTFD_H_
+#define	_LINUXKPI_LINUX_EVENTFD_H_
 
-#include <sys/types.h>
+#include <sys/eventfd.h>
 
-typedef uint64_t eventfd_t;
+#include <linux/wait.h>
+#include <linux/err.h>
+#include <linux/percpu-defs.h>
+#include <linux/percpu.h>
+#include <linux/sched.h>
 
-#define	EFD_SEMAPHORE	0x00000001
-#define	EFD_NONBLOCK	0x00000004
-#define	EFD_CLOEXEC	0x00100000
+/*
+ * Linux uses `struct eventfd_ctx`, but FreeBSD defines `struct eventfd`. Here,
+ * we define a synonym to the FreeBSD structure. This allows to keep Linux code
+ * unmodified.
+ */
+#define	eventfd_ctx eventfd
 
-#ifdef _KERNEL
+#define	eventfd_ctx_fdget lkpi_eventfd_ctx_fdget
+struct eventfd_ctx *lkpi_eventfd_ctx_fdget(int fd);
 
-struct eventfd;
+#define	eventfd_ctx_put lkpi_eventfd_ctx_put
+void lkpi_eventfd_ctx_put(struct eventfd_ctx *ctx);
 
-int eventfd_create_file(struct thread *td, struct file *fp, uint32_t initval,
-    int flags);
-struct eventfd *eventfd_get(struct file *fp);
-void eventfd_put(struct eventfd *efd);
-void eventfd_signal(struct eventfd *efd);
-
-#else
-
-__BEGIN_DECLS
-int eventfd(unsigned int initval, int flags);
-int eventfd_read(int fd, eventfd_t *value);
-int eventfd_write(int fd, eventfd_t value);
-__END_DECLS
-
-#endif /* !_KERNEL */
-
-#endif /* !_SYS_EVENTFD_H_ */
+#endif /* _LINUXKPI_LINUX_EVENTFD_H_ */

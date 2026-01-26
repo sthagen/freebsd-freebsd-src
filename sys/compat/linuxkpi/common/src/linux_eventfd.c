@@ -1,7 +1,9 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause
+ * Copyright (c) 2025 The FreeBSD Foundation
+ * Copyright (c) 2025 Jean-Sébastien Pédron
  *
- * Copyright (c) 2020 Val Packett
+ * This software was developed by Jean-Sébastien Pédron under sponsorship
+ * from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,35 +27,37 @@
  * SUCH DAMAGE.
  */
 
-#ifndef _SYS_EVENTFD_H_
-#define _SYS_EVENTFD_H_
+#include <sys/param.h>
+#include <sys/file.h>
+#include <sys/filedesc.h>
 
-#include <sys/types.h>
+#include <linux/eventfd.h>
 
-typedef uint64_t eventfd_t;
+struct eventfd_ctx *
+lkpi_eventfd_ctx_fdget(int fd)
+{
+	struct file *fp;
+	struct eventfd_ctx *ctx;
 
-#define	EFD_SEMAPHORE	0x00000001
-#define	EFD_NONBLOCK	0x00000004
-#define	EFD_CLOEXEC	0x00100000
+	/* Lookup file pointer by file descriptor index. */
+	if (fget_unlocked(curthread, fd, &cap_no_rights, &fp) != 0)
+		return (ERR_PTR(-EBADF));
 
-#ifdef _KERNEL
+	/*
+	 * eventfd_get() bumps the refcount, so we can safely release the
+	 * reference on the file itself afterwards.
+	 */
+	ctx = eventfd_get(fp);
+	fdrop(fp, curthread);
 
-struct eventfd;
+	if (ctx == NULL)
+		return (ERR_PTR(-EBADF));
 
-int eventfd_create_file(struct thread *td, struct file *fp, uint32_t initval,
-    int flags);
-struct eventfd *eventfd_get(struct file *fp);
-void eventfd_put(struct eventfd *efd);
-void eventfd_signal(struct eventfd *efd);
+	return (ctx);
+}
 
-#else
-
-__BEGIN_DECLS
-int eventfd(unsigned int initval, int flags);
-int eventfd_read(int fd, eventfd_t *value);
-int eventfd_write(int fd, eventfd_t value);
-__END_DECLS
-
-#endif /* !_KERNEL */
-
-#endif /* !_SYS_EVENTFD_H_ */
+void
+lkpi_eventfd_ctx_put(struct eventfd_ctx *ctx)
+{
+	eventfd_put(ctx);
+}
