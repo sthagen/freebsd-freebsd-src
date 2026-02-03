@@ -748,10 +748,13 @@ OLD_FILES+=usr/share/snmp/mibs/BRIDGE-MIB.txt
 OLD_FILES+=usr/share/snmp/mibs/FOKUS-MIB.txt
 OLD_FILES+=usr/share/snmp/mibs/FREEBSD-MIB.txt
 OLD_FILES+=usr/share/snmp/mibs/RSTP-MIB.txt
+OLD_FILES+=usr/tests/lib/libbsnmp/bsnmpd_test
+OLD_FILES+=usr/tests/lib/libbsnmp/Kyuafile
 OLD_DIRS+=usr/include/bsnmp
 OLD_DIRS+=usr/share/snmp
 OLD_DIRS+=usr/share/snmp/defs
 OLD_DIRS+=usr/share/snmp/mibs
+OLD_DIRS+=usr/tests/lib/libbsnmp
 .endif
 
 .if ${MK_CALENDAR} == no
@@ -2146,6 +2149,10 @@ OLD_FILES+=usr/share/man/man6/random.6.gz
 OLD_FILES+=usr/share/man/man6/rot13.6.gz
 OLD_FILES+=usr/share/man/man8/strfile.8.gz
 OLD_FILES+=usr/share/man/man8/unstr.8.gz
+OLD_FILES+=usr/tests/usr.bin/factor/factor_tests
+OLD_FILES+=usr/tests/usr.bin/factor/primes_tests
+OLD_FILES+=usr/tests/usr.bin/factor/Kyuafile
+OLD_DIRS+=usr/tests/usr.bin/factor
 .endif
 
 .if ${MK_GOOGLETEST} == no
@@ -8357,6 +8364,12 @@ OLD_FILES+=usr/bin/tftp
 OLD_FILES+=usr/libexec/tftpd
 OLD_FILES+=usr/share/man/man1/tftp.1.gz
 OLD_FILES+=usr/share/man/man8/tftpd.8.gz
+OLD_FILES+=usr/tests/libexec/tftpd/functional
+OLD_FILES+=usr/tests/libexec/tftpd/Kyuafile
+OLD_FILES+=usr/tests/usr.bin/tftp/tftp_test
+OLD_FILES+=usr/tests/usr.bin/tftp/Kyuafile
+OLD_DIRS+=usr/tests/libexec/tftpd
+OLD_DIRS+=usr/tests/usr.bin/tftp
 .endif
 
 .if ${MK_TOOLCHAIN} == no
