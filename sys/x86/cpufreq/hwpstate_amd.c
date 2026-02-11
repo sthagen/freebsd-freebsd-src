@@ -9,6 +9,11 @@
  * Copyright (c) 2009 Norikatsu Shigemura
  * Copyright (c) 2008-2009 Gen Otsuji
  * Copyright (c) 2025 ShengYi Hung
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * Portions of this software were developed by Olivier Certner
+ * <olce@FreeBSD.org> at Kumacom SARL under sponsorship from the FreeBSD
+ * Foundation.
  *
  * This code is depending on kern_cpu.c, est.c, powernow.c, p4tcc.c, smist.c
  * in various parts. The authors of these files are Nate Lawson,
@@ -52,17 +57,17 @@
 #include <sys/bus.h>
 #include <sys/cpu.h>
 #include <sys/kernel.h>
-#include <sys/module.h>
 #include <sys/malloc.h>
-#include <sys/proc.h>
+#include <sys/module.h>
 #include <sys/pcpu.h>
+#include <sys/proc.h>
 #include <sys/sbuf.h>
-#include <sys/smp.h>
 #include <sys/sched.h>
+#include <sys/smp.h>
 
 #include <machine/_inttypes.h>
-#include <machine/md_var.h>
 #include <machine/cputypes.h>
+#include <machine/md_var.h>
 #include <machine/specialreg.h>
 
 #include <contrib/dev/acpica/include/acpi.h>
@@ -73,6 +78,7 @@
 
 #include "acpi_if.h"
 #include "cpufreq_if.h"
+
 
 #define	MSR_AMD_10H_11H_LIMIT	0xc0010061
 #define	MSR_AMD_10H_11H_CONTROL	0xc0010062
@@ -86,6 +92,7 @@
 #define	MSR_AMD_CPPC_STATUS	0xc00102b4
 
 #define	MSR_AMD_CPPC_CAPS_1_NAME	"CPPC_CAPABILITY_1"
+#define	MSR_AMD_CPPC_ENABLE_NAME	"CPPC_ENABLE"
 #define	MSR_AMD_CPPC_REQUEST_NAME	"CPPC_REQUEST"
 
 #define	MSR_AMD_PWR_ACC		0xc001007a
@@ -142,10 +149,14 @@ struct hwpstate_setting {
 	int	pstate_id;	/* P-State id */
 };
 
-enum hwpstate_flags {
-	PSTATE_CPPC = 1,
-};
+#define HWPFL_USE_CPPC		(1 << 0)
 
+/*
+ * Atomicity is achieved by only modifying a given softc on its associated CPU
+ * and with interrupts disabled.
+ *
+ * XXX - Only the CPPC support complies at the moment.
+ */
 struct hwpstate_softc {
 	device_t	dev;
 	u_int		flags;
@@ -185,7 +196,7 @@ SYSCTL_BOOL(_debug, OID_AUTO, hwpstate_pstate_limit, CTLFLAG_RWTUN,
     "If enabled (1), limit administrative control of P-states to the value in "
     "CurPstateLimit");
 
-static bool hwpstate_amd_cppc_enable = true;
+static bool	hwpstate_amd_cppc_enable = true;
 SYSCTL_BOOL(_machdep, OID_AUTO, hwpstate_amd_cppc_enable, CTLFLAG_RDTUN,
     &hwpstate_amd_cppc_enable, 0,
     "Set 1 (default) to enable AMD CPPC, 0 to disable");
@@ -210,18 +221,11 @@ static device_method_t hwpstate_methods[] = {
 };
 
 static inline void
-check_cppc_enabled(const struct hwpstate_softc *const sc, const char *const func)
+check_cppc_in_use(const struct hwpstate_softc *const sc, const char *const func)
 {
-	KASSERT((sc->flags & PSTATE_CPPC) != 0, (HWP_AMD_CLASSNAME
-	    ": %s() called but PSTATE_CPPC not set", func));
+	KASSERT((sc->flags & HWPFL_USE_CPPC) != 0, (HWP_AMD_CLASSNAME
+	    ": %s() called but HWPFL_USE_CPPC not set", func));
 }
-
-struct get_cppc_regs_data {
-	uint64_t enable;
-	uint64_t caps;
-	uint64_t req;
-	int res;
-};
 
 static void
 print_msr_bits(struct sbuf *const sb, const char *const legend,
@@ -245,6 +249,14 @@ print_cppc_caps_1(struct sbuf *const sb, const uint64_t caps)
 	    AMD_CPPC_CAPS_1_LOWEST_PERF_BITS, caps);
 }
 
+#define MSR_NOT_READ_MSG	"Not read (fault or previous errors)"
+
+static void
+print_cppc_no_caps_1(struct sbuf *const sb)
+{
+	sbuf_printf(sb, MSR_AMD_CPPC_CAPS_1_NAME ": " MSR_NOT_READ_MSG "\n");
+}
+
 static void
 print_cppc_request(struct sbuf *const sb, const uint64_t request)
 {
@@ -261,121 +273,182 @@ print_cppc_request(struct sbuf *const sb, const uint64_t request)
 }
 
 static void
+print_cppc_no_request(struct sbuf *const sb)
+{
+	sbuf_printf(sb, MSR_AMD_CPPC_REQUEST_NAME ": " MSR_NOT_READ_MSG "\n");
+}
+
+/*
+ * Internal errors conveyed by code executing on another CPU.
+ */
+#define HWP_ERROR_CPPC_ENABLE		(1 << 0)
+#define HWP_ERROR_CPPC_CAPS		(1 << 1)
+#define HWP_ERROR_CPPC_REQUEST		(1 << 2)
+#define HWP_ERROR_CPPC_REQUEST_WRITE	(1 << 3)
+
+static inline bool
+hwp_has_error(u_int res, u_int err)
+{
+	return ((res & err) != 0);
+}
+
+struct get_cppc_regs_data {
+	uint64_t enable;
+	uint64_t caps;
+	uint64_t req;
+	/* HWP_ERROR_CPPC_* except HWP_ERROR_*_WRITE */
+	u_int res;
+};
+
+static void
 get_cppc_regs_cb(void *args)
 {
 	struct get_cppc_regs_data *data = args;
+	int error;
 
-	data->res = rdmsr_safe(MSR_AMD_CPPC_ENABLE, &data->enable);
-	if (data->res == 0)
-		data->res = rdmsr_safe(MSR_AMD_CPPC_CAPS_1, &data->caps);
-	if (data->res == 0)
-		data->res = rdmsr_safe(MSR_AMD_CPPC_REQUEST, &data->req);
+	data->res = 0;
+
+	error = rdmsr_safe(MSR_AMD_CPPC_ENABLE, &data->enable);
+	if (error != 0)
+		data->res |= HWP_ERROR_CPPC_ENABLE;
+
+	error = rdmsr_safe(MSR_AMD_CPPC_CAPS_1, &data->caps);
+	if (error != 0)
+		data->res |= HWP_ERROR_CPPC_CAPS;
+
+	error = rdmsr_safe(MSR_AMD_CPPC_REQUEST, &data->req);
+	if (error != 0)
+		data->res |= HWP_ERROR_CPPC_REQUEST;
 }
 
 static int
 sysctl_cppc_dump_handler(SYSCTL_HANDLER_ARGS)
 {
-	device_t dev;
-	struct pcpu *pc;
+	const struct hwpstate_softc *const sc = arg1;
+	const device_t dev = sc->dev;
+	const u_int cpuid = cpu_get_pcpu(dev)->pc_cpuid;
 	struct sbuf *sb;
-	struct hwpstate_softc *sc;
-	struct get_cppc_regs_data request;
-	uint64_t data;
-	int ret;
+	struct sbuf sbs;
+	struct get_cppc_regs_data data;
+	int error;
 
-	sc = (struct hwpstate_softc *)arg1;
-	/* Sysctl knob does not exist if PSTATE_CPPC is not set. */
-	check_cppc_enabled(sc, __func__);
+	/* Sysctl knob does not exist if HWPFL_USE_CPPC is not set. */
+	check_cppc_in_use(sc, __func__);
 
-	dev = sc->dev;
-	pc = cpu_get_pcpu(dev);
-	if (pc == NULL)
-		return (ENXIO);
+	sb = sbuf_new_for_sysctl(&sbs, NULL, 0, req);
 
-	sb = sbuf_new(NULL, NULL, 1024, SBUF_FIXEDLEN | SBUF_INCLUDENUL);
-	sbuf_putc(sb, '\n');
-	smp_rendezvous_cpu(pc->pc_cpuid, smp_no_rendezvous_barrier,
-	    get_cppc_regs_cb, smp_no_rendezvous_barrier, &request);
-	ret = request.res;
-	if (ret)
-		goto out;
+	smp_rendezvous_cpu(cpuid, smp_no_rendezvous_barrier, get_cppc_regs_cb,
+	    smp_no_rendezvous_barrier, &data);
 
-	data = request.enable;
-	sbuf_printf(sb, "CPU%d: HWP %sabled\n", pc->pc_cpuid,
-	    ((data & 1) ? "En" : "Dis"));
-	if (data == 0)
-		goto out;
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_ENABLE))
+		sbuf_printf(sb, "CPU%u: " MSR_AMD_CPPC_ENABLE_NAME ": "
+		    MSR_NOT_READ_MSG "\n", cpuid);
+	else
+		sbuf_printf(sb, "CPU%u: HWP %sabled (" MSR_AMD_CPPC_REQUEST_NAME
+		    ": %#" PRIx64 ")\n", cpuid, data.enable & 1 ? "En" : "Dis",
+		    data.enable);
 
-	data = request.caps;
-	print_cppc_caps_1(sb, data);
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_CAPS))
+		print_cppc_no_caps_1(sb);
+	else
+		print_cppc_caps_1(sb, data.caps);
 
-	data = request.req;
-	print_cppc_request(sb, data);
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_REQUEST))
+		print_cppc_no_request(sb);
+	else
+		print_cppc_request(sb, data.req);
 
-out:
-	if (ret == 0)
-		ret = sbuf_finish(sb);
-	if (ret == 0)
-		ret = SYSCTL_OUT(req, sbuf_data(sb), sbuf_len(sb));
+	error = sbuf_finish(sb);
 	sbuf_delete(sb);
 
-	return (ret);
+	return (error);
 }
 
-static void
-set_epp(device_t hwp_device, u_int val)
-{
-	struct hwpstate_softc *sc;
 
-	sc = device_get_softc(hwp_device);
-	if (BITS_VALUE(AMD_CPPC_REQUEST_EPP_BITS, sc->cppc.request) == val)
-		return;
-	SET_BITS_VALUE(sc->cppc.request, AMD_CPPC_REQUEST_EPP_BITS, val);
-	x86_msr_op(MSR_AMD_CPPC_REQUEST,
-	    MSR_OP_RENDEZVOUS_ONE | MSR_OP_WRITE |
-		MSR_OP_CPUID(cpu_get_pcpu(hwp_device)->pc_cpuid),
-	    sc->cppc.request, NULL);
+struct set_cppc_request_cb {
+	struct hwpstate_softc	*sc;
+	uint64_t		 request;
+	uint64_t		 mask;
+	int			 res; /* 0 or HWP_ERROR_CPPC_REQUEST_WRITE */
+};
+
+static void
+set_cppc_request_cb(void *args)
+{
+	struct set_cppc_request_cb *const data = args;
+	uint64_t *const req = &data->sc->cppc.request;
+	int error;
+
+	*req &= ~data->mask;
+	*req |= data->request & data->mask;
+
+	error = wrmsr_safe(MSR_AMD_CPPC_REQUEST, *req);
+	data->res = error == 0 ? 0 : HWP_ERROR_CPPC_REQUEST_WRITE;
+}
+
+static inline void
+set_cppc_request_send_one(struct set_cppc_request_cb *const data, device_t dev)
+{
+	const u_int cpuid = cpu_get_pcpu(dev)->pc_cpuid;
+
+	data->sc = device_get_softc(dev);
+	smp_rendezvous_cpu(cpuid, smp_no_rendezvous_barrier,
+	    set_cppc_request_cb, smp_no_rendezvous_barrier, data);
 }
 
 static int
-sysctl_epp_handler(SYSCTL_HANDLER_ARGS)
+set_cppc_request(device_t hwp_dev, uint64_t request, uint64_t mask)
 {
-	device_t dev, hwp_dev;
-	devclass_t dc;
-	struct hwpstate_softc *sc;
-	const u_int max_epp =
-	    BITS_VALUE(AMD_CPPC_REQUEST_EPP_BITS, (uint64_t)-1);
-	u_int val;
-	int error = 0;
-	int cpu;
-
-	dev = oidp->oid_arg1;
-	sc = device_get_softc(dev);
-
-	/* Sysctl knob does not exist if PSTATE_CPPC is not set. */
-	check_cppc_enabled(sc, __func__);
-
-	val = BITS_VALUE(AMD_CPPC_REQUEST_EPP_BITS, sc->cppc.request) * 100 /
-	    max_epp;
-	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error != 0 || req->newptr == NULL)
-		goto end;
-	if (val > 100) {
-		error = EINVAL;
-		goto end;
-	}
-	val = (val * max_epp) / 100;
+	struct set_cppc_request_cb data = {
+		.request = request,
+		.mask = mask,
+		/* 'sc' filled by set_cppc_request_send_one(). */
+	};
+	int error;
 
 	if (hwpstate_pkg_ctrl_enable) {
-		dc = devclass_find(HWP_AMD_CLASSNAME);
-		CPU_FOREACH(cpu) {
-			hwp_dev = devclass_get_device(dc, cpu);
-			set_epp(hwp_dev, val);
-		}
-	} else
-		set_epp(dev, val);
+		const devclass_t dc = devclass_find(HWP_AMD_CLASSNAME);
+		const int units = devclass_get_maxunit(dc);
 
-end:
+		error = 0;
+		for (int i = 0; i < units; ++i) {
+			const device_t dev = devclass_get_device(dc, i);
+
+			set_cppc_request_send_one(&data, dev);
+			if (data.res != 0)
+				/* Note the error, but continue. */
+				error = EFAULT;
+		}
+	} else {
+		set_cppc_request_send_one(&data, hwp_dev);
+		error = data.res != 0 ? EFAULT : 0;
+	}
+
+	return (error);
+}
+
+static int
+sysctl_cppc_request_field_handler(SYSCTL_HANDLER_ARGS)
+{
+	const u_int max = BITS_VALUE(arg2, (uint64_t)-1);
+	const device_t dev = arg1;
+	struct hwpstate_softc *const sc = device_get_softc(dev);
+	u_int val;
+	int error;
+
+	/* Sysctl knob does not exist if HWPFL_USE_CPPC is not set. */
+	check_cppc_in_use(sc, __func__);
+
+	val = BITS_VALUE(arg2, sc->cppc.request);
+
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	if (val > max)
+		return (EINVAL);
+	error = set_cppc_request(dev, BITS_WITH_VALUE(arg2, val),
+	    BITS_WITH_VALUE(arg2, -1));
 	return (error);
 }
 
@@ -489,7 +562,7 @@ hwpstate_set(device_t dev, const struct cf_setting *cf)
 	if (cf == NULL)
 		return (EINVAL);
 	sc = device_get_softc(dev);
-	if (sc->flags & PSTATE_CPPC)
+	if ((sc->flags & HWPFL_USE_CPPC) != 0)
 		return (EOPNOTSUPP);
 	set = sc->hwpstate_settings;
 	for (i = 0; i < sc->cfnum; i++)
@@ -515,7 +588,7 @@ hwpstate_get(device_t dev, struct cf_setting *cf)
 	if (cf == NULL)
 		return (EINVAL);
 
-	if (sc->flags & PSTATE_CPPC) {
+	if ((sc->flags & HWPFL_USE_CPPC) != 0) {
 		pc = cpu_get_pcpu(dev);
 		if (pc == NULL)
 			return (ENXIO);
@@ -551,7 +624,7 @@ hwpstate_settings(device_t dev, struct cf_setting *sets, int *count)
 	if (sets == NULL || count == NULL)
 		return (EINVAL);
 	sc = device_get_softc(dev);
-	if (sc->flags & PSTATE_CPPC)
+	if ((sc->flags & HWPFL_USE_CPPC) != 0)
 		return (EOPNOTSUPP);
 
 	if (*count < sc->cfnum)
@@ -579,7 +652,7 @@ hwpstate_type(device_t dev, int *type)
 	sc = device_get_softc(dev);
 
 	*type = CPUFREQ_TYPE_ABSOLUTE;
-	*type |= sc->flags & PSTATE_CPPC ?
+	*type |= (sc->flags & HWPFL_USE_CPPC) != 0 ?
 	    CPUFREQ_FLAG_INFO_ONLY | CPUFREQ_FLAG_UNCACHED :
 	    0;
 	return (0);
@@ -612,46 +685,46 @@ hwpstate_identify(driver_t *driver, device_t parent)
 		device_printf(parent, "hwpstate: add child failed\n");
 }
 
-struct amd_set_autonomous_hwp_request {
-	device_t dev;
-	int res;
+struct set_autonomous_hwp_data {
+	/* Inputs */
+	struct hwpstate_softc *sc;
+	/* Outputs */
+	/* HWP_ERROR_CPPC_* */
+	u_int res;
+	/* Below fields filled depending on 'res'. */
+	uint64_t caps;
+	uint64_t init_request;
+	uint64_t request;
 };
 
 static void
-amd_set_autonomous_hwp_cb(void *args)
+enable_cppc_cb(void *args)
 {
-	struct hwpstate_softc *sc;
-	struct amd_set_autonomous_hwp_request *req =
-	    (struct amd_set_autonomous_hwp_request *)args;
-	device_t dev;
-	uint64_t caps;
-	int ret;
+	struct set_autonomous_hwp_data *const data = args;
+	struct hwpstate_softc *const sc = data->sc;
+	uint64_t lowest_perf, highest_perf;
+	int error;
 
-	dev = req->dev;
-	sc = device_get_softc(dev);
-	ret = wrmsr_safe(MSR_AMD_CPPC_ENABLE, 1);
-	if (ret != 0) {
-		device_printf(dev, "Failed to enable cppc for cpu%d (%d)\n",
-		    curcpu, ret);
-		req->res = ret;
-	}
+	/* We proceed sequentially, so we'll clear out errors on progress. */
+	data->res = HWP_ERROR_CPPC_ENABLE | HWP_ERROR_CPPC_CAPS |
+	    HWP_ERROR_CPPC_REQUEST | HWP_ERROR_CPPC_REQUEST_WRITE;
 
-	ret = rdmsr_safe(MSR_AMD_CPPC_REQUEST, &sc->cppc.request);
-	if (ret != 0) {
-		device_printf(dev,
-		    "Failed to read CPPC request MSR for cpu%d (%d)\n", curcpu,
-		    ret);
-		req->res = ret;
-	}
-
-	ret = rdmsr_safe(MSR_AMD_CPPC_CAPS_1, &caps);
-	if (ret != 0) {
-		device_printf(dev,
-		    "Failed to read HWP capabilities MSR for cpu%d (%d)\n",
-		    curcpu, ret);
-		req->res = ret;
+	error = wrmsr_safe(MSR_AMD_CPPC_ENABLE, 1);
+	if (error != 0)
 		return;
-	}
+	data->res &= ~HWP_ERROR_CPPC_ENABLE;
+
+	error = rdmsr_safe(MSR_AMD_CPPC_CAPS_1, &data->caps);
+	if (error != 0)
+		return;
+	data->res &= ~HWP_ERROR_CPPC_CAPS;
+
+	error = rdmsr_safe(MSR_AMD_CPPC_REQUEST, &sc->cppc.request);
+	if (error != 0)
+		return;
+	data->res &= ~HWP_ERROR_CPPC_REQUEST;
+	/* The CPPC_REQUEST value before we tweak it. */
+	data->init_request = sc->cppc.request;
 
 	/*
 	 * In Intel's reference manual, the default value of EPP is 0x80u which
@@ -659,36 +732,90 @@ amd_set_autonomous_hwp_cb(void *args)
 	 * CPPC driver.
 	 */
 	SET_BITS_VALUE(sc->cppc.request, AMD_CPPC_REQUEST_EPP_BITS, 0x80);
-	SET_BITS_VALUE(sc->cppc.request, AMD_CPPC_REQUEST_MIN_PERF_BITS,
-	    BITS_VALUE(AMD_CPPC_CAPS_1_LOWEST_PERF_BITS, caps));
-	SET_BITS_VALUE(sc->cppc.request, AMD_CPPC_REQUEST_MAX_PERF_BITS,
-	    BITS_VALUE(AMD_CPPC_CAPS_1_HIGHEST_PERF_BITS, caps));
-	/* enable autonomous mode by setting desired performance to 0 */
+
+	/* Enable autonomous mode by setting desired performance to 0. */
 	SET_BITS_VALUE(sc->cppc.request, AMD_CPPC_REQUEST_DES_PERF_BITS, 0);
 
-	ret = wrmsr_safe(MSR_AMD_CPPC_REQUEST, sc->cppc.request);
-	if (ret) {
-		device_printf(dev, "Failed to setup autonomous HWP for cpu%d\n",
-		    curcpu);
-		req->res = ret;
-		return;
+	/*
+	 * When MSR_AMD_CPPC_CAPS_1 stays at its reset value (0) before CPPC
+	 * activation (not supposed to happen, but happens in the field), we use
+	 * reasonable default values that are explicitly described by the ACPI
+	 * spec (all 0s for the minimum value, all 1s for the maximum one).
+	 * Going further, we actually do the same as long as the minimum and
+	 * maximum performance levels are not sorted or are equal (in which case
+	 * CPPC is not supposed to make sense at all), which covers the reset
+	 * value case.
+	 */
+	lowest_perf = BITS_VALUE(AMD_CPPC_CAPS_1_LOWEST_PERF_BITS, data->caps);
+	highest_perf = BITS_VALUE(AMD_CPPC_CAPS_1_HIGHEST_PERF_BITS, data->caps);
+	if (lowest_perf >= highest_perf) {
+		lowest_perf = 0;
+		highest_perf = -1;
 	}
-	req->res = 0;
+	SET_BITS_VALUE(sc->cppc.request, AMD_CPPC_REQUEST_MIN_PERF_BITS,
+	    lowest_perf);
+	SET_BITS_VALUE(sc->cppc.request, AMD_CPPC_REQUEST_MAX_PERF_BITS,
+	    highest_perf);
+
+	error = wrmsr_safe(MSR_AMD_CPPC_REQUEST, sc->cppc.request);
+	if (error != 0)
+		return;
+	data->res &= ~HWP_ERROR_CPPC_REQUEST_WRITE;
+	data->request = sc->cppc.request;
 }
 
 static int
-amd_set_autonomous_hwp(struct hwpstate_softc *sc)
+enable_cppc(struct hwpstate_softc *sc)
 {
-	struct amd_set_autonomous_hwp_request req;
-	device_t dev;
+	const device_t dev = sc->dev;
+	const u_int cpuid = cpu_get_pcpu(dev)->pc_cpuid;
+	struct set_autonomous_hwp_data data;
+	struct sbuf sbs;
+	struct sbuf *sb;
 
-	dev = sc->dev;
-	req.dev = dev;
-	smp_rendezvous_cpu(cpu_get_pcpu(dev)->pc_cpuid,
-	    smp_no_rendezvous_barrier, amd_set_autonomous_hwp_cb,
-	    smp_no_rendezvous_barrier, &req);
+	data.sc = sc;
+	smp_rendezvous_cpu(cpuid, smp_no_rendezvous_barrier,
+	    enable_cppc_cb, smp_no_rendezvous_barrier, &data);
 
-	return (req.res);
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_ENABLE)) {
+		device_printf(dev, "CPU%u: Failed to enable CPPC!\n", cpuid);
+		return (ENXIO);
+	}
+	device_printf(dev, "CPU%u: CPPC enabled.\n", cpuid);
+
+	/*
+	 * Now that we have enabled CPPC, we can't go back, so we'll attach even
+	 * in case of further malfunction, allowing the user to retry setting
+	 * CPPC_REQUEST via the sysctl knobs.
+	 */
+
+	sb = sbuf_new(&sbs, NULL, 0, SBUF_AUTOEXTEND);
+
+	if (hwpstate_verbose)
+		sbuf_printf(sb,
+		    "CPU%u: Initial MSR values after CPPC enable:\n", cpuid);
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_CAPS))
+		print_cppc_no_caps_1(sb);
+	else if (hwpstate_verbose)
+		print_cppc_caps_1(sb, data.caps);
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_REQUEST))
+		print_cppc_no_request(sb);
+	else if (hwpstate_verbose)
+		print_cppc_request(sb, data.init_request);
+	if (hwp_has_error(data.res, HWP_ERROR_CPPC_REQUEST_WRITE))
+		device_printf(dev, "CPU%u: Could not write into "
+		    MSR_AMD_CPPC_REQUEST_NAME "!\n",
+		    cpuid);
+	else if (hwpstate_verbose) {
+		sbuf_printf(sb, "CPU%u: Tweaked MSR values:\n", cpuid);
+		print_cppc_request(sb, data.request);
+	}
+
+	sbuf_finish(sb);
+	sbuf_putbuf(sb);
+	sbuf_delete(sb);
+
+	return (0);
 }
 
 static int
@@ -703,7 +830,7 @@ hwpstate_probe(device_t dev)
 
 	if (hwpstate_amd_cppc_enable &&
 	   (amd_extended_feature_extensions & AMDFEID_CPPC)) {
-		sc->flags |= PSTATE_CPPC;
+		sc->flags |= HWPFL_USE_CPPC;
 		device_set_desc(dev,
 		    "AMD Collaborative Processor Performance Control (CPPC)");
 	} else {
@@ -717,7 +844,7 @@ hwpstate_probe(device_t dev)
 	}
 
 	sc->dev = dev;
-	if (sc->flags & PSTATE_CPPC)
+	if ((sc->flags & HWPFL_USE_CPPC) != 0)
 		return (0);
 
 	/*
@@ -780,8 +907,8 @@ hwpstate_attach(device_t dev)
 	int res;
 
 	sc = device_get_softc(dev);
-	if ((sc->flags & PSTATE_CPPC) != 0) {
-		if ((res = amd_set_autonomous_hwp(sc)))
+	if ((sc->flags & HWPFL_USE_CPPC) != 0) {
+		if ((res = enable_cppc(sc)) != 0)
 			return (res);
 		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
 		    SYSCTL_STATIC_CHILDREN(_debug), OID_AUTO,
@@ -791,10 +918,42 @@ hwpstate_attach(device_t dev)
 
 		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
 		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "epp", CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE, dev, 0,
-		    sysctl_epp_handler, "IU",
-		    "Efficiency/Performance Preference "
-		    "(range from 0, most performant, through 100, most efficient)");
+		    "epp", CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE,
+		    dev, AMD_CPPC_REQUEST_EPP_BITS,
+		    sysctl_cppc_request_field_handler, "IU",
+		    "Efficiency/Performance Preference (from 0, "
+		    "most performant, to 255, most efficient)");
+
+		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
+		    "minimum_performance",
+		    CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE,
+		    dev, AMD_CPPC_REQUEST_MIN_PERF_BITS,
+		    sysctl_cppc_request_field_handler, "IU",
+		    "Minimum allowed performance level (from 0 to 255; "
+		    "should be smaller than 'maximum_performance'; "
+		    "effective range limited by CPU)");
+
+		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
+		    "maximum_performance",
+		    CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE,
+		    dev, AMD_CPPC_REQUEST_MAX_PERF_BITS,
+		    sysctl_cppc_request_field_handler, "IU",
+		    "Maximum allowed performance level (from 0 to 255; "
+		    "should be larger than 'minimum_performance'; "
+		    "effective range limited by CPU)");
+
+		SYSCTL_ADD_PROC(device_get_sysctl_ctx(dev),
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
+		    "desired_performance",
+		    CTLTYPE_UINT | CTLFLAG_RWTUN | CTLFLAG_MPSAFE,
+		    dev, AMD_CPPC_REQUEST_DES_PERF_BITS,
+		    sysctl_cppc_request_field_handler, "IU",
+		    "Desired performance level (from 0 to 255, "
+		    "0 enables autonomous mode, otherwise value should be "
+		    "between 'minimum_performance' and 'maximum_performance' "
+		    "inclusive)");
 	}
 	return (cpufreq_register(dev));
 }
@@ -942,7 +1101,7 @@ hwpstate_detach(device_t dev)
 	struct hwpstate_softc *sc;
 
 	sc = device_get_softc(dev);
-	if (!(sc->flags & PSTATE_CPPC))
+	if ((sc->flags & HWPFL_USE_CPPC) == 0)
 		hwpstate_goto_pstate(dev, 0);
 	return (cpufreq_unregister(dev));
 }

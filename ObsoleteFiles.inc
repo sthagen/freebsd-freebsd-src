@@ -51,6 +51,14 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260209: Moved allwinner pages to share/man/man4
+OLD_FILES+=usr/share/man/man4/arm/aw_gpio.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_mmc.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_rtc.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_sid.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_spi.4.gz
+OLD_FILES+=usr/share/man/man4/arm/aw_syscon.4.gz
+
 # 20260204: replaced with ATF test
 OLD_FILES+=usr/tests/usr.bin/m4/legacy_test
 OLD_FILES+=usr/tests/usr.bin/m4/regress.sh
@@ -104,7 +112,7 @@ OLD_FILES+=usr/tests/cddl/lib/libtpool/libtpool_test
 OLD_FILES+=usr/tests/cddl/lib/libtpool/Kyuafile
 
 # 20251204: zpfind.9 alias to pfind.9 removed
-OLD_FILES+=usr/share/man/man9/zpfind.9
+OLD_FILES+=usr/share/man/man9/zpfind.9.gz
 
 # 20251121: Remove duplicate pam_krb5 manual page
 OLD_FILES+=usr/share/man/man8/pam-krb5.8.gz
@@ -2015,8 +2023,9 @@ OLD_FILES+=usr/share/examples/diskless/README.BOOTP
 OLD_FILES+=usr/share/examples/diskless/README.TEMPLATING
 OLD_FILES+=usr/share/examples/diskless/clone_root
 
-# 20230905
+# 20230905: Removed rtw8x firmware files from src.git
 OLD_FILES+=usr/share/doc/legal/realtek_rtw88_firmware.LICENCE
+OLD_FILES+=usr/share/man/man4/rtw88fw.4.gz
 
 # 20230828
 MOVED_LIBS+=usr/lib/librt.so.1
