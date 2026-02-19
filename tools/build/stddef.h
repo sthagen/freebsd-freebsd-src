@@ -1,8 +1,19 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2018 iXsystems, Inc.
- * All rights reserved.
+ * Copyright 2018-2020 Alex Richardson <arichardson@FreeBSD.org>
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory (Department of Computer Science and
+ * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
+ * DARPA SSITH research programme.
+ *
+ * This software was developed by SRI International and the University of
+ * Cambridge Computer Laboratory under DARPA/AFRL contract (FA8750-10-C-0237)
+ * ("CTSRD"), as part of the DARPA CRASH research programme.
+ *
+ * This work was supported by Innovate UK project 105694, "Digital Security by
+ * Design (DSbD) Technology Platform Prototype".
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,45 +36,14 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+#pragma once
+#include_next <stddef.h>
 
-#include <sys/cdefs.h>
-#include <stdbool.h>
-#include <stdio.h>
-
-#include "cd9660.h"
-#include "cd9660_eltorito.h"
-
-#include "etdump.h"
-
-static void
-output_entry(FILE *outfile, const char *filename __unused,
-    boot_catalog_section_entry *bcse, u_char platform_id, bool initial)
-{
-	const char *platform;
-
-	switch (bcse->boot_indicator[0]) {
-	case ET_BOOTABLE:
-		break;
-	case ET_NOT_BOOTABLE:
-	default:
-		return;
-	}
-
-	if (initial)
-		platform = "default";
-	else
-		platform = system_id_string(platform_id);
-
-	fprintf(outfile,
-	    "et_platform=%s;et_system=%s;et_lba=%d;et_sectors=%d\n",
-	    platform, system_id_string(bcse->system_type[0]),
-	    isonum_731(bcse->load_rba), isonum_721(bcse->sector_count));
-}
-
-static struct outputter _output_shell = {
-	.output_image = NULL,
-	.output_section = NULL,
-	.output_entry = output_entry,
-};
-
-struct outputter *output_shell = &_output_shell;
+#ifndef _PTRADDR_T_DECLARED
+#ifdef __PTRADDR_TYPE__
+typedef	__PTRADDR_TYPE__	ptraddr_t;
+#else
+typedef	size_t			ptraddr_t;
+#endif
+#define _PTRADDR_T_DECLARED
+#endif

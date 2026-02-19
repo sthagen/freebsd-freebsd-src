@@ -8,6 +8,8 @@
 
 #include <sys/param.h>
 #include <sys/conf.h>
+#define	EXTERR_CATEGORY	EXTERR_CAT_VMM
+#include <sys/exterrvar.h>
 #include <sys/fcntl.h>
 #include <sys/ioccom.h>
 #include <sys/jail.h>
@@ -898,12 +900,23 @@ vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
 {
 	struct cdev *cdev;
 	struct vmmdev_softc *sc;
+	int error;
 
 	sx_xlock(&vmmdev_mtx);
 	sc = vmmdev_lookup(name, cred);
 	if (sc == NULL || sc->cdev == NULL) {
 		sx_xunlock(&vmmdev_mtx);
 		return (EINVAL);
+	}
+
+	/*
+	 * Only the creator of a VM or a privileged user can destroy it.
+	 */
+	if ((cred->cr_uid != sc->ucred->cr_uid ||
+	     cred->cr_prison != sc->ucred->cr_prison) &&
+	    (error = priv_check_cred(cred, PRIV_VMM_DESTROY)) != 0) {
+		sx_xunlock(&vmmdev_mtx);
+		return (error);
 	}
 
 	/*
@@ -992,6 +1005,17 @@ vmmdev_create(const char *name, uint32_t flags, struct ucred *cred)
 		return (EEXIST);
 	}
 
+	/*
+	 * Unprivileged users can only create VMs that will be automatically
+	 * destroyed when the creating descriptor is closed.
+	 */
+	if ((flags & VMMCTL_CREATE_DESTROY_ON_CLOSE) == 0 &&
+	    (error = priv_check_cred(cred, PRIV_VMM_CREATE)) != 0) {
+		sx_xunlock(&vmmdev_mtx);
+		return (EXTERROR(error,
+		    "An unprivileged user must run VMs in monitor mode"));
+	}
+
 	if (!chgvmmcnt(cred->cr_ruidinfo, 1, vm_maxvmms)) {
 		sx_xunlock(&vmmdev_mtx);
 		return (ENOMEM);
@@ -1012,8 +1036,8 @@ vmmdev_create(const char *name, uint32_t flags, struct ucred *cred)
 	make_dev_args_init(&mda);
 	mda.mda_devsw = &vmmdevsw;
 	mda.mda_cr = sc->ucred;
-	mda.mda_uid = UID_ROOT;
-	mda.mda_gid = GID_WHEEL;
+	mda.mda_uid = cred->cr_uid;
+	mda.mda_gid = GID_VMM;
 	mda.mda_mode = 0600;
 	mda.mda_si_drv1 = sc;
 	mda.mda_flags = MAKEDEV_CHECKNAME | MAKEDEV_WAITOK;
@@ -1180,7 +1204,7 @@ vmmdev_init(void)
 
 	sx_xlock(&vmmdev_mtx);
 	error = make_dev_p(MAKEDEV_CHECKNAME, &vmmctl_cdev, &vmmctlsw, NULL,
-	    UID_ROOT, GID_WHEEL, 0600, "vmmctl");
+	    UID_ROOT, GID_VMM, 0660, "vmmctl");
 	if (error == 0) {
 		pr_allow_vmm_flag = prison_add_allow(NULL, "vmm", NULL,
 		    "Allow use of vmm in a jail");
@@ -1336,8 +1360,8 @@ devmem_create_cdev(struct vmmdev_softc *sc, int segid, char *devname)
 	make_dev_args_init(&mda);
 	mda.mda_devsw = &devmemsw;
 	mda.mda_cr = sc->ucred;
-	mda.mda_uid = UID_ROOT;
-	mda.mda_gid = GID_WHEEL;
+	mda.mda_uid = sc->ucred->cr_uid;
+	mda.mda_gid = GID_VMM;
 	mda.mda_mode = 0600;
 	mda.mda_si_drv1 = dsc;
 	mda.mda_flags = MAKEDEV_CHECKNAME | MAKEDEV_WAITOK;
