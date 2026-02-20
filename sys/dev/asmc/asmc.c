@@ -134,31 +134,46 @@ struct asmc_model {
 
 static const struct asmc_model *asmc_match(device_t dev);
 
-#define ASMC_SMS_FUNCS	asmc_mb_sysctl_sms_x, asmc_mb_sysctl_sms_y, \
-			asmc_mb_sysctl_sms_z
+#define ASMC_SMS_FUNCS						\
+			.smc_sms_x = asmc_mb_sysctl_sms_x,	\
+			.smc_sms_y = asmc_mb_sysctl_sms_y,	\
+			.smc_sms_z = asmc_mb_sysctl_sms_z
 
-#define ASMC_SMS_FUNCS_DISABLED NULL, NULL, NULL
+#define ASMC_SMS_FUNCS_DISABLED			\
+			.smc_sms_x = NULL,	\
+			.smc_sms_y = NULL,	\
+			.smc_sms_z = NULL
 
-#define ASMC_FAN_FUNCS	asmc_mb_sysctl_fanid, asmc_mb_sysctl_fanspeed, asmc_mb_sysctl_fansafespeed, \
-			asmc_mb_sysctl_fanminspeed, \
-			asmc_mb_sysctl_fanmaxspeed, \
-			asmc_mb_sysctl_fantargetspeed
+#define ASMC_FAN_FUNCS	\
+			.smc_fan_id = asmc_mb_sysctl_fanid, \
+			.smc_fan_speed = asmc_mb_sysctl_fanspeed, \
+			.smc_fan_safespeed = asmc_mb_sysctl_fansafespeed, \
+			.smc_fan_minspeed = asmc_mb_sysctl_fanminspeed, \
+			.smc_fan_maxspeed = asmc_mb_sysctl_fanmaxspeed, \
+			.smc_fan_targetspeed = asmc_mb_sysctl_fantargetspeed
 
-#define ASMC_FAN_FUNCS2	asmc_mb_sysctl_fanid, asmc_mb_sysctl_fanspeed, NULL, \
-			asmc_mb_sysctl_fanminspeed, \
-			asmc_mb_sysctl_fanmaxspeed, \
-			asmc_mb_sysctl_fantargetspeed
+#define ASMC_FAN_FUNCS2	\
+			.smc_fan_id = asmc_mb_sysctl_fanid, \
+			.smc_fan_speed = asmc_mb_sysctl_fanspeed, \
+			.smc_fan_safespeed = NULL, \
+			.smc_fan_minspeed = asmc_mb_sysctl_fanminspeed, \
+			.smc_fan_maxspeed = asmc_mb_sysctl_fanmaxspeed, \
+			.smc_fan_targetspeed = asmc_mb_sysctl_fantargetspeed
 
-#define ASMC_LIGHT_FUNCS asmc_mbp_sysctl_light_left, \
-			 asmc_mbp_sysctl_light_right, \
-			 asmc_mbp_sysctl_light_control
+#define ASMC_LIGHT_FUNCS \
+			 .smc_light_left = asmc_mbp_sysctl_light_left, \
+			 .smc_light_right = asmc_mbp_sysctl_light_right, \
+			 .smc_light_control = asmc_mbp_sysctl_light_control
 
 #define ASMC_LIGHT_FUNCS_10BYTE \
-			 asmc_mbp_sysctl_light_left_10byte, \
-			 NULL, \
-			 asmc_mbp_sysctl_light_control
+			 .smc_light_left = asmc_mbp_sysctl_light_left_10byte, \
+			 .smc_light_right = NULL, \
+			 .smc_light_control = asmc_mbp_sysctl_light_control
 
-#define ASMC_LIGHT_FUNCS_DISABLED NULL, NULL, NULL
+#define ASMC_LIGHT_FUNCS_DISABLED \
+			 .smc_light_left = NULL, \
+			 .smc_light_right = NULL, \
+			 .smc_light_control = NULL
 
 static const struct asmc_model asmc_models[] = {
 	{
@@ -325,7 +340,7 @@ static const struct asmc_model asmc_models[] = {
 	{
 	  "Macmini4,1", "Apple SMC Mac mini 4,1 (Mid-2010)",
 	  ASMC_SMS_FUNCS_DISABLED,
-	  ASMC_FAN_FUNCS,
+	  ASMC_FAN_FUNCS2,
 	  ASMC_LIGHT_FUNCS_DISABLED,
 	  ASMC_MM41_TEMPS, ASMC_MM41_TEMPNAMES, ASMC_MM41_TEMPDESCS
 	},
@@ -398,9 +413,9 @@ static const struct asmc_model asmc_models[] = {
 	/* Idem for the Mac Pro (Early 2008) */
 	{
 	  "MacPro3,1", "Apple SMC Mac Pro (Early 2008)",
-	  NULL, NULL, NULL,
+	  ASMC_SMS_FUNCS_DISABLED,
 	  ASMC_FAN_FUNCS,
-	  NULL, NULL, NULL,
+	  ASMC_LIGHT_FUNCS_DISABLED,
 	  ASMC_MP31_TEMPS, ASMC_MP31_TEMPNAMES, ASMC_MP31_TEMPDESCS
 	},
 
