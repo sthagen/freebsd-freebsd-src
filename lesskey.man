@@ -65,17 +65,23 @@
 
        \k  followed  by  one or two characters represents the char(s) produced
        when one of these keys is pressed:
-            \kb    BACKSPACE (the BACKSPACE key)
+            \kb    BACKSPACE (the BACKSPACE key; may be different than \b)
             \kB    ctrl‐BACKSPACE
             \kd    DOWN ARROW
             \kD    PAGE DOWN
             \ke    END
+            \kE    ctrl‐END
+            \kF    shift‐END
             \kh    HOME
+            \kH    ctrl‐HOME
+            \kI    shift‐HOME
             \ki    INSERT
             \kl    LEFT ARROW
             \kL    ctrl‐LEFT ARROW
+            \kM    shift‐LEFT ARROW
             \kr    RIGHT ARROW
             \kR    ctrl‐RIGHT ARROW
+            \kS    shift‐RIGHT ARROW
             \kt    BACKTAB
             \ku    UP ARROW
             \kU    PAGE UP
@@ -137,11 +143,10 @@
             ^Y         back-line
             ^K         back-line
             ^P         back-line
+            \ku        back-line
             J          forw-line-force
             K          back-line-force
             Y          back-line-force
-            \ej        forw-newline
-            \ek        back-newline
             d          forw-scroll
             ^D         forw-scroll
             u          back-scroll
@@ -159,8 +164,11 @@
             w          back-window
             \e\40      forw-screen-force
             \eb        back-screen-force
+            \ej        forw-newline
+            \ek        back-newline
             F          forw-forever
             \eF        forw-until-hilite
+            \ef        forw-bell-hilite
             R          repaint-flush
             r          repaint
             ^R         repaint
@@ -169,16 +177,25 @@
             \eU        clear-search
             g          goto-line
             \kh        goto-line
+            \kH        goto-line \e{
+            \kI        goto-line \e{
+            \ke        goto-end
+            \kE        goto-end \e}
+            \kF        goto-end \e}
             <          goto-line
             \e<        goto-line
             p          percent
             %          percent
             \e(        left-scroll
             \e)        right-scroll
-            \kl        left-scroll
-            \kr        right-scroll
             \e{        no-scroll
             \e}        end-scroll
+            \kl        left-scroll
+            \kr        right-scroll
+            \kL        no-scroll
+            \kM        no-scroll
+            \kR        end-scroll
+            \kS        end-scroll
             {          forw-bracket {}
             }          back-bracket {}
             (          forw-bracket ()
@@ -190,7 +207,7 @@
             G          goto-end
             \e>        goto-end
             >          goto-end
-            \ke        goto-end
+            P          goto-pos
             \eG        goto-end-buffered
             =          status
             ^G         status
@@ -203,11 +220,6 @@
             \en        repeat-search-all
             N          reverse-search
             \eN        reverse-search-all
-            ^O^N       osc8-forw-search
-            ^On        osc8-forw-search
-            ^O^P       osc8-back-search
-            ^Op        osc8-back-search
-            ^O^O       osc8-open
             &          filter
             m          set-mark
             M          set-mark-bottom
@@ -219,6 +231,14 @@
             ^X^V       examine
             :n         next-file
             :p         prev-file
+            ^O^N       osc8-forw-search
+            ^On        osc8-forw-search
+            ^O^P       osc8-back-search
+            ^Op        osc8-back-search
+            ^O^O       osc8-open
+            ^Oo        osc8-open
+            ^O^L       osc8-jump
+            ^Ol        osc8-jump
             t          next-tag
             T          prev-tag
             :x         index-file
@@ -230,6 +250,13 @@
                        ## extra string with ONE dash; eg:
                        ##   s toggle-option -log-file\n
             _          display-option
+            |          pipe
+            v          visual
+            !          shell
+            #          pshell
+            +          firstcmd
+            \e[M       mouse
+            \e[<       mouse6
             \kp1       goto-end
             \kp2       forw-line
             \kp3       forw-screen
@@ -245,15 +272,9 @@
             \kp+       noaction +
             \kp.       noaction .
             \kp,       noaction ,
-            |          pipe
-            v          visual
-            !          shell
-            #          pshell
-            +          firstcmd
-            \e[M       mouse
-            \e[<       mouse6
             H          help
             h          help
+            \k1        help
             V          version
             0          digit
             1          digit
@@ -307,6 +328,7 @@
             #line-edit
             \t           forw-complete
             \17          back-complete
+            \ekt         back-complete
             \e\t         back-complete
             ˆL           expand
             ˆV           literal
@@ -317,14 +339,19 @@
             \kl          left
             \eb          word-left
             \e\kl        word-left
+            \e\kL        word-left
             \ew          word-right
             \e\kr        word-right
+            \e\kR        word-right
             \ei          insert
+            \ki          insert
             \ex          delete
             \kx          delete
             \eX          word-delete
             \ekx         word-delete
+            \kX          word-delete
             \e\b         word-backspace
+            \kB          word-backspace
             \e0          home
             \kh          home
             \e$          end
@@ -332,6 +359,7 @@
             \ek          up
             \ku          up
             \ej          down
+            \kd          down
             ˆG           abort
             \kp1         end
             \kp2         down
@@ -431,7 +459,7 @@
        represented as \340 in a lesskey file.
 
 [1mCOPYRIGHT[0m
-       Copyright (C) 1984‐2025  Mark Nudelman
+       Copyright (C) 1984‐2026  Mark Nudelman
 
        less is part of the GNU project and is free software.  You  can  redis‐
        tribute  it and/or modify it under the terms of either (1) the GNU Gen‐
@@ -452,4 +480,4 @@
        Mark Nudelman
        Report bugs at https://github.com/gwsw/less/issues.
 
-less 691                          10 Jan 2026                       [4mLESSKEY[24m(1)
+less 692                          29 Jan 2026                       [4mLESSKEY[24m(1)
