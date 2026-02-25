@@ -108,6 +108,7 @@ static int 	asmc_mbp_sysctl_light_left(SYSCTL_HANDLER_ARGS);
 static int 	asmc_mbp_sysctl_light_right(SYSCTL_HANDLER_ARGS);
 static int 	asmc_mbp_sysctl_light_control(SYSCTL_HANDLER_ARGS);
 static int 	asmc_mbp_sysctl_light_left_10byte(SYSCTL_HANDLER_ARGS);
+static int	asmc_wol_sysctl(SYSCTL_HANDLER_ARGS);
 
 struct asmc_model {
 	const char *smc_model; /* smbios.system.product env var. */
@@ -174,6 +175,11 @@ static const struct asmc_model *asmc_match(device_t dev);
 			 .smc_light_left = NULL, \
 			 .smc_light_right = NULL, \
 			 .smc_light_control = NULL
+
+#define	ASMC_TEMPS_FUNCS_DISABLED \
+			  .smc_temps = {},		\
+			  .smc_tempnames = {},		\
+			  .smc_tempdescs = {}		\
 
 static const struct asmc_model asmc_models[] = {
 	{
@@ -516,8 +522,42 @@ static const struct asmc_model asmc_models[] = {
 	  ASMC_FAN_FUNCS2,
 	  ASMC_LIGHT_FUNCS,
 	  ASMC_MBA7_TEMPS, ASMC_MBA7_TEMPNAMES, ASMC_MBA7_TEMPDESCS
+	}
+};
+
+static const struct asmc_model asmc_generic_models[] = {
+	{
+	  .smc_model = "MacBookAir",
+	  .smc_desc = NULL,
+	  ASMC_SMS_FUNCS_DISABLED,
+	  ASMC_FAN_FUNCS2,
+	  ASMC_LIGHT_FUNCS,
+	  ASMC_TEMPS_FUNCS_DISABLED
 	},
-	{ NULL, NULL }
+	{
+	  .smc_model = "MacBookPro",
+	  .smc_desc = NULL,
+	  ASMC_SMS_FUNCS_DISABLED,
+	  ASMC_FAN_FUNCS2,
+	  ASMC_LIGHT_FUNCS,
+	  ASMC_TEMPS_FUNCS_DISABLED
+	},
+	{
+	  .smc_model = "MacPro",
+	  .smc_desc = NULL,
+	  ASMC_SMS_FUNCS_DISABLED,
+	  ASMC_FAN_FUNCS2,
+	  ASMC_LIGHT_FUNCS_DISABLED,
+	  ASMC_TEMPS_FUNCS_DISABLED
+	},
+	{
+	  .smc_model = "Macmini",
+	  .smc_desc = NULL,
+	  ASMC_SMS_FUNCS_DISABLED,
+	  ASMC_FAN_FUNCS2,
+	  ASMC_LIGHT_FUNCS_DISABLED,
+	  ASMC_TEMPS_FUNCS_DISABLED
+	}
 };
 
 #undef ASMC_SMS_FUNCS
@@ -534,7 +574,7 @@ static device_method_t	asmc_methods[] = {
 	DEVMETHOD(device_attach,	asmc_attach),
 	DEVMETHOD(device_detach,	asmc_detach),
 	DEVMETHOD(device_resume,	asmc_resume),
-	{ 0, 0 }
+	DEVMETHOD_END
 };
 
 static driver_t	asmc_driver = {
@@ -565,28 +605,41 @@ MODULE_DEPEND(asmc, acpi, 1, 1, 1);
 static const struct asmc_model *
 asmc_match(device_t dev)
 {
+	const struct asmc_model *model;
+	char *model_name;
 	int i;
-	char *model;
 
-	model = kern_getenv("smbios.system.product");
-	if (model == NULL)
-		return (NULL);
+	model = NULL;
 
-	for (i = 0; asmc_models[i].smc_model; i++) {
-		if (!strncmp(model, asmc_models[i].smc_model, strlen(model))) {
-			freeenv(model);
-			return (&asmc_models[i]);
+	model_name = kern_getenv("smbios.system.product");
+	if (model_name == NULL)
+		goto out;
+
+	for (i = 0; i < nitems(asmc_models); i++) {
+		if (strncmp(model_name, asmc_models[i].smc_model,
+		    strlen(model_name)) == 0) {
+			model = &asmc_models[i];
+			goto out;
 		}
 	}
-	freeenv(model);
+	for (i = 0; i < nitems(asmc_generic_models); i++) {
+		if (strncmp(model_name, asmc_generic_models[i].smc_model,
+		    strlen(asmc_generic_models[i].smc_model)) == 0) {
+			model = &asmc_generic_models[i];
+			goto out;
+		}
+	}
 
-	return (NULL);
+out:
+	freeenv(model_name);
+	return (model);
 }
 
 static int
 asmc_probe(device_t dev)
 {
 	const struct asmc_model *model;
+	const char *device_desc;
 	int rv;
 
 	if (resource_disabled("asmc", 0))
@@ -596,11 +649,13 @@ asmc_probe(device_t dev)
 		return (rv);
 
 	model = asmc_match(dev);
-	if (!model) {
+	if (model == NULL) {
 		device_printf(dev, "model not recognized\n");
 		return (ENXIO);
 	}
-	device_set_desc(dev, model->smc_desc);
+	device_desc = model->smc_desc == NULL ?
+	    model->smc_model : model->smc_desc;
+	device_set_desc(dev, device_desc);
 
 	return (rv);
 }
@@ -879,8 +934,11 @@ static int
 asmc_init(device_t dev)
 {
 	struct asmc_softc *sc = device_get_softc(dev);
+	struct sysctl_ctx_list *sysctlctx;
 	int i, error = 1;
 	uint8_t buf[4];
+
+	sysctlctx = device_get_sysctl_ctx(dev);
 
 	if (sc->sc_model->smc_sms_x == NULL)
 		goto nosms;
@@ -951,6 +1009,16 @@ asmc_init(device_t dev)
 out:
 	asmc_sms_calibrate(dev);
 nosms:
+	/* Wake-on-LAN convenience sysctl */
+	if (asmc_key_read(dev, ASMC_KEY_AUPO, buf, 1) == 0) {
+		SYSCTL_ADD_PROC(sysctlctx,
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+		    OID_AUTO, "wol",
+		    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+		    dev, 0, asmc_wol_sysctl, "I",
+		    "Wake-on-LAN enable (0=off, 1=on)");
+	}
+
 	sc->sc_nfan = asmc_fan_count(dev);
 	if (sc->sc_nfan > ASMC_MAXFANS) {
 		device_printf(dev,
@@ -1703,4 +1771,35 @@ asmc_mbp_sysctl_light_left_10byte(SYSCTL_HANDLER_ARGS)
 	error = sysctl_handle_int(oidp, &v, 0, req);
 
 	return (error);
+}
+
+/*
+ * Wake-on-LAN convenience sysctl.
+ * Reading returns 1 if WoL is enabled, 0 if disabled.
+ * Writing 1 enables WoL, 0 disables it.
+ */
+static int
+asmc_wol_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	uint8_t aupo;
+	int val, error;
+
+	/* Read current AUPO value */
+	if (asmc_key_read(dev, ASMC_KEY_AUPO, &aupo, 1) != 0)
+		return (EIO);
+
+	val = (aupo != 0) ? 1 : 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	/* Clamp to 0 or 1 */
+	aupo = (val != 0) ? 1 : 0;
+
+	/* Write AUPO */
+	if (asmc_key_write(dev, ASMC_KEY_AUPO, &aupo, 1) != 0)
+		return (EIO);
+
+	return (0);
 }
