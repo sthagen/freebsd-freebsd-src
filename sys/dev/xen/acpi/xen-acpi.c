@@ -1,5 +1,7 @@
 /*-
- * Copyright (c) 2016 Eric McCorkle
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Citrix Systems R&D
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -24,38 +26,50 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
-#include <stdbool.h>
+#include <sys/cdefs.h>
+#include "opt_acpi.h"
+#include <sys/param.h>
+#include <sys/bus.h>
+#include <sys/kernel.h>
+#include <sys/kobj.h>
 
-#ifndef _EFIZFS_H_
-#define _EFIZFS_H_
+#include <machine/_inttypes.h>
 
-#ifdef EFI_ZFS_BOOT
-/*
- * EFI defines these, but libzfs.h includes stuff which includes stuff which
- * include sys/param.h which defines these. This is easier than any of the other
- * crazy we can do.
- */
-#undef MIN
-#undef MAX
-#include <libzfs.h>
+#include <contrib/dev/acpica/include/acpi.h>
+#include <contrib/dev/acpica/include/accommon.h>
 
-typedef STAILQ_HEAD(zfsinfo_list, zfsinfo) zfsinfo_list_t;
+#include <dev/acpica/acpivar.h>
 
-typedef struct zfsinfo
+#include <xen/xen-os.h>
+
+static int prepare_sleep_state(uint8_t state, uint32_t a, uint32_t b, bool ext)
 {
-	STAILQ_ENTRY(zfsinfo) zi_link;
-	EFI_HANDLE zi_handle;
-        uint64_t zi_pool_guid;
-} zfsinfo_t;
+	struct xen_platform_op op = {
+		.cmd = XENPF_enter_acpi_sleep,
+		.interface_version = XENPF_INTERFACE_VERSION,
+		.u.enter_acpi_sleep.val_a = a,
+		.u.enter_acpi_sleep.val_b = b,
+		.u.enter_acpi_sleep.sleep_state = state,
+		.u.enter_acpi_sleep.flags =
+		    ext ? XENPF_ACPI_SLEEP_EXTENDED : 0,
+	};
+	int error;
 
-void efi_zfs_probe(void);
-EFI_HANDLE efizfs_get_handle_by_guid(uint64_t);
-bool efizfs_get_guid_by_handle(EFI_HANDLE, uint64_t *);
-zfsinfo_list_t *efizfs_get_zfsinfo_list(void);
+	error = HYPERVISOR_platform_op(&op);
+	if (error)
+		printf("Xen notify ACPI sleep failed - "
+		    "State %#x A %#x B %#x: %d\n", state, a, b, error);
 
-#else
-#define efi_zfs_probe NULL
-#endif
+	return (error ? error : 1);
+}
 
-#endif
+static int init_xen_acpi_sleep(void *arg)
+{
+	if (!xen_initial_domain())
+		return (0);
+
+	acpi_set_prepare_sleep(&prepare_sleep_state);
+	return (0);
+}
+
+SYSINIT(xen_sleep, SI_SUB_CONFIGURE, SI_ORDER_ANY, init_xen_acpi_sleep, NULL);
