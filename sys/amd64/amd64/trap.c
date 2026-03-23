@@ -261,12 +261,70 @@ trap_clear_step(struct thread *td, struct trapframe *frame)
 }
 
 /*
+ * Warn with a message on the user's tty if application code has
+ * disabled interrupts and then trapped.
+ */
+static void
+trap_check_intr_user(struct thread *td, struct trapframe *frame)
+{
+	MPASS(TRAPF_USERMODE(frame));
+
+	if (__predict_true((frame->tf_rflags & PSL_I) != 0))
+		return;
+
+	uprintf("pid %ld (%s): trap %d (%s) with interrupts disabled\n",
+	    (long)td->td_proc->p_pid, td->td_name, frame->tf_trapno,
+	    trap_msg[frame->tf_trapno]);
+}
+
+/*
+ * Some exceptions can occur on kernel attempt to reload a corrupted
+ * user context, which is done with interrupts enabled.  Interrupts
+ * such as NMIs and debugging faults can be also taken in the kernel
+ * while interrupts are disabled.  Other traps shouldn't occur with
+ * interrupts disabled unless the kernel has a bug.  Re-enable
+ * interrupts in case this occurs, unless the interrupted thread holds
+ * a spin lock.
+ */
+static void
+trap_check_intr_kernel(struct thread *td, struct trapframe *frame)
+{
+	MPASS(!TRAPF_USERMODE(frame));
+
+	if (__predict_true((frame->tf_rflags & PSL_I) != 0))
+		return;
+
+	switch (frame->tf_trapno) {
+	case T_NMI:
+	case T_BPTFLT:
+	case T_TRCTRAP:
+	case T_PROTFLT:
+	case T_SEGNPFLT:
+	case T_STKFLT:
+		break;
+	default:
+		printf("kernel trap %d with interrupts disabled\n",
+		    frame->tf_trapno);
+
+		/*
+		 * We shouldn't enable interrupts while holding a
+		 * spin lock.
+		 */
+		if (td->td_md.md_spinlock_count == 0)
+			enable_intr();
+		break;
+	}
+}
+
+/*
  * Table of handlers for various segment load faults.
  */
-static const struct {
+struct sfhandler {
 	uintptr_t	faddr;
 	uintptr_t	fhandler;
-} sfhandlers[] = {
+};
+
+static const struct sfhandler sfhandlers[] = {
 	{
 		.faddr = (uintptr_t)ld_ds,
 		.fhandler = (uintptr_t)ds_load_fault,
@@ -337,46 +395,9 @@ trap(struct trapframe *frame)
 		return;
 	}
 
-	if ((frame->tf_rflags & PSL_I) == 0) {
-		/*
-		 * Buggy application or kernel code has disabled
-		 * interrupts and then trapped.  Enabling interrupts
-		 * now is wrong, but it is better than running with
-		 * interrupts disabled until they are accidentally
-		 * enabled later.
-		 */
-		if (TRAPF_USERMODE(frame)) {
-			uprintf(
-			    "pid %ld (%s): trap %d (%s) "
-			    "with interrupts disabled\n",
-			    (long)curproc->p_pid, curthread->td_name, type,
-			    trap_msg[type]);
-		} else {
-			switch (type) {
-			case T_NMI:
-			case T_BPTFLT:
-			case T_TRCTRAP:
-			case T_PROTFLT:
-			case T_SEGNPFLT:
-			case T_STKFLT:
-				break;
-			default:
-				printf(
-				    "kernel trap %d with interrupts disabled\n",
-				    type);
-
-				/*
-				 * We shouldn't enable interrupts while holding a
-				 * spin lock.
-				 */
-				if (td->td_md.md_spinlock_count == 0)
-					enable_intr();
-			}
-		}
-	}
-
 	if (TRAPF_USERMODE(frame)) {
 		/* user trap */
+		trap_check_intr_user(td, frame);
 
 		td->td_pticks = 0;
 		td->td_frame = frame;
@@ -497,6 +518,7 @@ trap(struct trapframe *frame)
 		}
 	} else {
 		/* kernel trap */
+		trap_check_intr_kernel(td, frame);
 
 		KASSERT(cold || td->td_ucred != NULL,
 		    ("kernel trap doesn't have ucred"));
@@ -920,7 +942,7 @@ after_vmfault:
 static void
 trap_diag(struct trapframe *frame, vm_offset_t eva)
 {
-	int code, ss;
+	int code;
 	u_int type;
 	struct soft_segment_descriptor softseg;
 	struct user_segment_descriptor *gdt;
@@ -928,7 +950,7 @@ trap_diag(struct trapframe *frame, vm_offset_t eva)
 	code = frame->tf_err;
 	type = frame->tf_trapno;
 	gdt = *PCPU_PTR(gdt);
-	sdtossd(&gdt[IDXSEL(frame->tf_cs & 0xffff)], &softseg);
+	sdtossd(&gdt[IDXSEL(frame->tf_cs)], &softseg);
 
 	printf("\n\nFatal trap %d: %s while in %s mode\n", type,
 	    type < nitems(trap_msg) ? trap_msg[type] : UNKNOWN,
@@ -947,11 +969,12 @@ trap_diag(struct trapframe *frame, vm_offset_t eva)
 			code & PGEX_RSV ? "reserved bits in PTE" :
 			code & PGEX_P ? "protection violation" : "page not present");
 	}
-	printf("instruction pointer	= 0x%lx:0x%lx\n",
-	       frame->tf_cs & 0xffff, frame->tf_rip);
-	ss = frame->tf_ss & 0xffff;
-	printf("stack pointer	        = 0x%x:0x%lx\n", ss, frame->tf_rsp);
-	printf("frame pointer	        = 0x%x:0x%lx\n", ss, frame->tf_rbp);
+	printf("instruction pointer	= %#hx:%#lx\n",
+	       frame->tf_cs, frame->tf_rip);
+	printf("stack pointer	        = %#hx:%#lx\n", frame->tf_ss,
+	    frame->tf_rsp);
+	printf("frame pointer	        = %#hx:%#lx\n", frame->tf_ss,
+	    frame->tf_rbp);
 	printf("code segment		= base 0x%lx, limit 0x%lx, type 0x%x\n",
 	       softseg.ssd_base, softseg.ssd_limit, softseg.ssd_type);
 	printf("			= DPL %d, pres %d, long %d, def32 %d, gran %d\n",
@@ -1045,7 +1068,7 @@ dblfault_handler(struct trapframe *frame)
 	    "r8 %#lx r9 %#lx r10 %#lx\n"
 	    "r11 %#lx r12 %#lx r13 %#lx\n"
 	    "r14 %#lx r15 %#lx rflags %#lx\n"
-	    "cs %#lx ss %#lx ds %#hx es %#hx fs %#hx gs %#hx\n"
+	    "cs %#hx ss %#hx ds %#hx es %#hx fs %#hx gs %#hx\n"
 	    "fsbase %#lx gsbase %#lx kgsbase %#lx\n",
 	    frame->tf_rip, frame->tf_rsp, frame->tf_rbp,
 	    frame->tf_rax, frame->tf_rdx, frame->tf_rbx,
