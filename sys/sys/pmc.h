@@ -110,6 +110,7 @@ extern char pmc_cpuid[PMC_CPUID_LEN];
     __PMC_CPU(INTEL_EMERALD_RAPIDS,	0xA0,	"Intel Emerald Rapids")		\
     __PMC_CPU(INTEL_ALDERLAKEN,		0xA1,	"Intel AlderlakeN")		\
     __PMC_CPU(INTEL_GRANITE_RAPIDS,	0xA2,	"Intel Granite Rapids")		\
+    __PMC_CPU(INTEL_METEOR_LAKE,	0xA3,	"Intel Meteorlake")		\
     __PMC_CPU(PPC_7450,			0x300,	"PowerPC MPC7450")		\
     __PMC_CPU(PPC_E500,			0x340,	"PowerPC e500 Core")		\
     __PMC_CPU(PPC_970,			0x380,	"IBM PowerPC 970")		\
@@ -661,7 +662,9 @@ struct pmc_op_caps {
 #define	PMC_HASH_SIZE				1024
 #define	PMC_MTXPOOL_SIZE			2048
 #define	PMC_LOG_BUFFER_SIZE			256
+#define	PMC_LOG_BUFFER_SIZE_MAX			(16 * 1024)
 #define	PMC_NLOGBUFFERS_PCPU			32
+#define	PMC_NLOGBUFFERS_PCPU_MEM_MAX		(32 * 1024)
 #define	PMC_NSAMPLES				256
 #define	PMC_CALLCHAIN_DEPTH			128
 #define	PMC_THREADLIST_MAX			128

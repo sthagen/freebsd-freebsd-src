@@ -74,15 +74,10 @@ feed_volume_##SIGN##BIT##ENDIAN(int *vol, int *matrix,			\
 	} while (--count != 0);						\
 }
 
-#if BYTE_ORDER == LITTLE_ENDIAN || defined(SND_FEEDER_MULTIFORMAT)
 FEEDVOLUME_DECLARE(S, 16, LE)
 FEEDVOLUME_DECLARE(S, 32, LE)
-#endif
-#if BYTE_ORDER == BIG_ENDIAN || defined(SND_FEEDER_MULTIFORMAT)
 FEEDVOLUME_DECLARE(S, 16, BE)
 FEEDVOLUME_DECLARE(S, 32, BE)
-#endif
-#ifdef SND_FEEDER_MULTIFORMAT
 FEEDVOLUME_DECLARE(S,  8, NE)
 FEEDVOLUME_DECLARE(S, 24, LE)
 FEEDVOLUME_DECLARE(S, 24, BE)
@@ -95,7 +90,6 @@ FEEDVOLUME_DECLARE(U, 24, BE)
 FEEDVOLUME_DECLARE(U, 32, BE)
 FEEDVOLUME_DECLARE(F, 32, LE)
 FEEDVOLUME_DECLARE(F, 32, BE)
-#endif
 
 struct feed_volume_info {
 	uint32_t bps, channels;
@@ -115,15 +109,10 @@ static const struct {
 	uint32_t format;
 	feed_volume_t apply;
 } feed_volume_info_tab[] = {
-#if BYTE_ORDER == LITTLE_ENDIAN || defined(SND_FEEDER_MULTIFORMAT)
 	FEEDVOLUME_ENTRY(S, 16, LE),
 	FEEDVOLUME_ENTRY(S, 32, LE),
-#endif
-#if BYTE_ORDER == BIG_ENDIAN || defined(SND_FEEDER_MULTIFORMAT)
 	FEEDVOLUME_ENTRY(S, 16, BE),
 	FEEDVOLUME_ENTRY(S, 32, BE),
-#endif
-#ifdef SND_FEEDER_MULTIFORMAT
 	FEEDVOLUME_ENTRY(S,  8, NE),
 	FEEDVOLUME_ENTRY(S, 24, LE),
 	FEEDVOLUME_ENTRY(S, 24, BE),
@@ -136,7 +125,6 @@ static const struct {
 	FEEDVOLUME_ENTRY(U, 32, BE),
 	FEEDVOLUME_ENTRY(F, 32, LE),
 	FEEDVOLUME_ENTRY(F, 32, BE),
-#endif
 };
 
 #define FEEDVOLUME_TAB_SIZE	((int32_t)				\
