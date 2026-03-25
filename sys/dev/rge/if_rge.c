@@ -959,29 +959,24 @@ rge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	case SIOCSIFFLAGS:
 		RGE_LOCK(sc);
 		if ((if_getflags(ifp) & IFF_UP) != 0) {
-			if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0) {
-				/*
-				 * TODO: handle promisc/iffmulti changing
-				 * without reprogramming everything.
-				 */
-				rge_init_locked(sc);
-			} else {
-				/* Reinit promisc/multi just in case */
-				rge_iff_locked(sc);
-			}
-		} else {
 			if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) != 0) {
+				if (((if_getflags(ifp) ^ sc->rge_if_flags)
+				    & (IFF_PROMISC | IFF_ALLMULTI)) != 0)
+					rge_iff_locked(sc);
+			} else
+				rge_init_locked(sc);
+		} else {
+			if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) != 0)
 				rge_stop_locked(sc);
-			}
 		}
+		sc->rge_if_flags = if_getflags(ifp);
 		RGE_UNLOCK(sc);
 		break;
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
 		RGE_LOCK(sc);
-		if ((if_getflags(ifp) & IFF_DRV_RUNNING) != 0) {
+		if ((if_getflags(ifp) & IFF_DRV_RUNNING) != 0)
 			rge_iff_locked(sc);
-		}
 		RGE_UNLOCK(sc);
 		break;
 	case SIOCGIFMEDIA:
@@ -2104,9 +2099,10 @@ rge_rxeof(struct rge_queues *q, struct mbufq *mq)
 	uint32_t rxstat, extsts;
 	int i, mlen, rx = 0;
 	int cons, prod;
-	int maxpkt = 16; /* XXX TODO: make this a tunable */
+	int maxpkt;
 	bool check_hwcsum;
 
+	maxpkt = sc->sc_rx_process_limit;
 	check_hwcsum = ((if_getcapenable(sc->sc_ifp) & IFCAP_RXCSUM) != 0);
 
 	RGE_ASSERT_LOCKED(sc);
