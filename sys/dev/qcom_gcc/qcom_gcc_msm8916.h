@@ -1,8 +1,7 @@
 /*-
- * Copyright (c) 2018 The FreeBSD Foundation
+ * SPDX-License-Identifier: BSD-2-Clause
  *
- * This software was developed by Mateusz Guzik <mjg@FreeBSD.org>
- * under sponsorship from the FreeBSD Foundation.
+ * Copyright (c) 2026 Adrian Chadd <adrian@FreeBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,44 +25,17 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/systm.h>
-#include <machine/cpu.h>
+#ifndef	__QCOM_GCC_MSM8916_H__
+#define	__QCOM_GCC_MSM8916_H__
 
-#ifndef	MEMSET_EARLY_FUNC
-#define	MEMSET_EARLY_FUNC	memset
-#else
-void *MEMSET_EARLY_FUNC(void *, int, size_t);
-#endif
+/*
+ * reset block
+ */
+extern	void qcom_gcc_msm8916_hwreset_init(struct qcom_gcc_softc *);
 
-void *
-memset_early(void *buf, int c, size_t len)
-{
+/*
+ * clock block
+ */
+extern	void qcom_gcc_msm8916_clock_setup(struct qcom_gcc_softc *);
 
-	return (MEMSET_EARLY_FUNC(buf, c, len));
-}
-
-#ifndef	MEMCPY_EARLY_FUNC
-#define	MEMCPY_EARLY_FUNC	memcpy
-#else
-void *MEMCPY_EARLY_FUNC(void *, const void *, size_t);
-#endif
-
-void *
-memcpy_early(void *to, const void *from, size_t len)
-{
-
-	return (MEMCPY_EARLY_FUNC(to, from, len));
-}
-
-#ifndef	MEMMOVE_EARLY_FUNC
-#define	MEMMOVE_EARLY_FUNC	memmove
-#else
-void *MEMMOVE_EARLY_FUNC(void *, const void *, size_t);
-#endif
-
-void *
-memmove_early(void *to, const void *from, size_t len)
-{
-
-	return (MEMMOVE_EARLY_FUNC(to, from, len));
-}
+#endif	/* __QCOM_GCC_MSM8916_H__ */
