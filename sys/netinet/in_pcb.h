@@ -299,7 +299,6 @@ struct xktls_session {
 #include <net/route.h>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
-#include <net/vnet.h>
 #include <vm/uma.h>
 #include <sys/ck.h>
 
@@ -418,8 +417,6 @@ struct inpcb {
 	};
 };
 
-#define	inp_vnet	inp_pcbinfo->ipi_vnet
-
 /*
  * Per-VNET pcb database for each high-level protocol (UDP, TCP, ...) in both
  * IPv4 and IPv6.
@@ -440,7 +437,7 @@ struct inpcbinfo {
 	 * Generation count -- incremented each time a connection is allocated
 	 * or freed.
 	 */
-	u_quad_t		 ipi_gencnt;		/* (h) */
+	uint64_t		 ipi_gencnt;		/* (h) */
 
 	/*
 	 * Fields associated with port lookup and allocation.
@@ -478,11 +475,6 @@ struct inpcbinfo {
 	 * hashed by local port.
 	 */
 	struct	inpcblbgrouphead *ipi_lbgrouphashbase;	/* (r:e/w:h) */
-
-	/*
-	 * Pointer to network stack instance
-	 */
-	struct vnet		*ipi_vnet;		/* (c) */
 };
 
 /*
@@ -599,9 +591,17 @@ VNET_DECLARE(uint32_t, in_pcbhashseed);
 
 #define INP_PCBPORTHASH(lport, mask)	(ntohs((lport)) & (mask))
 
+#if defined(INET) && defined(INET6)
 #define	RIPCB_HASH(inp)	(((inp)->inp_vflag & INP_IPV6) ?		\
 	IN6_ADDR_JHASH32(&(inp)->in6p_faddr) :				\
 	IN_ADDR_JHASH32(&(inp)->inp_faddr))
+#elif defined(INET6)
+#define	RIPCB_HASH(inp)							\
+	IN6_ADDR_JHASH32(&(inp)->in6p_faddr)
+#else
+#define	RIPCB_HASH(inp)							\
+	IN_ADDR_JHASH32(&(inp)->inp_faddr)
+#endif
 
 /*
  * Flags passed to in_pcblookup*(), inp_smr_lock() and inp_next().
