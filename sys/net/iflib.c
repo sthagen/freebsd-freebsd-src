@@ -703,6 +703,7 @@ static struct mbuf *iflib_fixup_rx(struct mbuf *m);
 #endif
 static __inline int iflib_completed_tx_reclaim(iflib_txq_t txq,
     struct mbuf **m_defer);
+static __inline void iflib_completed_tx_reclaim_force(iflib_txq_t txq);
 
 static SLIST_HEAD(cpu_offset_list, cpu_offset) cpu_offsets =
     SLIST_HEAD_INITIALIZER(cpu_offsets);
@@ -3477,7 +3478,7 @@ iflib_ether_pad(device_t dev, struct mbuf **m_head, uint16_t min_frame_size)
 }
 
 static int
-iflib_encap(iflib_txq_t txq, struct mbuf **m_headp)
+iflib_encap(iflib_txq_t txq, struct mbuf **m_headp, int *obytes, int *opkts)
 {
 	if_ctx_t		ctx;
 	if_shared_ctx_t		sctx;
@@ -3600,7 +3601,7 @@ defrag:
 	 *        cxgb
 	 */
 	if (__predict_false(nsegs > TXQ_AVAIL(txq))) {
-		(void)iflib_completed_tx_reclaim(txq, NULL);
+		iflib_completed_tx_reclaim_force(txq);
 		if (__predict_false(nsegs > TXQ_AVAIL(txq))) {
 			txq->ift_no_desc_avail++;
 			bus_dmamap_unload(buf_tag, map);
@@ -3662,6 +3663,20 @@ defrag:
 		 */
 		txq->ift_pidx = pi.ipi_new_pidx;
 		txq->ift_npending += pi.ipi_ndescs;
+
+		/*
+		 * Update packets / bytes sent
+		 */
+		if (flags & IFLIB_TSO) {
+			int hlen = pi.ipi_ehdrlen + pi.ipi_ip_hlen + pi.ipi_tcp_hlen;
+			int tsolen = pi.ipi_len - hlen;
+			int nsegs = (tsolen + pi.ipi_tso_segsz - 1) / pi.ipi_tso_segsz;
+			*obytes += tsolen + nsegs * hlen;
+			*opkts += nsegs;
+		} else {
+			*obytes += pi.ipi_len;
+			*opkts += 1;
+		}
 	} else {
 		*m_headp = m_head = iflib_remove_mbuf(txq);
 		if (err == EFBIG) {
@@ -3789,6 +3804,20 @@ iflib_completed_tx_reclaim(iflib_txq_t txq, struct mbuf **m_defer)
 	return (reclaim);
 }
 
+/*
+ * Reclaim any transmit descriptors possible, ignoring coalescing
+ */
+static __inline void
+iflib_completed_tx_reclaim_force(iflib_txq_t txq)
+{
+	int reclaim;
+
+	iflib_tx_credits_update(txq->ift_ctx, txq);
+	reclaim = DESC_RECLAIMABLE(txq);
+	if (reclaim != 0)
+		_iflib_completed_tx_reclaim(txq, NULL, reclaim);
+}
+
 static struct mbuf **
 _ring_peek_one(struct ifmp_ring *r, int cidx, int offset, int remaining)
 {
@@ -3903,7 +3932,7 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 			skipped++;
 			continue;
 		}
-		err = iflib_encap(txq, mp);
+		err = iflib_encap(txq, mp, &bytes_sent, &pkt_sent);
 		if (__predict_false(err)) {
 			/* no room - bail out */
 			if (err == ENOBUFS)
@@ -3912,10 +3941,8 @@ iflib_txq_drain(struct ifmp_ring *r, uint32_t cidx, uint32_t pidx)
 			/* we can't send this packet - skip it */
 			continue;
 		}
-		pkt_sent++;
 		m = *mp;
 		DBG_COUNTER_INC(tx_sent);
-		bytes_sent += m->m_pkthdr.len;
 		mcast_sent += !!(m->m_flags & M_MCAST);
 
 		if (__predict_false(!(if_getdrvflags(ifp) & IFF_DRV_RUNNING)))
@@ -7121,6 +7148,8 @@ iflib_debugnet_transmit(if_t ifp, struct mbuf *m)
 	if_ctx_t ctx;
 	iflib_txq_t txq;
 	int error;
+	int bytes_sent = 0;
+	int pkt_sent = 0;
 
 	ctx = if_getsoftc(ifp);
 	if ((if_getdrvflags(ifp) & (IFF_DRV_RUNNING | IFF_DRV_OACTIVE)) !=
@@ -7128,7 +7157,7 @@ iflib_debugnet_transmit(if_t ifp, struct mbuf *m)
 		return (EBUSY);
 
 	txq = &ctx->ifc_txqs[0];
-	error = iflib_encap(txq, &m);
+	error = iflib_encap(txq, &m, &bytes_sent, &pkt_sent);
 	if (error == 0)
 		(void)iflib_txd_db_check(txq, true);
 	return (error);
@@ -7194,10 +7223,8 @@ iflib_simple_transmit(if_t ifp, struct mbuf *m)
 
 	txq = iflib_simple_select_queue(ctx, m);
 	mtx_lock(&txq->ift_mtx);
-	error = iflib_encap(txq, &m);
+	error = iflib_encap(txq, &m, &bytes_sent, &pkt_sent);
 	if (error == 0) {
-		pkt_sent++;
-		bytes_sent += m->m_pkthdr.len;
 		mcast_sent += !!(m->m_flags & M_MCAST);
 		(void)iflib_txd_db_check(txq, true);
 	} else {
