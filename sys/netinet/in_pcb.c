@@ -134,10 +134,9 @@ VNET_DEFINE(int, ipport_reservedlow);
 VNET_DEFINE(int, ipport_randomized) = 1;
 
 #ifdef INET
-static struct inpcb	*in_pcblookup_hash_locked(struct inpcbinfo *pcbinfo,
-			    struct in_addr faddr, u_int fport_arg,
-			    struct in_addr laddr, u_int lport_arg,
-			    int lookupflags, uint8_t numa_domain, int fib);
+static struct inpcb	*in_pcblookup_internal(struct inpcbinfo *pcbinfo,
+    struct in_addr faddr, u_int fport_arg, struct in_addr laddr,
+    u_int lport_arg, int lookupflags, uint8_t numa_domain, int fib);
 
 #define RANGECHK(var, min, max) \
 	if ((var) < (min)) { (var) = (min); } \
@@ -303,7 +302,7 @@ in_pcblbgroup_find(struct inpcb *inp)
 	INP_HASH_LOCK_ASSERT(pcbinfo);
 
 	hdr = &pcbinfo->ipi_lbgrouphashbase[
-	    INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_porthashmask)];
+	    INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_lbgrouphashmask)];
 	CK_LIST_FOREACH(grp, hdr, il_list) {
 		struct inpcb *inp1;
 
@@ -411,7 +410,7 @@ in_pcbinslbgrouphash(struct inpcb *inp, uint8_t numa_domain)
 	}
 #endif
 
-	idx = INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_porthashmask);
+	idx = INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_lbgrouphashmask);
 	hdr = &pcbinfo->ipi_lbgrouphashbase[idx];
 	CK_LIST_FOREACH(grp, hdr, il_list) {
 		if (grp->il_cred->cr_prison == inp->inp_cred->cr_prison &&
@@ -472,7 +471,7 @@ in_pcbremlbgrouphash(struct inpcb *inp)
 	INP_HASH_WLOCK_ASSERT(pcbinfo);
 
 	hdr = &pcbinfo->ipi_lbgrouphashbase[
-	    INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_porthashmask)];
+	    INP_PCBPORTHASH(inp->inp_lport, pcbinfo->ipi_lbgrouphashmask)];
 	CK_LIST_FOREACH(grp, hdr, il_list) {
 		for (i = 0; i < grp->il_inpcnt; ++i) {
 			if (grp->il_inp[i] != inp)
@@ -548,7 +547,7 @@ in_pcblbgroup_numa(struct inpcb *inp, int arg)
  */
 void
 in_pcbinfo_init(struct inpcbinfo *pcbinfo, struct inpcbstorage *pcbstor,
-    u_int hash_nelements, u_int porthash_nelements)
+    u_int hash_nelements, u_int porthash_nelements, u_int lbgrouphash_nelements)
 {
 	struct hashalloc_args ha = {
 		.mtype = M_PCB,
@@ -566,10 +565,18 @@ in_pcbinfo_init(struct inpcbinfo *pcbinfo, struct inpcbstorage *pcbstor,
 	pcbinfo->ipi_hash_wild = hashalloc(&ha);
 	pcbinfo->ipi_hashmask = ha.size - 1;
 
-	ha.size = imin(porthash_nelements, IPPORT_MAX + 1);
-	pcbinfo->ipi_porthashbase = hashalloc(&ha);
-	pcbinfo->ipi_lbgrouphashbase = hashalloc(&ha);
-	pcbinfo->ipi_porthashmask = ha.size - 1;
+	if (porthash_nelements > 0) {
+		ha.size = imin(porthash_nelements, IPPORT_MAX + 1);
+		pcbinfo->ipi_porthashbase = hashalloc(&ha);
+		pcbinfo->ipi_porthashmask = ha.size - 1;
+	} else
+		pcbinfo->ipi_porthashbase = NULL;
+	if (lbgrouphash_nelements > 0) {
+		ha.size = imin(lbgrouphash_nelements, IPPORT_MAX + 1);
+		pcbinfo->ipi_lbgrouphashbase = hashalloc(&ha);
+		pcbinfo->ipi_lbgrouphashmask = ha.size - 1;
+	} else
+		pcbinfo->ipi_lbgrouphashbase = NULL;
 
 	pcbinfo->ipi_zone = pcbstor->ips_zone;
 	pcbinfo->ipi_smr = uma_zone_get_smr(pcbinfo->ipi_zone);
@@ -592,9 +599,14 @@ in_pcbinfo_destroy(struct inpcbinfo *pcbinfo)
 	ha.size = pcbinfo->ipi_hashmask + 1;
 	hashfree(pcbinfo->ipi_hash_exact, &ha);
 	hashfree(pcbinfo->ipi_hash_wild, &ha);
-	ha.size = pcbinfo->ipi_porthashmask + 1;
-	hashfree(pcbinfo->ipi_porthashbase, &ha);
-	hashfree(pcbinfo->ipi_lbgrouphashbase, &ha);
+	if (pcbinfo->ipi_porthashbase != NULL) {
+		ha.size = pcbinfo->ipi_porthashmask + 1;
+		hashfree(pcbinfo->ipi_porthashbase, &ha);
+	}
+	if (pcbinfo->ipi_lbgrouphashbase != NULL) {
+		ha.size = pcbinfo->ipi_lbgrouphashmask + 1;
+		hashfree(pcbinfo->ipi_lbgrouphashbase, &ha);
+	}
 	mtx_destroy(&pcbinfo->ipi_hash_lock);
 }
 
@@ -809,14 +821,14 @@ in_pcb_lport_dest(const struct inpcb *inp, struct sockaddr *lsa,
 		if (fsa != NULL) {
 #ifdef INET
 			if (lsa->sa_family == AF_INET) {
-				tmpinp = in_pcblookup_hash_locked(pcbinfo,
+				tmpinp = in_pcblookup_internal(pcbinfo,
 				    faddr, fport, laddr, lport, lookupflags,
 				    M_NODOM, RT_ALL_FIBS);
 			}
 #endif
 #ifdef INET6
 			if (lsa->sa_family == AF_INET6) {
-				tmpinp = in6_pcblookup_hash_locked(pcbinfo,
+				tmpinp = in6_pcblookup_internal(pcbinfo,
 				    faddr6, fport, laddr6, lport, lookupflags,
 				    M_NODOM, RT_ALL_FIBS);
 			}
@@ -1171,7 +1183,7 @@ in_pcbconnect(struct inpcb *inp, struct sockaddr_in *sin, struct ucred *cred)
 			INP_HASH_WUNLOCK(inp->inp_pcbinfo);
 			return (error);
 		}
-	} else if (in_pcblookup_hash_locked(inp->inp_pcbinfo, faddr,
+	} else if (in_pcblookup_internal(inp->inp_pcbinfo, faddr,
 	    sin->sin_port, laddr, inp->inp_lport, 0, M_NODOM, RT_ALL_FIBS) !=
 	    NULL) {
 		INP_HASH_WUNLOCK(inp->inp_pcbinfo);
@@ -2155,7 +2167,7 @@ in_pcblookup_lbgroup(const struct inpcbinfo *pcbinfo,
 	NET_EPOCH_ASSERT();
 
 	hdr = &pcbinfo->ipi_lbgrouphashbase[
-	    INP_PCBPORTHASH(lport, pcbinfo->ipi_porthashmask)];
+	    INP_PCBPORTHASH(lport, pcbinfo->ipi_lbgrouphashmask)];
 
 	/*
 	 * Search for an LB group match based on the following criteria:
@@ -2242,7 +2254,7 @@ in_pcblookup_exact_match(const struct inpcb *inp, struct in_addr faddr,
 }
 
 static struct inpcb *
-in_pcblookup_hash_exact(struct inpcbinfo *pcbinfo, struct in_addr faddr,
+in_pcblookup_exact(struct inpcbinfo *pcbinfo, struct in_addr faddr,
     u_short fport, struct in_addr laddr, u_short lport)
 {
 	struct inpcbhead *head;
@@ -2288,7 +2300,7 @@ in_pcblookup_wild_match(const struct inpcb *inp, struct in_addr laddr,
 #define	INP_LOOKUP_AGAIN	((struct inpcb *)(uintptr_t)-1)
 
 static struct inpcb *
-in_pcblookup_hash_wild_smr(struct inpcbinfo *pcbinfo, struct in_addr laddr,
+in_pcblookup_wild_smr(struct inpcbinfo *pcbinfo, struct in_addr laddr,
     u_short lport, int fib, const inp_lookup_t lockflags)
 {
 	struct inpcbhead *head;
@@ -2325,7 +2337,7 @@ in_pcblookup_hash_wild_smr(struct inpcbinfo *pcbinfo, struct in_addr laddr,
 }
 
 static struct inpcb *
-in_pcblookup_hash_wild_locked(struct inpcbinfo *pcbinfo, struct in_addr laddr,
+in_pcblookup_wild_locked(struct inpcbinfo *pcbinfo, struct in_addr laddr,
     u_short lport, int fib)
 {
 	struct inpcbhead *head;
@@ -2404,7 +2416,7 @@ in_pcblookup_hash_wild_locked(struct inpcbinfo *pcbinfo, struct in_addr laddr,
  * out incoming packets.
  */
 static struct inpcb *
-in_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in_addr faddr,
+in_pcblookup_internal(struct inpcbinfo *pcbinfo, struct in_addr faddr,
     u_int fport_arg, struct in_addr laddr, u_int lport_arg, int lookupflags,
     uint8_t numa_domain, int fib)
 {
@@ -2419,7 +2431,7 @@ in_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 	    ("%s: invalid local address", __func__));
 	INP_HASH_WLOCK_ASSERT(pcbinfo);
 
-	inp = in_pcblookup_hash_exact(pcbinfo, faddr, fport, laddr, lport);
+	inp = in_pcblookup_exact(pcbinfo, faddr, fport, laddr, lport);
 	if (inp != NULL)
 		return (inp);
 
@@ -2427,7 +2439,7 @@ in_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 		inp = in_pcblookup_lbgroup(pcbinfo, &faddr, fport,
 		    &laddr, lport, numa_domain, fib);
 		if (inp == NULL) {
-			inp = in_pcblookup_hash_wild_locked(pcbinfo, laddr,
+			inp = in_pcblookup_wild_locked(pcbinfo, laddr,
 			    lport, fib);
 		}
 	}
@@ -2435,8 +2447,12 @@ in_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 	return (inp);
 }
 
+/*
+ * Lookup inpcb using locks. Used by in_pcblookup_smr() in case inp_smr_lock()
+ * failed.
+ */
 static struct inpcb *
-in_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in_addr faddr,
+in_pcblookup_with_lock(struct inpcbinfo *pcbinfo, struct in_addr faddr,
     u_int fport, struct in_addr laddr, u_int lport, int lookupflags,
     uint8_t numa_domain, int fib)
 {
@@ -2447,7 +2463,7 @@ in_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 	    ("%s: LOCKPCB not set", __func__));
 
 	INP_HASH_WLOCK(pcbinfo);
-	inp = in_pcblookup_hash_locked(pcbinfo, faddr, fport, laddr, lport,
+	inp = in_pcblookup_internal(pcbinfo, faddr, fport, laddr, lport,
 	    lookupflags & ~INPLOOKUP_LOCKMASK, numa_domain, fib);
 	if (inp != NULL && !inp_trylock(inp, lockflags)) {
 		in_pcbref(inp);
@@ -2463,7 +2479,7 @@ in_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 }
 
 static struct inpcb *
-in_pcblookup_hash_smr(struct inpcbinfo *pcbinfo, struct in_addr faddr,
+in_pcblookup_smr(struct inpcbinfo *pcbinfo, struct in_addr faddr,
     u_int fport_arg, struct in_addr laddr, u_int lport_arg, int lookupflags,
     uint8_t numa_domain, int fib)
 {
@@ -2477,7 +2493,7 @@ in_pcblookup_hash_smr(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 	    ("%s: LOCKPCB not set", __func__));
 
 	smr_enter(pcbinfo->ipi_smr);
-	inp = in_pcblookup_hash_exact(pcbinfo, faddr, fport, laddr, lport);
+	inp = in_pcblookup_exact(pcbinfo, faddr, fport, laddr, lport);
 	if (inp != NULL) {
 		if (__predict_true(inp_smr_lock(inp, lockflags))) {
 			/*
@@ -2494,8 +2510,8 @@ in_pcblookup_hash_smr(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 		 * We failed to lock the inpcb, or its connection state changed
 		 * out from under us.  Fall back to a precise search.
 		 */
-		return (in_pcblookup_hash(pcbinfo, faddr, fport, laddr, lport,
-		    lookupflags, numa_domain, fib));
+		return (in_pcblookup_with_lock(pcbinfo, faddr, fport, laddr,
+		    lport, lookupflags, numa_domain, fib));
 	}
 
 	if ((lookupflags & INPLOOKUP_WILDCARD) != 0) {
@@ -2510,12 +2526,12 @@ in_pcblookup_hash_smr(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 			}
 			inp = INP_LOOKUP_AGAIN;
 		} else {
-			inp = in_pcblookup_hash_wild_smr(pcbinfo, laddr, lport,
+			inp = in_pcblookup_wild_smr(pcbinfo, laddr, lport,
 			    fib, lockflags);
 		}
 		if (inp == INP_LOOKUP_AGAIN) {
-			return (in_pcblookup_hash(pcbinfo, faddr, fport, laddr,
-			    lport, lookupflags, numa_domain, fib));
+			return (in_pcblookup_with_lock(pcbinfo, faddr, fport,
+			    laddr, lport, lookupflags, numa_domain, fib));
 		}
 	}
 
@@ -2537,7 +2553,7 @@ in_pcblookup(struct inpcbinfo *pcbinfo, struct in_addr faddr, u_int fport,
 	int fib;
 
 	fib = (lookupflags & INPLOOKUP_FIB) ? if_getfib(ifp) : RT_ALL_FIBS;
-	return (in_pcblookup_hash_smr(pcbinfo, faddr, fport, laddr, lport,
+	return (in_pcblookup_smr(pcbinfo, faddr, fport, laddr, lport,
 	    lookupflags, M_NODOM, fib));
 }
 
@@ -2550,7 +2566,7 @@ in_pcblookup_mbuf(struct inpcbinfo *pcbinfo, struct in_addr faddr,
 
 	M_ASSERTPKTHDR(m);
 	fib = (lookupflags & INPLOOKUP_FIB) ? M_GETFIB(m) : RT_ALL_FIBS;
-	return (in_pcblookup_hash_smr(pcbinfo, faddr, fport, laddr, lport,
+	return (in_pcblookup_smr(pcbinfo, faddr, fport, laddr, lport,
 	    lookupflags, m->m_pkthdr.numa_domain, fib));
 }
 #endif /* INET */
@@ -2563,7 +2579,7 @@ in_pcbjailed(const struct inpcb *inp, unsigned int flag)
 
 /*
  * Insert the PCB into a hash chain using ordering rules which ensure that
- * in_pcblookup_hash_wild_*() always encounter the highest-ranking PCB first.
+ * in_pcblookup_wild_*() always encounter the highest-ranking PCB first.
  *
  * Specifically, keep jailed PCBs in front of non-jailed PCBs, and keep PCBs
  * with exact local addresses ahead of wildcard PCBs.  Unbound v4-mapped v6 PCBs
