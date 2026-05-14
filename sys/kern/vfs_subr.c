@@ -161,13 +161,6 @@ int vttoif_tab[10] = {
 };
 
 /*
- * List of allocates vnodes in the system.
- */
-static TAILQ_HEAD(freelst, vnode) vnode_list;
-static struct vnode *vnode_list_free_marker;
-static struct vnode *vnode_list_reclaim_marker;
-
-/*
  * "Free" vnode target.  Free vnodes are rarely completely free, but are
  * just ones that are cheap to recycle.  Usually they are for files which
  * have been stat'd but not read; these usually have inode and namecache
@@ -190,7 +183,7 @@ static struct vnode *vnode_list_reclaim_marker;
  * E.g., 9% of 75% of MAXVNODES is more than 566000 vnodes to reclaim
  * whenever vnlru_proc() becomes active.
  */
-static long wantfreevnodes;
+static long __read_mostly wantfreevnodes;
 static long __exclusive_cache_line freevnodes;
 static long freevnodes_old;
 
@@ -326,12 +319,26 @@ static enum { SYNCER_RUNNING, SYNCER_SHUTTING_DOWN, SYNCER_FINAL_DELAY }
     syncer_state;
 
 /* Target for maximum number of vnodes. */
-u_long desiredvnodes;
-static u_long gapvnodes;		/* gap between wanted and desired */
-static u_long vhiwat;		/* enough extras after expansion */
+u_long __read_mostly desiredvnodes;
 static u_long vlowat;		/* minimal extras before expansion */
 static bool vstir;		/* nonzero to stir non-free vnodes */
-static volatile int vsmalltrigger = 8;	/* pref to keep if > this many pages */
+/* pref to keep vnode if > this many resident pages */
+static volatile int __read_mostly vsmalltrigger = 8;
+
+/* Group globals accessed only under vnode_list_mtx together. */
+struct {
+	/* List of allocated vnodes in the system. */
+	TAILQ_HEAD(freelst, vnode) vnode_list;
+	struct vnode *vnode_list_free_marker;
+	struct vnode *vnode_list_reclaim_marker;
+	u_long gapvnodes;	/* gap between wanted and desired */
+	u_long vhiwat;		/* enough extras after expansion */
+} g_vnlru __exclusive_cache_line;
+#define	vnode_list	g_vnlru.vnode_list
+#define	vnode_list_free_marker	g_vnlru.vnode_list_free_marker
+#define	vnode_list_reclaim_marker	g_vnlru.vnode_list_reclaim_marker
+#define	gapvnodes	g_vnlru.gapvnodes
+#define	vhiwat	g_vnlru.vhiwat
 
 static u_long vnlru_read_freevnodes(void);
 
@@ -876,7 +883,7 @@ vfs_busy(struct mount *mp, int flags)
 	MPASS((flags & ~MBF_MASK) == 0);
 	CTR3(KTR_VFS, "%s: mp %p with flags %d", __func__, mp, flags);
 
-	if (vfs_op_thread_enter(mp, mpcpu)) {
+	if (vfs_op_thread_enter(mp, &mpcpu)) {
 		MPASS((mp->mnt_kern_flag & MNTK_DRAINING) == 0);
 		MPASS((mp->mnt_kern_flag & MNTK_UNMOUNT) == 0);
 		MPASS((mp->mnt_kern_flag & MNTK_REFEXPIRE) == 0);
@@ -939,7 +946,7 @@ vfs_unbusy(struct mount *mp)
 
 	CTR2(KTR_VFS, "%s: mp %p", __func__, mp);
 
-	if (vfs_op_thread_enter(mp, mpcpu)) {
+	if (vfs_op_thread_enter(mp, &mpcpu)) {
 		MPASS((mp->mnt_kern_flag & MNTK_DRAINING) == 0);
 		vfs_mp_count_sub_pcpu(mpcpu, lockref, 1);
 		vfs_mp_count_sub_pcpu(mpcpu, ref, 1);
@@ -1345,7 +1352,7 @@ next_iter:
 	return (done);
 }
 
-static int max_free_per_call = 10000;
+static int __read_mostly max_free_per_call = 10000;
 SYSCTL_INT(_debug, OID_AUTO, max_vnlru_free, CTLFLAG_RW, &max_free_per_call, 0,
     "limit on vnode free requests per call to the vnlru_free routine (legacy)");
 SYSCTL_INT(_vfs_vnode_vnlru, OID_AUTO, max_free_per_call, CTLFLAG_RW,
@@ -1535,7 +1542,7 @@ vnlru_recalc(void)
  * Calling vlrurecycle() from the bowels of filesystem code has some
  * interesting deadlock problems.
  */
-static struct proc *vnlruproc;
+static struct proc * __read_mostly vnlruproc;
 static int vnlruproc_sig;
 static u_long vnlruproc_kicks;
 
@@ -6090,7 +6097,7 @@ vop_create_post(void *ap, int rc)
 	a = ap;
 	dvp = a->a_dvp;
 	vn_seqc_write_end(dvp);
-	if (!rc) {
+	if (rc == 0) {
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE);
 		INOTIFY_NAME(*a->a_vpp, dvp, a->a_cnp, IN_CREATE);
 	}
@@ -6244,7 +6251,7 @@ vop_mknod_post(void *ap, int rc)
 	a = ap;
 	dvp = a->a_dvp;
 	vn_seqc_write_end(dvp);
-	if (!rc) {
+	if (rc == 0) {
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE);
 		INOTIFY_NAME(*a->a_vpp, dvp, a->a_cnp, IN_CREATE);
 	}
@@ -6512,8 +6519,10 @@ vop_read_pgcache_post(void *ap, int rc)
 {
 	struct vop_read_pgcache_args *a = ap;
 
-	if (!rc)
-		VFS_KNOTE_UNLOCKED(a->a_vp, NOTE_READ);
+	if (rc == 0) {
+		VFS_KNOTE_LOCKED(a->a_vp, NOTE_READ);
+		INOTIFY(a->a_vp, IN_ACCESS);
+	}
 }
 
 static struct knlist fs_knlist;
@@ -6659,6 +6668,8 @@ vfs_knlunlock(void *arg)
 {
 	struct vnode *vp = arg;
 
+	if (KNLIST_EMPTY(&vp->v_pollinfo->vpi_selinfo.si_note))
+		vn_irflag_unset(vp, VIRF_KNOTE);
 	VOP_UNLOCK(vp);
 }
 
@@ -6706,7 +6717,11 @@ vfs_kqfilter(struct vop_kqfilter_args *ap)
 		return (ENOMEM);
 	knl = &vp->v_pollinfo->vpi_selinfo.si_note;
 	vhold(vp);
-	knlist_add(knl, kn, 0);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	knlist_add(knl, kn, 1);
+	if ((vn_irflag_read(vp) & VIRF_KNOTE) == 0)
+		vn_irflag_set(vp, VIRF_KNOTE);
+	VOP_UNLOCK(vp);
 
 	return (0);
 }
@@ -6985,7 +7000,7 @@ vfs_cache_root(struct mount *mp, int flags, struct vnode **vpp)
 	struct vnode *vp;
 	int error;
 
-	if (!vfs_op_thread_enter(mp, mpcpu))
+	if (!vfs_op_thread_enter(mp, &mpcpu))
 		return (vfs_cache_root_fallback(mp, flags, vpp));
 	vp = atomic_load_ptr(&mp->mnt_rootvnode);
 	if (vp == NULL || VN_IS_DOOMED(vp)) {

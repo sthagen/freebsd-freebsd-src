@@ -470,13 +470,18 @@ nlattr_get_multipath(struct nlattr *nla, struct nl_pstate *npt,
 	max_nhops = data_len / sizeof(struct rtnexthop);
 
 	mp = npt_alloc(npt, (max_nhops + 2) * sizeof(struct rta_mpath_nh));
+	if (mp == NULL) {
+		NLMSG_REPORT_ERR_MSG(npt, "%s: too many RTA_MULTIPATH", __func__);
+		return (ENOMEM);
+	}
 	mp->num_nhops = 0;
 
 	for (rtnh = (struct rtnexthop *)(nla + 1); data_len > 0; ) {
 		struct rta_mpath_nh *mpnh;
 
+		len = NL_ITEM_ALIGN(rtnh->rtnh_len);
 		if (__predict_false(rtnh->rtnh_len <= sizeof(*rtnh) ||
-		    rtnh->rtnh_len > data_len)) {
+		    len < rtnh->rtnh_len || len > data_len)) {
 			NLMSG_REPORT_ERR_MSG(npt, "%s: bad length %u",
 			    __func__, rtnh->rtnh_len);
 			return (EINVAL);
@@ -490,7 +495,6 @@ nlattr_get_multipath(struct nlattr *nla, struct nl_pstate *npt,
 			    mp->num_nhops - 1);
 			return (error);
 		}
-		len = NL_ITEM_ALIGN(rtnh->rtnh_len);
 		data_len -= len;
 		rtnh = (struct rtnexthop *)((char *)rtnh + len);
 	}
