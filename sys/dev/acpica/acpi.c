@@ -4609,7 +4609,7 @@ acpi_sleep_state_sysctl(SYSCTL_HANDLER_ARGS)
 static int
 acpi_stype_sysctl(SYSCTL_HANDLER_ARGS)
 {
-    char name[10];
+    char name[POWER_STYPE_NAME_LEN];
     int err;
     int sstate;
     enum power_stype new_stype, old_stype;
@@ -5064,7 +5064,7 @@ acpi_pm_func(u_long cmd, void *arg, enum power_stype stype)
 			error = EINVAL;
 			goto out;
 		}
-		if (ACPI_FAILURE(acpi_EnterSleepState(sc, stype)))
+		if (ACPI_FAILURE(acpi_ReqSleepState(sc, stype)))
 			error = ENXIO;
 		break;
 	default:
