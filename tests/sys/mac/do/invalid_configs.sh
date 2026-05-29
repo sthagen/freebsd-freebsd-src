@@ -1,6 +1,6 @@
-#!/usr/bin/env atf-sh
+# Copyright (c) 2026 The FreeBSD Foundation
 #
-# Copyright (c) 2026, The FreeBSD Foundation
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # This software was developed by Olivier Certner <olce@FreeBSD.org> at
 # Kumacom SARL under sponsorship from the FreeBSD Foundation.
@@ -75,7 +75,7 @@ rules_wrong_separator_body()
 
 atf_init_test_cases()
 {
-    . $(atf_get_srcdir)/common.sh
+    . "$(atf_get_srcdir)"/common.sh
 
     atf_add_test_case rule_no_target_part
     atf_add_test_case rule_no_match_part
