@@ -3823,6 +3823,15 @@ again:
 	}
 	tdvp = tond.ni_dvp;
 	tvp = tond.ni_vp;
+	if (tdvp == vp_crossmp) {
+		/*
+		 * Rename of the root vnode of the mounted
+		 * filesystem. It is possible to get there with the
+		 * nullfs mount over the regular file.
+		 */
+		error = EBUSY;
+		goto out;
+	}
 	if (tvp != NULL && (flags & AT_RENAME_NOREPLACE) != 0) {
 		/*
 		 * Often filesystems need to relock the vnodes in
@@ -3855,6 +3864,9 @@ again1:
 			vfs_rel(tmp);
 			tmp = NULL;
 		}
+		error = sig_intr();
+		if (error != 0)
+			return (error);
 		error = vn_start_write(NULL, &mp, V_XSLEEP | V_PCATCH);
 		if (error != 0)
 			return (error);
@@ -3937,8 +3949,11 @@ out:
 out1:
 	if (error == ERESTART)
 		return (0);
-	if (error == ERELOOKUP)
-		goto again;
+	if (error == ERELOOKUP) {
+		error = sig_intr();
+		if (error == 0)
+			goto again;
+	}
 	return (error);
 }
 
