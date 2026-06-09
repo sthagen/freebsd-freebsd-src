@@ -80,13 +80,13 @@ nocloud_body()
 	atf_check -s exit:1 -e match:"nuageinit: error parsing nocloud.*" /usr/libexec/nuageinit "${PWD}"/media/nuageinit/ nocloud
 	printf "instance-id: iid-local01\nlocal-hostname: cloudimg\n" > "${PWD}"/media/nuageinit/meta-data
 	atf_check -s exit:0 /usr/libexec/nuageinit "${PWD}"/media/nuageinit nocloud
-	atf_check -o inline:"hostname=\"cloudimg\"\n" cat etc/rc.conf.d/hostname
+	atf_check -o inline:"hostname='cloudimg'\n" cat etc/rc.conf.d/hostname
 	cat > media/nuageinit/meta-data << EOF
 instance-id: iid-local01
 hostname: myhost
 EOF
 	atf_check -s exit:0 /usr/libexec/nuageinit "${PWD}"/media/nuageinit nocloud
-	atf_check -o inline:"hostname=\"myhost\"\n" cat etc/rc.conf.d/hostname
+	atf_check -o inline:"hostname='myhost'\n" cat etc/rc.conf.d/hostname
 }
 
 nocloud_userdata_script_body()
@@ -223,15 +223,15 @@ network:
 EOF
 	atf_check /usr/libexec/nuageinit "${PWD}"/media/nuageinit nocloud
 	cat > network << EOF
-ifconfig_${myiface}="inet 192.0.2.2/24"
-ifconfig_${myiface}_ipv6="inet6 2001:db8::2/64"
-ipv6_network_interfaces="${myiface}"
-ipv6_default_interface="${myiface}"
+ifconfig_${myiface}='inet 192.0.2.2/24'
+ifconfig_${myiface}_ipv6='inet6 2001:db8::2/64'
+ipv6_network_interfaces='${myiface}'
+ipv6_default_interface='${myiface}'
 EOF
 	cat > routing << EOF
-defaultrouter="192.0.2.1"
-ipv6_defaultrouter="2001:db8::1"
-ipv6_route_${myiface}="2001:db8::1 -prefixlen 128 -interface ${myiface}"
+defaultrouter='192.0.2.1'
+ipv6_defaultrouter='2001:db8::1'
+ipv6_route_${myiface}='2001:db8::1 -prefixlen 128 -interface ${myiface}'
 EOF
 	atf_check -o file:network cat "${PWD}"/etc/rc.conf.d/network
 	atf_check -o file:routing cat "${PWD}"/etc/rc.conf.d/routing
@@ -250,7 +250,7 @@ config2_body()
 }
 EOF
 	atf_check /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o inline:"hostname=\"cloudimg\"\n" cat etc/rc.conf.d/hostname
+	atf_check -o inline:"hostname='cloudimg'\n" cat etc/rc.conf.d/hostname
 }
 
 config2_pubkeys_head()
@@ -406,15 +406,15 @@ cat > media/nuageinit/network_data.json << EOF
 EOF
 	atf_check /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
 	cat > network << EOF
-ifconfig_${myiface}="DHCP"
-ifconfig_${myiface}_ipv6="inet6 2001:db8::3257:9652/64"
-ipv6_network_interfaces="${myiface}"
-ipv6_default_interface="${myiface}"
+ifconfig_${myiface}='DHCP'
+ifconfig_${myiface}_ipv6='inet6 2001:db8::3257:9652/64'
+ipv6_network_interfaces='${myiface}'
+ipv6_default_interface='${myiface}'
 EOF
 	cat > routing << EOF
-ipv6_defaultrouter="fd00::1"
-ipv6_route_${myiface}="fd00::1 -prefixlen 128 -interface ${myiface}"
-ipv6_static_routes="${myiface}"
+ipv6_defaultrouter='fd00::1'
+ipv6_route_${myiface}='fd00::1 -prefixlen 128 -interface ${myiface}'
+ipv6_static_routes='${myiface}'
 EOF
 	atf_check -o file:network cat "${PWD}"/etc/rc.conf.d/network
 	atf_check -o file:routing cat "${PWD}"/etc/rc.conf.d/routing
@@ -466,12 +466,12 @@ cat > media/nuageinit/network_data.json << EOF
 EOF
 	atf_check /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
 	cat > network << EOF
-ifconfig_${myiface}="inet 10.184.0.244 netmask 255.255.240.0"
+ifconfig_${myiface}='inet 10.184.0.244 netmask 255.255.240.0'
 EOF
 	cat > routing << EOF
-route_cloudinit1_${myiface}="-net 10.0.0.0 11.0.0.1 255.0.0.0"
-defaultrouter="23.253.157.1"
-static_routes="cloudinit1_${myiface}"
+route_cloudinit1_${myiface}='-net 10.0.0.0 11.0.0.1 255.0.0.0'
+defaultrouter='23.253.157.1'
+static_routes='cloudinit1_${myiface}'
 EOF
 	atf_check -o file:network cat "${PWD}"/etc/rc.conf.d/network
 	atf_check -o file:routing cat "${PWD}"/etc/rc.conf.d/routing
@@ -518,7 +518,7 @@ cat > media/nuageinit/network_data.json << EOF
 }
 EOF
 	atf_check /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o inline:'name_servers="9.9.9.9 149.112.112.112"\n' \
+	atf_check -o inline:"name_servers='9.9.9.9 149.112.112.112'\n" \
 		cat "${PWD}"/etc/resolvconf.conf
 }
 
@@ -1203,7 +1203,7 @@ keyboard:
   variant: acc
 EOF
 	atf_check -o empty /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o inline:'keymap="fr.acc"\n' cat etc/rc.conf.d/keymap
+	atf_check -o inline:"keymap='fr.acc'\n" cat etc/rc.conf.d/keymap
 	true
 }
 
@@ -1307,7 +1307,7 @@ echo "multipart script executed"
 --==BOUNDARY==--
 EOF
 	atf_check -o empty /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o inline:"hostname=\"multipart-host\"\n" cat etc/rc.conf.d/hostname
+	atf_check -o inline:"hostname='multipart-host'\n" cat etc/rc.conf.d/hostname
 	atf_check -o inline:"#!/bin/sh\necho \"multipart script executed\"\n" cat var/cache/nuageinit/multipart_script
 	test -x var/cache/nuageinit/multipart_script || atf_fail "multipart_script not executable"
 	true
@@ -1332,7 +1332,7 @@ power_state:
   timeout: 30
   condition: true
 EOF
-	atf_check -o inline:"shutdown -r +5 'Rebooting after configuration is complete'\n" \
+	atf_check -o inline:"shutdown -r '+5' 'Rebooting after configuration is complete'\n" \
 	    /usr/libexec/nuageinit "${PWD}"/media/nuageinit postnet
 	true
 }
@@ -1351,7 +1351,7 @@ config2_userdata_locale_body()
 locale: fr_FR.UTF-8
 EOF
 	atf_check -o empty /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o inline:"export LANG=fr_FR.UTF-8\n" cat etc/profile
+	atf_check -o inline:"export LANG='fr_FR.UTF-8'\n" cat etc/profile
 
 	cat > media/nuageinit/user_data <<EOF
 #cloud-config
@@ -1360,8 +1360,8 @@ locale:
   LC_ALL: de_DE.UTF-8
 EOF
 	atf_check -o empty /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o match:"export LANG=de_DE.UTF-8" cat etc/profile
-	atf_check -o match:"export LC_ALL=de_DE.UTF-8" cat etc/profile
+	atf_check -o match:"export LANG='de_DE.UTF-8'" cat etc/profile
+	atf_check -o match:"export LC_ALL='de_DE.UTF-8'" cat etc/profile
 	true
 }
 
@@ -1376,13 +1376,13 @@ fqdn: host.domain.tld
 hostname: host
 EOF
 	atf_check -o empty /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o inline:"hostname=\"host.domain.tld\"\n" cat ${PWD}/etc/rc.conf.d/hostname
+	atf_check -o inline:"hostname='host.domain.tld'\n" cat ${PWD}/etc/rc.conf.d/hostname
 	cat > media/nuageinit/user_data <<EOF
 #cloud-config
 hostname: host
 EOF
 	atf_check -o empty /usr/libexec/nuageinit "${PWD}"/media/nuageinit config-2
-	atf_check -o inline:"hostname=\"host\"\n" cat ${PWD}/etc/rc.conf.d/hostname
+	atf_check -o inline:"hostname='host'\n" cat ${PWD}/etc/rc.conf.d/hostname
 }
 
 config2_userdata_encode_base64_body()

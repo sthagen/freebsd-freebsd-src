@@ -187,7 +187,7 @@ local function sethostname(hostname)
 		warnmsg("Impossible to open " .. hostnamepath .. ":" .. err)
 		return
 	end
-	f:write('hostname="' .. hostname:gsub('"', '\\"') .. '"\n')
+	f:write("hostname=" .. shell_escape(hostname) .. "\n")
 	f:close()
 end
 
@@ -832,6 +832,7 @@ local function addfile(file, defer)
 		root = ""
 	end
 	local filepath = root .. file.path
+	mkdir_p(dirname(filepath))
 	local f = assert(io.open(filepath, mode))
 	if content then
 		f:write(content)
