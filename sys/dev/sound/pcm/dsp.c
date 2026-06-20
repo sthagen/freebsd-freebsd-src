@@ -2742,16 +2742,29 @@ dsp_oss_syncstart(int sg_id)
 
 	/* Proceed only if no errors encountered. */
 	if (ret == 0) {
-		/* Launch channels */
+		/*
+		 * Unlock all members before starting any of them.
+		 * Holding multiple channel locks while calling chn_start()
+		 * on a virtual channel can trigger the parent, which
+		 * acquires PCM_LOCK() while other virtual channels are
+		 * still locked -- a lock order reversal.
+		 */
+		SLIST_FOREACH(sm, &sg->members, link) {
+			sm->ch->sm = NULL;
+			sm->ch->flags &= ~CHN_F_NOTRIGGER;
+			CHN_UNLOCK(sm->ch);
+		}
+
+		/*
+		 * Start each channel individually, then remove it from
+		 * the sync group and free its member structure.
+		 */
 		while ((sm = SLIST_FIRST(&sg->members)) != NULL) {
-			SLIST_REMOVE_HEAD(&sg->members, link);
-
 			c = sm->ch;
-			c->sm = NULL;
+			CHN_LOCK(c);
 			chn_start(c, 1);
-			c->flags &= ~CHN_F_NOTRIGGER;
 			CHN_UNLOCK(c);
-
+			SLIST_REMOVE_HEAD(&sg->members, link);
 			free(sm, M_DEVBUF);
 		}
 
@@ -3007,10 +3020,20 @@ dsp_kqevent(struct knote *kn, long hint)
 	}
 	kn->kn_data = 0;
 	if (chn_polltrigger(ch)) {
-		if (kn->kn_filter == EVFILT_READ)
+		if (kn->kn_filter == EVFILT_READ) {
 			kn->kn_data = sndbuf_getready(ch->bufsoft);
-		else
+			if (ch->flags & CHN_F_MMAP)
+				kn->kn_kevent.ext[0] = sndbuf_getfreeptr(ch->bufsoft);
+			else
+				kn->kn_kevent.ext[0] = sndbuf_getready(ch->bufsoft) / ch->bufsoft->align;
+		} else {
 			kn->kn_data = sndbuf_getfree(ch->bufsoft);
+			if (ch->flags & CHN_F_MMAP)
+				kn->kn_kevent.ext[0] = sndbuf_getreadyptr(ch->bufsoft);
+			else
+				kn->kn_kevent.ext[0] = sndbuf_getready(ch->bufsoft) / ch->bufsoft->align;
+		}
+		kn->kn_kevent.ext[1] = ch->xruns;
 	}
 
 	return (kn->kn_data > 0);
