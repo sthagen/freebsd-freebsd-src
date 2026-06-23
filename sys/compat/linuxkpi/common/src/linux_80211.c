@@ -503,10 +503,149 @@ lkpi_rx_bw_to_cw(enum ieee80211_sta_rx_bandwidth rx_bw)
 	}
 }
 
+static enum ieee80211_bss_changed
+lkpi_sta_supp_rates(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+    struct ieee80211_node *ni,
+    enum ieee80211_rate_control_changed_flags *rc_changed)
+{
+	struct lkpi_vif *lvif;
+	struct lkpi_sta *lsta;
+	struct ieee80211_sta *sta;
+	enum ieee80211_bss_changed bss_changed;
+	struct ieee80211_supported_band *supband;
+	uint32_t supp_rates, basic_rates;
+	int band, i, n;
+
+	bss_changed = 0;
+
+	band = vif->bss_conf.chanreq.oper.chan->band;
+	supband = hw->wiphy->bands[band];
+	if (supband == NULL)
+		return (bss_changed);
+
+	lvif = VIF_TO_LVIF(vif);
+	lsta = ni->ni_drv_data;
+	sta = LSTA_TO_STA(lsta);
+
+	supp_rates = 0;
+	basic_rates = 0;
+
+	for (n = 0; n < ni->ni_rates.rs_nrates; n++) {
+		uint8_t supp_rate;
+		uint16_t bitr;
+		bool basic;
+
+		/* Note: net80211 rates are in 0.5Mbit/s, e.g., 108 is 54Mbit/s. */
+		supp_rate = ni->ni_rates.rs_rates[n] & (~IEEE80211_RATE_BASIC);
+		basic = (ni->ni_rates.rs_rates[n] & IEEE80211_RATE_BASIC) != 0;
+
+		for (i = 0; i < supband->n_bitrates; i++) {
+			/* Band bitrates are * 10 so, e.g., 55 is 5.5Mbit/s. */
+			/* To match net80211 rates we need to do a DIV5. */
+			bitr = howmany(supband->bitrates[i].bitrate, 5);
+			if (supp_rate == bitr) {
+				supp_rates |= BIT(i);
+				if (basic)
+					basic_rates |= BIT(i);
+			}
+			/*
+			 * We are not checking if we are doing 11b or 11g and
+			 * if the rate is fine for each.
+			 */
+		}
+		TRACE_RATES("supp_rate %u basic %d supp_rates %#010x basic_rates %#010x",
+		    supp_rate, basic, supp_rates, basic_rates);
+	}
+	if (basic_rates != 0 &&
+	    vif->bss_conf.basic_rates != basic_rates) {
+		TRACE_RATES("vif bss_conf basic_rates %#010x update to %#010x",
+		    vif->bss_conf.basic_rates, basic_rates);
+		vif->bss_conf.basic_rates = basic_rates;
+		bss_changed |= BSS_CHANGED_BASIC_RATES;
+	}
+	/* Guard against net80211 not having any rates set when we get here. */
+	if (supp_rates == 0)
+		supp_rates = vif->bss_conf.basic_rates;
+	if (sta->deflink.supp_rates[band] != supp_rates) {
+		TRACE_RATES("band %d supp_rates %#010x update to %#010x",
+		    band, sta->deflink.supp_rates[band], supp_rates);
+		sta->deflink.supp_rates[band] = supp_rates;
+		if (rc_changed != NULL)
+			*rc_changed |= IEEE80211_RC_SUPP_RATES_CHANGED;
+	}
+
+	/*
+	 * br_mask got initialized in lkpi_ic_vap_create().
+	 * Do a basic rates check against it for the current band if we are
+	 * in a state to have all the above information.
+	 */
+	TRACE_RATES("band %d br_mask legacy %#010x & basic_rates %#010x != 0?",
+	    band, lvif->br_mask.control[band].legacy, vif->bss_conf.basic_rates);
+	if (band == vif->bss_conf.chanreq.oper.chan->band &&
+	    (lvif->br_mask.control[band].legacy & vif->bss_conf.basic_rates) == 0) {
+		/* In our setup this should never happen. */
+		printf("%s: WARNING: no acceptable basic rate %#010x & %#010x\n",
+		     __func__, lvif->br_mask.control[band].legacy, vif->bss_conf.basic_rates);
+	}
+
+	/*
+	 * XXX-BZ we should track changes here as well and call or let the
+	 * caller call lkpi_80211_mo_set_bitrate_mask() if needed.
+	 * Note: the call in lkpi_sta_scan_to_auth() still have to
+	 * happen unconditionally for the initial setting.
+	 */
+#if defined(LKPI_80211_HT)
+	if (supband->ht_cap.ht_supported) {
+		memcpy(lvif->br_mask.control[band].ht_mcs,
+		    supband->ht_cap.mcs.rx_mask,
+		    sizeof(lvif->br_mask.control[band].ht_mcs));
+#if defined(LINUXKPI_DEBUG_80211)
+		for (int i = 0; i < IEEE80211_HT_MCS_MASK_LEN; i++) {
+			TRACE_RATES("band %d ht_mcs[%d] %#010x",
+			    band, i, lvif->br_mask.control[band].ht_mcs[i]);
+		}
+#endif
+	}
+#endif /* LKPI_80211_HT */
+#if defined(LKPI_80211_VHT)
+	if (supband->vht_cap.vht_supported) {
+		uint16_t mcs_map, val;
+		uint8_t nss;
+
+		mcs_map = supband->vht_cap.vht_mcs.tx_mcs_map;
+		for (nss = 0; nss < NL80211_VHT_NSS_MAX; nss++) {
+			TRACE_RATES("band %d nss %d vht_mcs.tx_mcs_map %#06x mcs_map %#06x & 0x3 = %#06x",
+			    band, nss, supband->vht_cap.vht_mcs.tx_mcs_map, mcs_map, mcs_map & 0x3);
+			switch (mcs_map & 0x3) {
+			case IEEE80211_VHT_MCS_SUPPORT_0_7:
+				val = 0x00ff;
+				break;
+			case IEEE80211_VHT_MCS_SUPPORT_0_8:
+				val = 0x01ff;
+				break;
+			case IEEE80211_VHT_MCS_SUPPORT_0_9:
+				val = 0x03ff;
+				break;
+			case IEEE80211_VHT_MCS_NOT_SUPPORTED:
+				val = 0;
+				break;
+			}
+			lvif->br_mask.control[band].vht_mcs[nss] = val;
+			TRACE_RATES("band %d nss %d vht_mcs %#06x",
+			    band, nss, lvif->br_mask.control[band].vht_mcs[nss]);
+			mcs_map >>= 2;
+		}
+	}
+#endif /* LKPI_80211_VHT */
+
+	return (bss_changed);
+}
+
 static void
 lkpi_sync_chanctx_cw_from_rx_bw(struct ieee80211_hw *hw,
     struct ieee80211_vif *vif, struct ieee80211_sta *sta)
 {
+	struct lkpi_hw *lhw;
 	struct ieee80211_chanctx_conf *chanctx_conf;
 	enum ieee80211_sta_rx_bandwidth old_bw;
 	uint32_t changed;
@@ -519,7 +658,12 @@ lkpi_sync_chanctx_cw_from_rx_bw(struct ieee80211_hw *hw,
 		return;
 
 	old_bw = lkpi_cw_to_rx_bw(chanctx_conf->def.width);
-	if (old_bw == sta->deflink.bandwidth)
+	TRACE_RATES("old_bw %d sta->deflink.bandwidth %d hw->conf.chandef.width %d",
+	    old_bw, sta->deflink.bandwidth, lkpi_cw_to_rx_bw(hw->conf.chandef.width));
+
+	lhw = HW_TO_LHW(hw);
+	if (old_bw == sta->deflink.bandwidth &&
+	    (!lhw->emulate_chanctx || old_bw == lkpi_cw_to_rx_bw(hw->conf.chandef.width)))
 		return;
 
 	chanctx_conf->def.width = lkpi_rx_bw_to_cw(sta->deflink.bandwidth);
@@ -530,6 +674,11 @@ lkpi_sync_chanctx_cw_from_rx_bw(struct ieee80211_hw *hw,
 	chanctx_conf->min_def = chanctx_conf->def;
 
 	vif->bss_conf.chanreq.oper.width = chanctx_conf->def.width;
+
+	TRACE_RATES("chanctx_conf %p def.width %d sta->deflink.bandwidth %d "
+	    "ht_supported %d vht_supported %d",
+	    chanctx_conf, chanctx_conf->def.width, sta->deflink.bandwidth,
+	    sta->deflink.ht_cap.ht_supported, sta->deflink.vht_cap.vht_supported);
 
 	changed = IEEE80211_CHANCTX_CHANGE_MIN_WIDTH;
 	changed |= IEEE80211_CHANCTX_CHANGE_WIDTH;
@@ -550,6 +699,7 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 	if ((ni->ni_flags & IEEE80211_NODE_HT) == 0) {
 		sta->deflink.ht_cap.ht_supported = false;
+		TRACE_RATES("HT ht_supported %d", sta->deflink.ht_cap.ht_supported);
 		return;
 	}
 
@@ -584,7 +734,7 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	sta_ht_cap = &sta->deflink.ht_cap;
 	rx_nss = 0;
 	for (i = 0; i < 4; i++) {
-		TRACEOK("HT rx_mask[%d] sta %#04x & hw %#04x", i,
+		TRACE_RATES("HT rx_mask[%d] sta %#04x & hw %#04x", i,
 		    sta_ht_cap->mcs.rx_mask[i], ht_cap->mcs.rx_mask[i]);
 		sta_ht_cap->mcs.rx_mask[i] =
 			sta_ht_cap->mcs.rx_mask[i] & ht_cap->mcs.rx_mask[i];
@@ -594,10 +744,11 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 			rx_nss++;
 	}
 	if (rx_nss > 0) {
-		TRACEOK("HT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
+		TRACE_RATES("HT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
 		sta->deflink.rx_nss = MAX(rx_nss, sta->deflink.rx_nss);
 	} else {
 		sta->deflink.ht_cap.ht_supported = false;
+		TRACE_RATES("HT ht_supported %d", sta->deflink.ht_cap.ht_supported);
 		return;
 	}
 
@@ -619,6 +770,7 @@ lkpi_sta_sync_ht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		sta->deflink.agg.max_tid_amsdu_len[j] = ;
 	}
 #endif
+	TRACE_RATES("HT ht_supported %d", sta->deflink.ht_cap.ht_supported);
 }
 #endif
 
@@ -637,6 +789,7 @@ lkpi_sta_sync_vht_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	if ((ni->ni_flags & IEEE80211_NODE_VHT) == 0 ||
 	    !IEEE80211_IS_CHAN_VHT_5GHZ(ni->ni_chan)) {
 		sta->deflink.vht_cap.vht_supported = false;
+		TRACE_RATES("VHT vht_supported %d", sta->deflink.vht_cap.vht_supported);
 		return;
 	}
 
@@ -718,16 +871,17 @@ skip_bw:
 		}
 		tx_map |= (sta << (2 * i));
 	}
-	TRACEOK("VHT rx_mcs_map %#010x->%#010x, tx_mcs_map %#010x->%#010x, rx_nss = %d",
+	TRACE_RATES("VHT rx_mcs_map %#010x->%#010x, tx_mcs_map %#010x->%#010x, rx_nss = %d",
 	    sta_vht_cap->vht_mcs.rx_mcs_map, rx_map,
 	    sta_vht_cap->vht_mcs.tx_mcs_map, tx_map, rx_nss);
 	sta_vht_cap->vht_mcs.rx_mcs_map = rx_map;
 	sta_vht_cap->vht_mcs.tx_mcs_map = tx_map;
 	if (rx_nss > 0) {
-		TRACEOK("VHT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
+		TRACE_RATES("VHT rx_nss = max(%d, %d)", rx_nss, sta->deflink.rx_nss);
 		sta->deflink.rx_nss = MAX(rx_nss, sta->deflink.rx_nss);
 	} else {
 		sta->deflink.vht_cap.vht_supported = false;
+		TRACE_RATES("VHT vht_supported %d", sta->deflink.vht_cap.vht_supported);
 		return;
 	}
 
@@ -743,16 +897,31 @@ skip_bw:
 		sta->deflink.agg.max_amsdu_len = IEEE80211_MAX_MPDU_LEN_VHT_3895;
 		break;
 	}
+
+	TRACE_RATES("VHT vht_supported %d", sta->deflink.vht_cap.vht_supported);
 }
 #endif
 
-static void
+static enum ieee80211_bss_changed
 lkpi_sta_sync_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
     struct ieee80211_sta *sta, struct ieee80211_node *ni, bool updchnctx)
 {
+	enum ieee80211_bss_changed bss_changed;
+	enum ieee80211_rate_control_changed_flags rc_changed;
+	enum ieee80211_sta_rx_bandwidth bandwidth;
+	uint8_t rx_nss;
 
 	if (updchnctx)
 		lockdep_assert_wiphy(hw->wiphy);
+
+	bss_changed = 0;
+	rc_changed = 0;
+
+	bandwidth = sta->deflink.bandwidth;
+	rx_nss = sta->deflink.rx_nss;
+
+	TRACE_RATES("updchnctx %d bandwidth %d rx_nss %u",
+	    updchnctx, bandwidth, rx_nss);
 
 	/*
 	 * Ensure rx_nss is at least 1 as otherwise drivers run into
@@ -776,6 +945,23 @@ lkpi_sta_sync_from_ni(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	 */
 	if (updchnctx)
 		lkpi_sync_chanctx_cw_from_rx_bw(hw, vif, sta);
+
+	bss_changed |= lkpi_sta_supp_rates(hw, vif, ni, &rc_changed);
+
+	if (sta->deflink.bandwidth != bandwidth)
+		rc_changed |= IEEE80211_RC_BW_CHANGED;
+	if (sta->deflink.rx_nss != rx_nss)
+		rc_changed |= IEEE80211_RC_NSS_CHANGED;
+
+	TRACE_RATES("updchnctx %d rc_change %#010x bss_changed %#010jx "
+	    "bandwidth %d rx_nss %u",
+	    updchnctx, rc_changed, (uintmax_t)bss_changed,
+	    sta->deflink.bandwidth, sta->deflink.rx_nss);
+
+	if (rc_changed != 0)
+		lkpi_80211_mo_link_sta_rc_update(hw, vif, &sta->deflink, rc_changed);
+
+	return (bss_changed);
 }
 
 #if 0
@@ -940,7 +1126,7 @@ lkpi_lsta_alloc(struct ieee80211vap *vap, const uint8_t mac[IEEE80211_ADDR_LEN],
 	sta->deflink.rx_nss = 1;
 	sta->deflink.sta = sta;
 
-	lkpi_sta_sync_from_ni(hw, vif, sta, ni, false);
+	(void)lkpi_sta_sync_from_ni(hw, vif, sta, ni, false);
 
 	IMPROVE("he, eht, bw_320, ... smps_mode, ..");
 
@@ -2690,8 +2876,6 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	vif->cfg.idle = false;
 	bss_changed |= BSS_CHANGED_IDLE;
 
-	/* vif->bss_conf.basic_rates ? Where exactly? */
-
 	lvif->beacons = 0;
 	/* Should almost assert it is this. */
 	vif->cfg.assoc = false;
@@ -2707,6 +2891,11 @@ lkpi_sta_scan_to_auth(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 
 	/* RATES */
 	IMPROVE("bss info: not all needs to come now and rates are missing");
+	bss_changed |= lkpi_sta_supp_rates(hw, vif, ni, NULL);
+	if (ieee80211_hw_check(hw, HAS_RATE_CONTROL))
+		lkpi_80211_mo_set_bitrate_mask(hw, vif, &lvif->br_mask);
+	TODO("cfg80211_tid_config WHERE?");
+
 	lkpi_bss_info_change(hw, vif, bss_changed);
 
 	/*
@@ -2991,7 +3180,7 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	IMPROVE("ponder some of this moved to ic_newassoc, scan_assoc_success, "
 	    "and to lesser extend ieee80211_notify_node_join");
 
-	/* Finish assoc. (even if this is auth_to_run!) */
+	/* Finish assoc. */
 	/* Update sta_state (AUTH to ASSOC) and set aid. */
 	KASSERT(lsta->state == IEEE80211_STA_AUTH, ("%s: lsta %p state not "
 	    "AUTH: %#x\n", __func__, lsta, lsta->state));
@@ -3001,6 +3190,16 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	if (vap->iv_flags & IEEE80211_F_WME)
 		sta->wme = true;
 #endif
+	bss_changed = 0;
+	/*
+	 * This sync needs to happen before the sta_state change to ASSOC.
+	 * At least mt7921 (likely all drivers) rely on, e.g., ht_cap, vht_cap,
+	 * .. to be set at the point we go to assoc.
+	 */
+	bss_changed |= lkpi_sta_sync_from_ni(hw, vif, sta, ni, true);
+	if (ieee80211_hw_check(hw, HAS_RATE_CONTROL))
+		lkpi_80211_mo_set_bitrate_mask(hw, vif, &lvif->br_mask);
+
 	error = lkpi_80211_mo_sta_state(hw, vif, lsta, IEEE80211_STA_ASSOC);
 	if (error != 0) {
 		ic_printf(vap->iv_ic, "%s:%d: mo_sta_state(ASSOC) "
@@ -3011,7 +3210,6 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	IMPROVE("wme / conf_tx [all]");
 
 	/* Update bss info (bss_info_changed) (assoc, aid, ..). */
-	bss_changed = 0;
 #ifdef LKPI_80211_WME
 	bss_changed |= lkpi_wme_update(lhw, vap, true);
 #endif
@@ -3070,8 +3268,8 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 		IMPROVE("net80211 does not consider node authorized");
 	}
 
+	bss_changed = 0;
 	IMPROVE("Is this the right spot, has net80211 done all updates already?");
-	lkpi_sta_sync_from_ni(hw, vif, sta, ni, true);
 
 	/* Update thresholds. */
 	hw->wiphy->frag_threshold = vap->iv_fragthreshold;
@@ -3099,7 +3297,6 @@ lkpi_sta_assoc_to_run(struct ieee80211vap *vap, enum ieee80211_state nstate, int
 	 */
 	IMPROVE("Need that bssid setting, and the keys");
 
-	bss_changed = 0;
 	bss_changed |= lkpi_update_dtim_tsf(vif, ni, vap, __func__, __LINE__);
 	lkpi_bss_info_change(hw, vif, bss_changed);
 
@@ -4087,6 +4284,7 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 	struct ieee80211_vif *vif;
 	struct ieee80211_tx_queue_params txqp;
 	enum ieee80211_bss_changed bss_changed;
+	enum nl80211_band band;
 	struct sysctl_oid *node;
 	size_t len;
 	int error, i;
@@ -4109,8 +4307,50 @@ lkpi_ic_vap_create(struct ieee80211com *ic, const char name[IFNAMSIZ],
 	refcount_init(&lvif->nt_unlocked, 0);
 	lvif->lvif_bss_synched = false;
 	vap = LVIF_TO_VAP(lvif);
-
 	vif = LVIF_TO_VIF(lvif);
+
+	/*
+	 * Setup legacy br_mask here.  We will call (*set_bitrate_mask)
+	 * elsewhere to announce it to the driver but it is a static
+	 * setup.
+	 * Also setup basic_rates with just the mandatory rates for the
+	 * current band (if avail).
+	 */
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
+		struct ieee80211_supported_band *supband;
+		uint32_t rate_mandatory;;
+
+		supband = hw->wiphy->bands[band];
+		if (supband == NULL || supband->n_bitrates == 0)
+			continue;
+
+		/* Per-band legacy br_mask. */
+		lvif->br_mask.control[band].legacy = (1 << supband->n_bitrates) - 1;
+
+		/* basic_rates for the current band. */
+		if (hw->conf.chandef.chan == NULL ||
+		    hw->conf.chandef.chan->band != band)
+			continue;
+
+		switch (band) {
+		case NL80211_BAND_2GHZ:
+			/* We have to assume 11g support here. */
+			rate_mandatory = IEEE80211_RATE_MANDATORY_G |
+			    IEEE80211_RATE_MANDATORY_B;
+			break;
+		case NL80211_BAND_5GHZ:
+			rate_mandatory = IEEE80211_RATE_MANDATORY_A;
+			break;
+		default:
+			continue;
+		}
+
+		for (i = 0; i < supband->n_bitrates; i++) {
+			if ((supband->bitrates[i].flags & rate_mandatory) != 0)
+				vif->bss_conf.basic_rates |= BIT(i);
+		}
+	}
+
 	memcpy(vif->addr, mac, IEEE80211_ADDR_LEN);
 	vif->p2p = false;
 	vif->probe_req_reg = false;
@@ -5896,6 +6136,7 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
 	if ((m->m_flags & M_EAPOL) != 0) {
 		info->control.flags |= IEEE80211_TX_CTRL_PORT_CTRL_PROTO;
 		info->flags |= IEEE80211_TX_CTL_USE_MINRATE;	/* mt76 */
+		TRACE_RATES("M_EAPOL -> TX_CTL_USE_MINRATE");
 	}
 	info->control.vif = vif;
 
@@ -5914,7 +6155,7 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
 			info->flags |= IEEE80211_TX_CTL_AMPDU;
 	}
 
-	/* XXX-BZ info->control.rates */
+	/* XXX-BZ info->control.rates for non-HW rate control and injected packets. */
 #ifdef __notyet__
 #ifdef LKPI_80211_HT
 	info->control.rts_cts_rate_idx=
@@ -6732,18 +6973,28 @@ lkpi_ic_getradiocaps(struct ieee80211com *ic, int maxchan,
 	if (hw->wiphy->bands[NL80211_BAND_2GHZ] != NULL)
 		nchans = hw->wiphy->bands[NL80211_BAND_2GHZ]->n_channels;
 	if (nchans > 0) {
+		struct ieee80211_supported_band *supband;
+
 		memset(bands, 0, sizeof(bands));
 		chan_flags = 0;
 		setbit(bands, IEEE80211_MODE_11B);
-		/* XXX-BZ unclear how to check for 11g. */
+
+		/* Check for 11g (simplified). */
+		supband = hw->wiphy->bands[NL80211_BAND_2GHZ];
+		for (i = 0; i < supband->n_bitrates; i++) {
+			if ((supband->bitrates[i].flags &
+			    IEEE80211_RATE_MANDATORY_G) != 0) {
+				setbit(bands, IEEE80211_MODE_11G);
+				break;
+			}
+		}
 
 		IMPROVE("the bitrates may have flags?");
-		setbit(bands, IEEE80211_MODE_11G);
 
 		lkpi_ic_getradiocaps_ht(ic, hw, bands, &chan_flags,
 		    NL80211_BAND_2GHZ);
 
-		channels = hw->wiphy->bands[NL80211_BAND_2GHZ]->channels;
+		channels = supband->channels;
 		for (i = 0; i < nchans && *n < maxchan; i++) {
 			uint32_t nflags = 0;
 			int cflags = chan_flags;
@@ -8514,6 +8765,7 @@ lkpi_wiphy_band_annotate(struct wiphy *wiphy)
 			continue;
 		}
 
+		/* Band bitrates are times 10; e.g., 55 is 5.5Mbit/s. */
 		for (i = 0; i < supband->n_bitrates; i++) {
 			switch (band) {
 			case NL80211_BAND_2GHZ:
@@ -8545,6 +8797,10 @@ lkpi_wiphy_band_annotate(struct wiphy *wiphy)
 				}
 				break;
 			}
+			TRACE_RATES("band %d bitrate[%d/%u] %u flags %#010x",
+			    band, i, supband->n_bitrates,
+			    supband->bitrates[i].bitrate,
+			    supband->bitrates[i].flags);
 		}
 	}
 }
