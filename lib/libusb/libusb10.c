@@ -2115,6 +2115,8 @@ libusb_set_option(libusb_context *ctx, enum libusb_option option, ...)
 	case LIBUSB_OPTION_LOG_CB:
 		callback = va_arg(args, libusb_log_cb);
 		break;
+	default:
+		break;
 	}
 
 	if (option >= LIBUSB_OPTION_MAX) {
@@ -2159,4 +2161,16 @@ libusb_set_option(libusb_context *ctx, enum libusb_option option, ...)
 end:
 	va_end(args);
 	return (err);
+}
+
+void
+libusb_set_log_cb(libusb_context *ctx, libusb_log_cb cb, int mode)
+{
+	if ((mode & LIBUSB_LOG_CB_GLOBAL) && usbi_default_context != NULL)
+		usbi_default_context->log_cb = cb;
+	if (mode & LIBUSB_LOG_CB_CONTEXT) {
+		ctx = GET_CONTEXT(ctx);
+		if (ctx != NULL)
+			ctx->log_cb = cb;
+	}
 }
