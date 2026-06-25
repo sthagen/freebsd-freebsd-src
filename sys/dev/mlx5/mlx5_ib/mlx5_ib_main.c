@@ -368,12 +368,16 @@ static void ib_gid_to_mlx5_roce_addr(const union ib_gid *gid,
 	void *mlx5_addr_mac	= MLX5_ADDR_OF(roce_addr_layout, mlx5_addr,
 					       source_mac_47_32);
 	u16 vlan_id;
+	int ret;
 
 	if (!gid)
 		return;
-	ether_addr_copy(mlx5_addr_mac, if_getlladdr(attr->ndev));
 
-	vlan_id = rdma_vlan_dev_vlan_id(attr->ndev);
+
+	ret = rdma_read_gid_l2_fields(attr, &vlan_id, mlx5_addr_mac);
+	if (ret != 0)
+		return;
+
 	if (vlan_id != 0xffff) {
 		MLX5_SET_RA(mlx5_addr, vlan_valid, 1);
 		MLX5_SET_RA(mlx5_addr, vlan_id, vlan_id);
@@ -428,59 +432,27 @@ static int set_roce_addr(struct ib_device *device, u8 port_num,
 	return mlx5_cmd_exec(dev->mdev, in, sizeof(in), out, sizeof(out));
 }
 
-static int mlx5_ib_add_gid(struct ib_device *device, u8 port_num,
-			   unsigned int index, const union ib_gid *gid,
-			   const struct ib_gid_attr *attr,
+static int mlx5_ib_add_gid(const struct ib_gid_attr *attr,
 			   __always_unused void **context)
 {
-	return set_roce_addr(device, port_num, index, gid, attr);
+	return set_roce_addr(attr->device, attr->port_num, attr->index,
+			     &attr->gid, attr);
 }
 
-static int mlx5_ib_del_gid(struct ib_device *device, u8 port_num,
-			   unsigned int index, __always_unused void **context)
+static int mlx5_ib_del_gid(const struct ib_gid_attr *attr,
+			   __always_unused void **context)
 {
-	return set_roce_addr(device, port_num, index, NULL, NULL);
+	return set_roce_addr(attr->device, attr->port_num, attr->index, NULL,
+			     NULL);
 }
 
-__be16 mlx5_get_roce_udp_sport(struct mlx5_ib_dev *dev, u8 port_num,
-			       int index)
+__be16 mlx5_get_roce_udp_sport(struct mlx5_ib_dev *dev,
+			       const struct ib_gid_attr *attr)
 {
-	struct ib_gid_attr attr;
-	union ib_gid gid;
-
-	if (ib_get_cached_gid(&dev->ib_dev, port_num, index, &gid, &attr))
-		return 0;
-
-	if (!attr.ndev)
-		return 0;
-
-	if_rele(attr.ndev);
-
-	if (attr.gid_type != IB_GID_TYPE_ROCE_UDP_ENCAP)
+	if (attr->gid_type != IB_GID_TYPE_ROCE_UDP_ENCAP)
 		return 0;
 
 	return cpu_to_be16(MLX5_CAP_ROCE(dev->mdev, r_roce_min_src_udp_port));
-}
-
-int mlx5_get_roce_gid_type(struct mlx5_ib_dev *dev, u8 port_num,
-			   int index, enum ib_gid_type *gid_type)
-{
-	struct ib_gid_attr attr;
-	union ib_gid gid;
-	int ret;
-
-	ret = ib_get_cached_gid(&dev->ib_dev, port_num, index, &gid, &attr);
-	if (ret)
-		return ret;
-
-	if (!attr.ndev)
-		return -ENODEV;
-
-	if_rele(attr.ndev);
-
-	*gid_type = attr.gid_type;
-
-	return 0;
 }
 
 static int mlx5_use_mad_ifc(struct mlx5_ib_dev *dev)

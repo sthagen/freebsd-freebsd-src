@@ -3,6 +3,7 @@
  *
  * Copyright (c) 2018 Intel Corporation
  * Copyright (c) 2026 The FreeBSD Foundation
+ *
  * Portions of this software were developed by ShengYi Hung
  * <aokblast@FreeBSD.org> under sponsorship from the FreeBSD Foundation.
  *
@@ -134,6 +135,12 @@ MODULE_VERSION(hwpstate_intel, 1);
 #define HWP_ERROR_CPPC_REQUEST_PKG   (1 << 3)
 #define HWP_ERROR_CPPC_EPP_WRITE     (1 << 4)
 
+static inline bool
+hwp_has_error(u_int res, u_int err)
+{
+	return ((res & err) != 0);
+}
+
 struct dump_cppc_request_cb {
 	struct hwp_softc *sc;
 	uint64_t enabled;
@@ -194,7 +201,7 @@ intel_hwp_dump_sysctl_handler(SYSCTL_HANDLER_ARGS)
 	sb = sbuf_new(NULL, NULL, 1024, SBUF_FIXEDLEN | SBUF_INCLUDENUL);
 	sbuf_putc(sb, '\n');
 
-	if (data.err | HWP_ERROR_CPPC_ENABLE)
+	if (hwp_has_error(data.err, HWP_ERROR_CPPC_ENABLE))
 		sbuf_printf(sb, "CPU%u: IA32_PM_ENABLE: " MSR_NOT_READ_MSG "\n",
 		    pc->pc_cpuid);
 	else
@@ -203,7 +210,7 @@ intel_hwp_dump_sysctl_handler(SYSCTL_HANDLER_ARGS)
 
 	if (data.enabled == 0)
 		goto out;
-	if (data.err | HWP_ERROR_CPPC_CAPS) {
+	if (hwp_has_error(data.err, HWP_ERROR_CPPC_CAPS)) {
 		sbuf_printf(sb,
 		    "IA32_HWP_CAPABILITIES: " MSR_NOT_READ_MSG "\n");
 	} else {
@@ -226,9 +233,9 @@ intel_hwp_dump_sysctl_handler(SYSCTL_HANDLER_ARGS)
 		sbuf_printf(sb, "\t%s: %03u\n", name,			\
 		    (unsigned)(data.request_pkg >> offset) & 0xff);		\
 } while (0)
-	if (data.err | HWP_ERROR_CPPC_REQUEST) {
+	if (hwp_has_error(data.err, HWP_ERROR_CPPC_REQUEST)) {
 		sbuf_printf(sb, "IA32_HWP_REQUEST: " MSR_NOT_READ_MSG "\n");
-	} else if (data.err | HWP_ERROR_CPPC_REQUEST_PKG) {
+	} else if (hwp_has_error(data.err, HWP_ERROR_CPPC_REQUEST_PKG)) {
 		sbuf_printf(sb, "IA32_HWP_REQUEST_PKG: " MSR_NOT_READ_MSG "\n");
 	} else {
 		pkg_print(IA32_HWP_REQUEST_EPP_VALID,
@@ -254,53 +261,12 @@ out:
 	return (ret);
 }
 
-static inline int
-percent_to_raw(int x)
-{
-
-	MPASS(x <= 100 && x >= 0);
-	return (0xff * x / 100);
-}
-
 /*
- * Given x * 10 in [0, 1000], round to the integer nearest x.
- *
- * This allows round-tripping nice human readable numbers through this
- * interface.  Otherwise, user-provided percentages such as 25, 50, 75 get
- * rounded down to 24, 49, and 74, which is a bit ugly.
+ * Multiplying by 17 here allows to send [0;15] to the full [0;255] range (so
+ * 255 is reported when EPB is set to 15, instead of 240).
  */
-static inline int
-round10(int xtimes10)
-{
-	return ((xtimes10 + 5) / 10);
-}
-
-static inline int
-raw_to_percent(int x)
-{
-	MPASS(x <= 0xff && x >= 0);
-	return (round10(x * 1000 / 0xff));
-}
-
-/* Range of MSR_IA32_ENERGY_PERF_BIAS is more limited: 0-0xf. */
-static inline int
-percent_to_raw_perf_bias(int x)
-{
-	/*
-	 * Round up so that raw values present as nice round human numbers and
-	 * also round-trip to the same raw value.
-	 */
-	MPASS(x <= 100 && x >= 0);
-	return (((0xf * x) + 50) / 100);
-}
-
-static inline int
-raw_to_percent_perf_bias(int x)
-{
-	/* Rounding to nice human numbers despite a step interval of 6.67%. */
-	MPASS(x <= 0xf && x >= 0);
-	return (((x * 20) / 0xf) * 5);
-}
+#define EPB_TO_EPP(x) ((x) * 17)
+#define EPP_TO_EPB(x) ((x) >> 4)
 
 static int
 sysctl_epp_select(SYSCTL_HANDLER_ARGS)
@@ -310,7 +276,6 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 	struct pcpu *pc;
 	uint64_t epb;
 	uint32_t val;
-	uint64_t req_cached;
 	int ret;
 
 	dev = oidp->oid_arg1;
@@ -324,7 +289,6 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 
 	if (sc->hwp_pref_ctrl) {
 		val = (sc->req & IA32_HWP_REQUEST_ENERGY_PERFORMANCE_PREFERENCE) >> 24;
-		val = raw_to_percent(val);
 	} else {
 		/*
 		 * If cpuid indicates EPP is not supported, the HWP controller
@@ -341,26 +305,24 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 		}
 		val = sc->hwp_energy_perf_bias &
 		    IA32_ENERGY_PERF_BIAS_POLICY_HINT_MASK;
-		val = raw_to_percent_perf_bias(val);
+		val = EPB_TO_EPP(val);
 	}
 
-	MPASS(val >= 0 && val <= 100);
+	MPASS(val >= 0 && val <= 255);
 
 	ret = sysctl_handle_int(oidp, &val, 0, req);
 	if (ret || req->newptr == NULL)
 		goto out;
 
-	if (val > 100) {
+	if (val > 255 || val < 0) {
 		ret = EINVAL;
 		goto out;
 	}
 
 	if (sc->hwp_pref_ctrl) {
-		val = percent_to_raw(val);
-		req_cached = sc->req =
-		    ((sc->req &
-			 ~IA32_HWP_REQUEST_ENERGY_PERFORMANCE_PREFERENCE) |
-			(val << 24u));
+		const uint64_t req_cached = sc->req = (sc->req &
+		    ~IA32_HWP_REQUEST_ENERGY_PERFORMANCE_PREFERENCE) |
+		    (val << 24u);
 
 		if (sc->hwp_pkg_ctrl_en)
 			ret = WRMSR_ON_CPU(dev, MSR_IA32_HWP_REQUEST_PKG,
@@ -369,7 +331,7 @@ sysctl_epp_select(SYSCTL_HANDLER_ARGS)
 			ret = WRMSR_ON_CPU(dev, MSR_IA32_HWP_REQUEST,
 			    req_cached);
 	} else {
-		val = percent_to_raw_perf_bias(val);
+		val = EPP_TO_EPB(val);
 		MPASS((val & ~IA32_ENERGY_PERF_BIAS_POLICY_HINT_MASK) == 0);
 
 		sc->hwp_energy_perf_bias =
@@ -549,30 +511,30 @@ set_autonomous_hwp(struct hwp_softc *sc)
 		return (ENXIO);
 
 	set_autonomous_hwp_send_one(sc, &data);
-	if (data.flag | HWP_ERROR_CPPC_ENABLE) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_ENABLE)) {
 		device_printf(dev, "Failed to enable HWP for cpu%d (%d)\n",
 		    pc->pc_cpuid, EFAULT);
 		goto out;
 	}
-	if (data.flag | HWP_ERROR_CPPC_REQUEST) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_REQUEST)) {
 		device_printf(dev,
 		    "Failed to read HWP request MSR for cpu%d (%d)\n",
 		    pc->pc_cpuid, EFAULT);
 		goto out;
 	}
-	if (data.flag | HWP_ERROR_CPPC_CAPS) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_CAPS)) {
 		device_printf(dev,
 		    "Failed to read HWP capabilities MSR for cpu%d (%d)\n",
 		    pc->pc_cpuid, EFAULT);
 		goto out;
 	}
-	if (data.flag | HWP_ERROR_CPPC_REQUEST_WRITE) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_REQUEST_WRITE)) {
 		device_printf(dev,
 		    "Failed to setup%s autonomous HWP for cpu%d\n",
 		    sc->hwp_pkg_ctrl_en ? " PKG" : "", pc->pc_cpuid);
 		goto out;
 	}
-	if (data.flag | HWP_ERROR_CPPC_REQUEST_PKG)
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_REQUEST_PKG))
 		device_printf(dev,
 		    "Failed to set autonomous HWP for package\n");
 
@@ -744,26 +706,26 @@ intel_hwpstate_resume(device_t dev)
 		return (ENXIO);
 
 	hwpstate_resume_send_one(sc, &data);
-	if (data.flag | HWP_ERROR_CPPC_ENABLE) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_ENABLE)) {
 		device_printf(dev,
 		    "Failed to enable HWP for cpu%d after suspend (%d)\n",
 		    pc->pc_cpuid, EFAULT);
 		goto out;
 	}
 
-	if (data.flag | HWP_ERROR_CPPC_REQUEST_WRITE) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_REQUEST_WRITE)) {
 		device_printf(dev,
 		    "Failed to set%s autonomous HWP for cpu%d after suspend\n",
 		    sc->hwp_pkg_ctrl_en ? " PKG" : "", pc->pc_cpuid);
 		goto out;
 	}
-	if (data.flag | HWP_ERROR_CPPC_REQUEST_PKG) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_REQUEST_PKG)) {
 		device_printf(dev,
 		    "Failed to set autonomous HWP for package after "
 		    "suspend\n");
 		goto out;
 	}
-	if (data.flag | HWP_ERROR_CPPC_EPP_WRITE) {
+	if (hwp_has_error(data.flag, HWP_ERROR_CPPC_EPP_WRITE)) {
 		device_printf(dev,
 		    "Failed to set energy perf bias for cpu%d after "
 		    "suspend\n",
