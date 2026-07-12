@@ -51,6 +51,8 @@
  * (r) - Atomic reference count.
  * (s) - Protected by selinfo.
  * (t) - Protected by the proctree_lock
+ * (p|t) - Both procree_lock and process descriptor must be locked
+ *	 for pd_fpcount
  */
 struct proc;
 struct sigio;
@@ -63,6 +65,7 @@ struct procdesc {
 	struct proc	*pd_proc;		/* (t) Process. */
 	pid_t		 pd_pid;		/* (c) Cached pid. */
 	u_int		 pd_refcount;		/* (r) Reference count. */
+	u_int		 pd_fpcount;		/* (p|t) files referencing me */
 
 	/*
 	 * In-flight data and notification of events.
@@ -85,9 +88,15 @@ struct procdesc {
 /*
  * Flags for the pd_flags field.
  */
-#define	PDF_CLOSED	0x00000001	/* Descriptor has closed. */
 #define	PDF_EXITED	0x00000004	/* Process exited. */
-#define	PDF_DAEMON	0x00000008	/* Don't exit when procdesc closes. */
+
+/*
+ * Flags for file f_pdflags.
+ */
+#define	F_PD_NOKILL	0x00000001	/* Opened with PD_DAEMON. Don't send
+					   SIGKILL when file closes. */
+#define	F_PD_NOFINSTALL	0x00000002	/* Procdesc file is closing because
+					   finstall() failed */
 
 /*
  * In-kernel interfaces to process descriptors.
@@ -128,7 +137,9 @@ pid_t	 pdfork(int *, int);
 pid_t	 pdrfork(int *, int, int);
 int	 pdkill(int, int);
 int	 pdgetpid(int, pid_t *);
+int	 pdopenpid(pid_t, int);
 int	 pdwait(int, int *, int, struct __wrusage *, struct __siginfo *);
+int	 pddupfd(int, int, int);
 pid_t	 pdrfork_thread(int *, int, int, void *, int (*)(void *), void *);
 __END_DECLS
 

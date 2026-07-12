@@ -270,11 +270,15 @@ chn_lockdestroy(struct pcm_channel *c)
 /**
  * @brief Determine channel is ready for I/O
  *
+ * @param ref_total	for mmaped channels, the previous byte counter
+ *	 *		snapshot from which to compute the delta to
+ *	 *		bufsoft->total; ignored for non-mmaped channels.
+ *
  * @retval 1 = ready for I/O
  * @retval 0 = not ready for I/O
  */
 int
-chn_polltrigger(struct pcm_channel *c)
+chn_polltrigger(struct pcm_channel *c, u_int64_t ref_total)
 {
 	struct snd_dbuf *bs = c->bufsoft;
 	u_int delta;
@@ -282,10 +286,10 @@ chn_polltrigger(struct pcm_channel *c)
 	CHN_LOCKASSERT(c);
 
 	if (c->flags & CHN_F_MMAP) {
-		if (bs->prev_total < c->lw)
+		if (ref_total < c->lw)
 			delta = c->lw;
 		else
-			delta = bs->total - bs->prev_total;
+			delta = bs->total - ref_total;
 	} else {
 		if (c->direction == PCMDIR_PLAY)
 			delta = sndbuf_getfree(bs);
@@ -316,7 +320,7 @@ chn_wakeup(struct pcm_channel *c)
 
 	if (CHN_EMPTY(c, children.busy)) {
 		KNOTE_LOCKED(&bs->sel.si_note, 0);
-		if (SEL_WAITING(&bs->sel) && chn_polltrigger(c))
+		if (SEL_WAITING(&bs->sel) && chn_polltrigger(c, bs->prev_total))
 			selwakeuppri(&bs->sel, PRIBIO);
 		CHN_BROADCAST(&c->intr_cv);
 	} else {
@@ -830,7 +834,7 @@ chn_poll(struct pcm_channel *c, int ev, struct thread *td)
 	}
 
 	ret = 0;
-	if (chn_polltrigger(c)) {
+	if (chn_polltrigger(c, bs->prev_total)) {
 		chn_pollreset(c);
 		ret = ev;
 	} else
@@ -1219,8 +1223,8 @@ chn_init(struct snddev_info *d, struct pcm_channel *parent, kobj_class_t cls,
 	chn_vpc_reset(c, SND_VOL_C_PCM, 1);
 	CHN_UNLOCK(c);
 
-	b = sndbuf_create(c, "primary");
-	bs = sndbuf_create(c, "secondary");
+	b = sndbuf_create(c, c->format, c->speed, "primary");
+	bs = sndbuf_create(c, c->format, c->speed, "secondary");
 	if (b == NULL || bs == NULL) {
 		device_printf(d->dev, "%s(): failed to create %s buffer\n",
 		    __func__, b == NULL ? "hardware" : "software");
@@ -1242,10 +1246,6 @@ chn_init(struct snddev_info *d, struct pcm_channel *parent, kobj_class_t cls,
 		goto fail;
 	}
 
-	sndbuf_setfmt(b, c->format);
-	sndbuf_setspd(b, c->speed);
-	sndbuf_setfmt(bs, c->format);
-	sndbuf_setspd(bs, c->speed);
 	sndbuf_setup(bs, NULL, 0);
 
 	/**

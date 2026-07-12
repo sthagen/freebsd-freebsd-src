@@ -895,7 +895,7 @@ OLD_LIBS+=usr/lib/libprivateclang.so.21
 .endif
 
 .if (${MK_CLANG_EXTRAS} == no && ${MK_CLANG} == no && ${MK_LLDB} == no && \
-    ${MK_LLD} == no && ${MK_LLVM_BINUTILS} == no && ${MK_LLVM_COV} == no) || \
+    ${MK_LLD} == no && ${MK_LLVM_BINUTILS} == no) || \
     ${MK_LLVM_LINK_STATIC_LIBRARIES} != no
 OLD_LIBS+=usr/lib/libprivatellvm.so.21
 .endif
@@ -1499,33 +1499,6 @@ OLD_LIBS+=${DEBUG_LIBS}
 
 .if ${MK_DETECT_TZ_CHANGES} == no
 OLD_FILES+=tests/lib/libc/stdtime/detect_tz_changes_test
-.endif
-
-.if ${MK_DIALOG} == no
-OLD_FILES+=usr/bin/dialog
-OLD_FILES+=usr/bin/dpv
-OLD_FILES+=usr/lib/libdialog.a
-OLD_FILES+=usr/lib/libdialog.so
-OLD_LIBS+=usr/lib/libdialog.so.10
-OLD_FILES+=usr/lib/libdpv.a
-OLD_FILES+=usr/lib/libdpv.so
-OLD_LIBS+=usr/lib/libdpv.so.3
-OLD_FILES+=usr/lib/libfigpar.a
-OLD_FILES+=usr/lib/libfigpar.so
-OLD_LIBS+=usr/lib/libfigpar.so.0
-OLD_FILES+=usr/share/man/man1/dialog.1.gz
-OLD_FILES+=usr/share/man/man1/dpv.1.gz
-OLD_FILES+=usr/share/man/man3/dialog.3.gz
-OLD_FILES+=usr/share/man/man3/dpv.3.gz
-OLD_FILES+=usr/share/man/man3/dpv_free.3.gz
-OLD_FILES+=usr/share/man/man3/figpar.3.gz
-OLD_FILES+=usr/share/man/man3/get_config_option.3.gz
-OLD_FILES+=usr/share/man/man3/parse_config.3.gz
-OLD_FILES+=usr/share/man/man3/replaceall.3.gz
-OLD_FILES+=usr/share/man/man3/strcount.3.gz
-OLD_FILES+=usr/share/man/man3/strexpand.3.gz
-OLD_FILES+=usr/share/man/man3/strexpandnl.3.gz
-OLD_FILES+=usr/share/man/man3/strtolower.3.gz
 .endif
 
 .if ${MK_DICT} == no
@@ -3952,7 +3925,7 @@ OLD_FILES+=usr/share/man/man1/lldb-server.1.gz
 OLD_FILES+=usr/share/man/man1/lldb.1.gz
 .endif
 
-.if ${MK_LLVM_COV} == no
+.if ${MK_CLANG} == no
 OLD_FILES+=usr/bin/gcov
 OLD_FILES+=usr/bin/llvm-cov
 OLD_FILES+=usr/bin/llvm-profdata

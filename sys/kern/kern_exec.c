@@ -414,17 +414,11 @@ execve_block(struct thread *td, struct proc *p)
 void
 execve_block_wait(struct thread *td, struct proc *p)
 {
-	bool first;
-
 	PROC_ASSERT_HELD(p);
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	for (first = true;; first = false) {
-		if (!first)
-			PROC_LOCK(p);
-		if (execve_block(td, p))
-			return;
-	}
+	while (!execve_block(td, p))
+		PROC_LOCK(p);
 }
 
 void
@@ -750,8 +744,7 @@ interpret:
 	 * Special interpreter operation, cleanup and loop up to try to
 	 * activate the interpreter.
 	 */
-	if (imgp->interpreted != 0 &&
-	    imgp->interpreted != IMGACT_INTERP_IGNORE) {
+	if ((imgp->interpreted & ~IMGACT_INTERP_ELF) != 0) {
 		exec_unmap_first_page(imgp);
 		/*
 		 * The text reference needs to be removed for scripts.

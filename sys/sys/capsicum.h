@@ -262,12 +262,7 @@
 /* Process management via process descriptors. */
 /* Allows for pdgetpid(2). */
 #define	CAP_PDGETPID		CAPRIGHT(1, 0x0000000000000200ULL)
-/*
- * Allows for pdwait4(2).
- *
- * XXX: this constant was imported unused, but is targeted to be implemented
- *      in the future (bug 235871).
- */
+/* Allows for pdwait(2). */
 #define	CAP_PDWAIT		CAPRIGHT(1, 0x0000000000000400ULL)
 /* Allows for pdkill(2). */
 #define	CAP_PDKILL		CAPRIGHT(1, 0x0000000000000800ULL)
@@ -301,7 +296,9 @@
 #define	CAP_INOTIFY_ADD		CAPRIGHT(1, 0x0000000000200000ULL)
 #define	CAP_INOTIFY_RM		CAPRIGHT(1, 0x0000000000400000ULL)
 
-#define	CAP_UNUSED1_24		CAPRIGHT(1, 0x0000000000800000ULL)
+/* Allows pddupfd(2). */
+#define	CAP_PDDUPFD		CAPRIGHT(1, 0x0000000000800000ULL)
+
 #define	CAP_UNUSED1_25		CAPRIGHT(1, 0x0000000001000000ULL)
 #define	CAP_UNUSED1_26		CAPRIGHT(1, 0x0000000002000000ULL)
 #define	CAP_UNUSED1_27		CAPRIGHT(1, 0x0000000004000000ULL)
@@ -337,7 +334,7 @@
 #define	CAP_UNUSED1_57		CAPRIGHT(1, 0x0100000000000000ULL)
 
 /* All used bits for index 1. */
-#define	CAP_ALL1		CAPRIGHT(1, 0x00000000007FFFFFULL)
+#define	CAP_ALL1		CAPRIGHT(1, 0x0000000000FFFFFFULL)
 
 /* Backward compatibility. */
 #define	CAP_POLL_EVENT		CAP_EVENT

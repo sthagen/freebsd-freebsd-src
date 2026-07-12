@@ -1160,6 +1160,7 @@ MLINKS+=fetch.9 fubyte.9 \
 	fetch.9 fuword16.9 \
 	fetch.9 fuword32.9 \
 	fetch.9 fuword64.9 \
+	fetch.9 fueptr.9 \
 	fetch.9 fueword.9 \
 	fetch.9 fueword32.9 \
 	fetch.9 fueword64.9
@@ -1615,6 +1616,8 @@ MLINKS+=mdchain.9 md_append_record.9 \
 	mdchain.9 md_get_uio.9 \
 	mdchain.9 md_initm.9 \
 	mdchain.9 md_next_record.9
+MLINKS+=memcpy.9 memcpy_data.9
+MLINKS+=memmove.9 memmove_data.9
 MLINKS+=microtime.9 bintime.9 \
 	microtime.9 getbintime.9 \
 	microtime.9 getmicrotime.9 \
@@ -2190,6 +2193,7 @@ MLINKS+=stack.9 stack_copy.9 \
 	stack.9 stack_sbuf_print_ddb.9 \
 	stack.9 stack_zero.9
 MLINKS+=store.9 subyte.9 \
+	store.9 suptr.9 \
 	store.9 suword.9 \
 	store.9 suword16.9 \
 	store.9 suword32.9 \
