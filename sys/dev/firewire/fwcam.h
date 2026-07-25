@@ -203,9 +203,10 @@ struct fwcam_info {
 
 /* fwcam state values (visible to userland via fwcam_info.state) */
 #define FWCAM_STATE_IDLE	0
-#define FWCAM_STATE_PROBED	1
-#define FWCAM_STATE_STREAMING	2
-#define FWCAM_STATE_DETACHING	3
+#define FWCAM_STATE_PROBING	1
+#define FWCAM_STATE_PROBED	2
+#define FWCAM_STATE_STREAMING	3
+#define FWCAM_STATE_DETACHING	4
 
 /* IIDC format/mode/rate/feature/state name tables for userland and driver */
 #define FWCAM_FMT_NMAX		8
@@ -248,6 +249,7 @@ static const char * const fwcam_feat_names[FWCAM_FEAT_MAX] = {
 
 static const char * const fwcam_state_names[] = {
 	[FWCAM_STATE_IDLE]      = "idle",
+	[FWCAM_STATE_PROBING]   = "probing",
 	[FWCAM_STATE_PROBED]    = "probed",
 	[FWCAM_STATE_STREAMING] = "streaming",
 	[FWCAM_STATE_DETACHING] = "detaching",

@@ -496,6 +496,7 @@ cc_post_recovery(struct tcpcb *tp, struct tcphdr *th)
 	tp->sackhint.delivered_data = 0;
 	tp->sackhint.prr_delivered = 0;
 	tp->sackhint.prr_out = 0;
+	tp->snd_cwnd = tp->snd_ssthresh;
 }
 
 /*
@@ -1496,6 +1497,7 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
 	struct tcpopt to;
 	int tfo_syn;
 	u_int maxseg = 0;
+	uint32_t prev_sacked_bytes = 0;
 	bool no_data;
 
 	no_data = (tlen == 0);
@@ -2384,7 +2386,7 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
 	/*
 	 * Ack processing.
 	 */
-	if (SEQ_GEQ(tp->snd_una, tp->iss + (TCP_MAXWIN << tp->snd_scale))) {
+	if (SEQ_GT(tp->snd_una, tp->iss + (TCP_MAXWIN << tp->snd_scale))) {
 		/* Checking SEG.ACK against ISS is definitely redundant. */
 		tp->t_flags2 |= TF2_NO_ISS_CHECK;
 	}
@@ -2515,6 +2517,7 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
 			goto dropafterack;
 		}
 		if (tcp_is_sack_recovery(tp, &to)) {
+			prev_sacked_bytes = tp->sackhint.sacked_bytes;
 			sack_changed = tcp_sack_doack(tp, &to, th->th_ack);
 			if ((sack_changed != SACK_NOCHANGE) &&
 			    (tp->t_flags & TF_LRD)) {
@@ -2666,12 +2669,15 @@ enter_recovery:
 						tp->sackhint.prr_delivered =
 						    imin(tp->snd_max - th->th_ack,
 						    (tp->snd_limited + 1) * maxseg);
+						tp->sackhint.recover_fs = imax(1,
+							(tp->snd_nxt - tp->snd_una) - prev_sacked_bytes
+							+ tp->sackhint.delivered_data);
 					} else {
 						tp->sackhint.prr_delivered =
 						    maxseg;
+						tp->sackhint.recover_fs = max(1,
+						    tp->snd_nxt - tp->snd_una);
 					}
-					tp->sackhint.recover_fs = max(1,
-					    tp->snd_nxt - tp->snd_una);
 				}
 				tp->snd_limited = 0;
 				if (tcp_is_sack_recovery(tp, &to)) {
@@ -3994,8 +4000,9 @@ void
 tcp_do_prr_ack(struct tcpcb *tp, struct tcphdr *th, struct tcpopt *to,
     sackstatus_t sack_changed, u_int *maxsegp)
 {
-	int snd_cnt = 0, limit = 0, del_data = 0, pipe = 0;
+	int snd_cnt = 0, del_data = 0, pipe = 0;
 	u_int maxseg;
+	bool safe_ack;
 
 	INP_WLOCK_ASSERT(tptoinpcb(tp));
 
@@ -4021,6 +4028,10 @@ tcp_do_prr_ack(struct tcpcb *tp, struct tcphdr *th, struct tcpopt *to,
 		pipe = imax(0, tp->snd_max - tp->snd_una -
 			    imin(INT_MAX / 65536, tp->t_dupacks) * maxseg);
 	}
+
+	if (del_data == 0)
+		return;
+
 	tp->sackhint.prr_delivered += del_data;
 	/*
 	 * Proportional Rate Reduction
@@ -4033,25 +4044,16 @@ tcp_do_prr_ack(struct tcpcb *tp, struct tcphdr *th, struct tcpopt *to,
 			    tp->snd_ssthresh, tp->sackhint.recover_fs) -
 			    tp->sackhint.prr_out + maxseg - 1;
 	} else {
-		/*
-		 * PRR 6937bis heuristic:
-		 * - A partial ack without SACK block beneath snd_recover
-		 * indicates further loss.
-		 * - An SACK scoreboard update adding a new hole indicates
-		 * further loss, so be conservative and send at most one
-		 * segment.
-		 * - Prevent ACK splitting attacks, by being conservative
-		 * when no new data is acked.
-		 */
-		if ((sack_changed == SACK_NEWLOSS) || (del_data == 0)) {
-			limit = tp->sackhint.prr_delivered -
-				tp->sackhint.prr_out;
-		} else {
-			limit = imax(tp->sackhint.prr_delivered -
-				    tp->sackhint.prr_out, del_data) +
-				    maxseg;
+		safe_ack = SEQ_GT(th->th_ack, tp->snd_una) && (sack_changed != SACK_NEWLOSS);
+		snd_cnt = imax(tp->sackhint.prr_delivered - tp->sackhint.prr_out, del_data);
+		if (safe_ack) {
+			snd_cnt += maxseg;
 		}
-		snd_cnt = imin((tp->snd_ssthresh - pipe), limit);
+		snd_cnt = imin(tp->snd_ssthresh - pipe, snd_cnt);
+	}
+
+	if (tp->sackhint.prr_out == 0 && snd_cnt == 0) {
+		snd_cnt = maxseg;
 	}
 	snd_cnt = imax(snd_cnt, 0) / maxseg;
 	/*

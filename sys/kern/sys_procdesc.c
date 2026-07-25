@@ -64,6 +64,7 @@
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -116,38 +117,6 @@ static const struct fileops procdesc_ops = {
 };
 
 /*
- * Return a locked process given a process descriptor, or ESRCH if it has
- * died.
- */
-int
-procdesc_find(struct thread *td, int fd, const cap_rights_t *rightsp,
-    struct proc **p)
-{
-	struct procdesc *pd;
-	struct file *fp;
-	int error;
-
-	error = fget(td, fd, rightsp, &fp);
-	if (error)
-		return (error);
-	if (fp->f_type != DTYPE_PROCDESC) {
-		error = EINVAL;
-		goto out;
-	}
-	pd = fp->f_data;
-	sx_slock(&proctree_lock);
-	if (pd->pd_proc != NULL) {
-		*p = pd->pd_proc;
-		PROC_LOCK(*p);
-	} else
-		error = ESRCH;
-	sx_sunlock(&proctree_lock);
-out:
-	fdrop(fp, td);
-	return (error);
-}
-
-/*
  * Function to be used by procstat(1) sysctls when returning procdesc
  * information.
  */
@@ -173,16 +142,11 @@ kern_pdgetpid(struct thread *td, int fd, const cap_rights_t *rightsp,
 	struct file *fp;
 	int error;
 
-	error = fget(td, fd, rightsp, &fp);
-	if (error)
-		return (error);
-	if (fp->f_type != DTYPE_PROCDESC) {
-		error = EBADF;
-		goto out;
-	}
-	*pidp = procdesc_pid(fp);
-out:
-	fdrop(fp, td);
+	error = fget_procdesc(td, fd, rightsp, &fp, NULL, NULL);
+	if (error == 0)
+		*pidp = procdesc_pid(fp);
+	if (fp != NULL)
+		fdrop(fp, td);
 	return (error);
 }
 
@@ -314,45 +278,63 @@ procdesc_free(struct procdesc *pd)
  * We use the proctree_lock to ensure that process exit either happens
  * strictly before or strictly after a concurrent call to procdesc_close().
  */
-int
+void
 procdesc_exit(struct proc *p)
 {
 	struct procdesc *pd;
 
 	sx_assert(&proctree_lock, SA_XLOCKED);
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	KASSERT(p->p_procdesc != NULL, ("procdesc_exit: p_procdesc NULL"));
 	MPASS((p->p_flag & P_WEXIT) != 0);
 
 	pd = p->p_procdesc;
+	if (pd == NULL)
+		return;
 
 	PROCDESC_LOCK(pd);
-	KASSERT(pd->pd_fpcount > 0 || p->p_pptr == p->p_reaper,
-	    ("procdesc_exit: closed && parent not reaper"));
+	KASSERT(pd->pd_fpcount > 0, ("%s: closed procdesc %p", __func__, pd));
 
 	pd->pd_flags |= PDF_EXITED;
 	pd->pd_xstat = KW_EXITCODE(p->p_xexit, p->p_xsig);
 
-	/*
-	 * If the process descriptor has been closed, then we have nothing
-	 * to do; return 1 so that init will get SIGCHLD and do the reaping.
-	 * Clean up the procdesc now rather than letting it happen during
-	 * that reap.
-	 */
-	if (pd->pd_fpcount == 0) {
-		PROCDESC_UNLOCK(pd);
-		pd->pd_proc = NULL;
-		p->p_procdesc = NULL;
-		procdesc_free(pd);
-		return (1);
-	}
 	selwakeup(&pd->pd_selinfo);
-	KNOTE_LOCKED(&pd->pd_selinfo.si_note, NOTE_EXIT);
+	KNOTE_LOCKED(&pd->pd_selinfo.si_note, NOTE_EXIT | NOTE_PDSIGCHLD);
 	PROCDESC_UNLOCK(pd);
 
 	/* Wakeup all waiters for this procdesc' process exit. */
 	wakeup(&p->p_procdesc);
-	return (0);
+}
+
+void
+procdesc_jobstate(struct proc *p)
+{
+	struct procdesc *pd;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	pd = p->p_procdesc;
+	if (pd == NULL)
+		return;
+
+	PROCDESC_LOCK(pd);
+	KNOTE_LOCKED(&pd->pd_selinfo.si_note, NOTE_PDSIGCHLD);
+	PROCDESC_UNLOCK(pd);
+	wakeup(&p->p_procdesc);
+}
+
+void
+procdesc_fork(struct proc *p, pid_t child_pid)
+{
+	struct procdesc *pd;
+
+	PROC_LOCK(p);
+	pd = p->p_procdesc;
+	if (pd != NULL) {
+		PROCDESC_LOCK(pd);
+		pd->pd_last_child = child_pid;
+		KNOTE_LOCKED(&pd->pd_selinfo.si_note, NOTE_FORK);
+		PROCDESC_UNLOCK(pd);
+	}
+	PROC_UNLOCK(p);
 }
 
 /*
@@ -497,26 +479,36 @@ static int
 procdesc_kqops_event(struct knote *kn, long hint)
 {
 	struct procdesc *pd;
+	struct proc *p;
 	u_int event;
 
 	pd = kn->kn_fp->f_data;
 	if (hint == 0) {
 		/*
-		 * Initial test after registration. Generate a NOTE_EXIT in
-		 * case the process already terminated before registration.
+		 * Initial test after registration.  Generate notes in
+		 * case the process already terminated before
+		 * registration, or is stopped, or traced, with an event
+		 * pending.
 		 */
-		event = pd->pd_flags & PDF_EXITED ? NOTE_EXIT : 0;
+		p = pd->pd_proc;
+		if ((pd->pd_flags & PDF_EXITED) != 0)
+			event = NOTE_EXIT | NOTE_PDSIGCHLD;
+		else if ((atomic_load_int(&p->p_flag) & (P_STOPPED_SIG |
+		    P_STOPPED_TRACE)) != 0)
+			event = NOTE_PDSIGCHLD;
+		else
+			event = 0;
 	} else {
 		/* Mask off extra data. */
 		event = (u_int)hint & NOTE_PCTRLMASK;
 	}
 
 	/* If the user is interested in this event, record it. */
-	if (kn->kn_sfflags & event)
-		kn->kn_fflags |= event;
+	if ((kn->kn_sfflags & event) != 0)
+		kn->kn_fflags |= kn->kn_sfflags & event;
 
 	/* Process is gone, so flag the event as finished. */
-	if (event == NOTE_EXIT) {
+	if ((event & NOTE_EXIT) != 0) {
 		kn->kn_flags |= EV_EOF | EV_ONESHOT;
 		if (kn->kn_fflags & NOTE_EXIT)
 			kn->kn_data = pd->pd_xstat;
@@ -524,6 +516,9 @@ procdesc_kqops_event(struct knote *kn, long hint)
 			kn->kn_flags |= EV_DROP;
 		return (1);
 	}
+
+	if ((kn->kn_fflags & NOTE_FORK) != 0)
+		kn->kn_data = pd->pd_last_child;
 
 	return (kn->kn_fflags != 0);
 }
@@ -704,63 +699,96 @@ sys_pdopenpid(struct thread *td, struct pdopenpid_args *args)
 	return (kern_pdopenpid(td, args->pid, args->flags));
 }
 
+/*
+ * Get the file/process descriptor/process from the procdesc file
+ * descriptor.  The process descriptor and process returns are
+ * optional.  If requested to return the process, the proctree lock
+ * must be held, and the process will be returned locked.
+ *
+ * The caller must fdrop(*pfp) if *pfp != NULL, regardless of the
+ * error returned, after the proctree_lock is unlocked.
+ * procdesc_close() takes the proctree_lock.
+ */
+int
+fget_procdesc(struct thread *td, int pdfd, const cap_rights_t *cap_rights,
+    struct file **pfp, struct procdesc **pdp, struct proc **pp)
+{
+	struct file *fp;
+	struct procdesc *pd;
+	struct proc *p;
+	int error;
+
+	if (pp != NULL)
+		sx_assert(&proctree_lock, SX_LOCKED);
+
+	*pfp = NULL;
+	error = fget(td, pdfd, cap_rights, &fp);
+	if (error != 0)
+		return (error);
+	*pfp = fp;
+	if (fp->f_type != DTYPE_PROCDESC)
+		return (EINVAL);
+	pd = fp->f_data;
+	if (pp != NULL) {
+		p = pd->pd_proc;
+		if (p == NULL) {
+			return (ESRCH);
+		} else {
+			*pp = p;
+			PROC_LOCK(p);
+		}
+	}
+	if (pdp != NULL)
+		*pdp = pd;
+	return (0);
+}
+
 static int
 kern_pddupfd(struct thread *td, int pdfd, int fd, int flags)
 {
 	struct proc *p;
 	struct file *fp, *pfp;
-	struct procdesc *pd;
 	struct filecaps fcaps;
 	uint8_t fd_flags;
 	int error, fdr;
 
-	error = fget(td, pdfd, &cap_pddupfd_rights, &pfp);
-	if (error != 0)
-		return (error);
-	if (pfp->f_type != DTYPE_PROCDESC) {
-		error = EBADF;
-		goto out;
-	}
-	pd = pfp->f_data;
-again:
 	sx_slock(&proctree_lock);
-	p = pd->pd_proc;
-	if (p != NULL) {
-		AUDIT_ARG_PROCESS(p);
-		PROC_LOCK(p);
-		sx_sunlock(&proctree_lock);
+	error = fget_procdesc(td, pdfd, &cap_pddupfd_rights, &pfp, NULL, &p);
+	if (error == 0) {
 		if ((p->p_flag & P_WEXIT) != 0) {
 			error = ESRCH;
+			PROC_UNLOCK(p);
 		} else {
-			/*
-			 * Block the target process from entering
-			 * execve().  We need to ensure that the
-			 * p_candebug() predicate is stable until the
-			 * fget_remote() call ends even after the
-			 * process lock is dropped.  For that, the
-			 * process must not change uid/suid.
-			 */
-			if (!execve_block(td, p))
-				goto again;
-			error = p_candebug(td, p);
-			if (error == 0)
-				_PHOLD(p);
-			else
-				execve_unblock(td, p);
+			_PHOLD(p);
 		}
-		PROC_UNLOCK(p);
-		if (error != 0)
-			goto out;
+	}
+	sx_sunlock(&proctree_lock);
+	if (error != 0)
+		goto out;
+	AUDIT_ARG_PROCESS(p);
+	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-		error = fget_remote(td, p, fd, &fcaps, &fd_flags, &fp);
-		PROC_LOCK(p);
-		execve_unblock(td, p);
-		_PRELE(p);
+	/*
+	 * Block the target process from entering execve().
+	 * We need to ensure that the p_candebug() predicate
+	 * is stable until the fget_remote() call ends even
+	 * after the process lock is dropped.  For that, the
+	 * process must not change uid/suid.
+	 */
+	execve_block_wait(td, p);
+	error = p_candebug(td, p);
+
+	if (error == 0) {
 		PROC_UNLOCK(p);
+		error = fget_remote(td, p, fd, &fcaps, &fd_flags, &fp);
 		if (error == 0) {
-			error = finstall_refed(td, fp, &fdr, O_CLOEXEC |
-			    ((fd_flags & FD_RESOLVE_BENEATH) != 0 ?
-			    O_RESOLVE_BENEATH : 0), &fcaps);
+			if ((fp->f_ops->fo_flags & DFLAG_PASSABLE) == 0) {
+				error = EOPNOTSUPP;
+			} else {
+				error = finstall_refed(td, fp, &fdr, O_CLOEXEC |
+				    ((fd_flags & FD_RESOLVE_BENEATH) != 0 ?
+				    O_RESOLVE_BENEATH : 0), &fcaps);
+			}
 			if (error != 0) {
 				fdrop(fp, td);
 				filecaps_free(&fcaps);
@@ -768,12 +796,14 @@ again:
 				td->td_retval[0] = fdr;
 			}
 		}
-	} else {
-		sx_sunlock(&proctree_lock);
-		error = ESRCH;
+		PROC_LOCK(p);
 	}
+	execve_unblock(td, p);
+	_PRELE(p);
+	PROC_UNLOCK(p);
 out:
-	fdrop(pfp, td);
+	if (pfp != NULL)
+		fdrop(pfp, td);
 	return (error);
 }
 

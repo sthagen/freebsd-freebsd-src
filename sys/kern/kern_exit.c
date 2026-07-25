@@ -680,7 +680,8 @@ exit1(struct thread *td, int rval, int signo)
 	 * exit().
 	 */
 	signal_parent = 0;
-	if (p->p_procdesc == NULL || procdesc_exit(p)) {
+	procdesc_exit(p);
+	if (p->p_procdesc == NULL) {
 		/*
 		 * Notify parent that we're gone.  If parent has the
 		 * PS_NOCLDWAIT flag set, or if the handler is set to SIG_IGN,
@@ -1179,7 +1180,7 @@ wait_fill_wrusage(struct proc *p, struct __wrusage *wrusage)
 static int
 proc_to_reap(struct thread *td, struct proc *p, idtype_t idtype, id_t id,
     int *status, int options, struct __wrusage *wrusage, siginfo_t *siginfo,
-    int check_only)
+    bool check_only)
 {
 	sx_assert(&proctree_lock, SA_XLOCKED);
 
@@ -1468,7 +1469,7 @@ loop_locked:
 	LIST_FOREACH(p, &q->p_children, p_sibling) {
 		pid = p->p_pid;
 		ret = proc_to_reap(td, p, idtype, id, status, options,
-		    wrusage, siginfo, 0);
+		    wrusage, siginfo, false);
 		if (ret == 0)
 			continue;
 		else if (ret != 1) {
@@ -1514,7 +1515,7 @@ loop_locked:
 	if (nfound == 0) {
 		LIST_FOREACH(p, &q->p_orphans, p_orphan) {
 			ret = proc_to_reap(td, p, idtype, id, NULL, options,
-			    NULL, NULL, 1);
+			    NULL, NULL, true);
 			if (ret != 0) {
 				KASSERT(ret != -1, ("reaped an orphan (pid %d)",
 				    (int)td->td_retval[0]));
@@ -1562,14 +1563,9 @@ kern_pdwait(struct thread *td, int fd, int *status,
 	if (error != 0)
 		return (error);
 
-	error = fget(td, fd, &cap_pdwait_rights, &fp);
+	error = fget_procdesc(td, fd, &cap_pdwait_rights, &fp, &pd, NULL);
 	if (error != 0)
-		return (error);
-	if (fp->f_type != DTYPE_PROCDESC) {
-		error = EINVAL;
 		goto exit_unlocked;
-	}
-	pd = fp->f_data;
 
 	for (;;) {
 		/* We own a reference on the procdesc file. */
@@ -1620,7 +1616,8 @@ kern_pdwait(struct thread *td, int fd, int *status,
 exit_tree_locked:
 	sx_xunlock(&proctree_lock);
 exit_unlocked:
-	fdrop(fp, td);
+	if (fp != NULL)
+		fdrop(fp, td);
 	return (error);
 }
 

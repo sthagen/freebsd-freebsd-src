@@ -112,6 +112,10 @@ static MALLOC_DEFINE(M_IOCTLOPS, "ioctlops", "ioctl data buffer");
 static MALLOC_DEFINE(M_SELECT, "select", "select() buffer");
 MALLOC_DEFINE(M_IOV, "iov", "large iov's");
 
+#ifdef EXTERR_STRINGS
+FEATURE(exterr_strings, "Extended error reporting includes message strings");
+#endif
+
 static int	pollout(struct thread *, struct pollfd *, struct pollfd *,
 		    u_int);
 static int	pollscan(struct thread *, struct pollfd *, u_int);
@@ -2311,24 +2315,30 @@ exterr_copyout(struct thread *td)
 int
 sys_exterrctl(struct thread *td, struct exterrctl_args *uap)
 {
+	return (kern_exterrctl(td, uap->op, uap->flags, uap->ptr));
+}
+
+int
+kern_exterrctl(struct thread *td, u_int op, u_int flags, void *ptr)
+{
 	uint32_t ver;
 	int error;
 
-	if ((uap->flags & ~(EXTERRCTLF_FORCE)) != 0)
+	if ((flags & ~(EXTERRCTLF_FORCE)) != 0)
 		return (EINVAL);
-	switch (uap->op) {
+	switch (op) {
 	case EXTERRCTL_ENABLE:
 		if ((td->td_pflags2 & TDP2_UEXTERR) != 0 &&
-		    (uap->flags & EXTERRCTLF_FORCE) == 0)
+		    (flags & EXTERRCTLF_FORCE) == 0)
 			return (EBUSY);
 		td->td_pflags2 &= ~TDP2_UEXTERR;
-		error = copyin(uap->ptr, &ver, sizeof(ver));
+		error = copyin(ptr, &ver, sizeof(ver));
 		if (error != 0)
 			return (error);
 		if (ver != UEXTERROR_VER)
 			return (EINVAL);
 		td->td_pflags2 |= TDP2_UEXTERR;
-		td->td_exterr_ptr = uap->ptr;
+		td->td_exterr_ptr = ptr;
 		return (0);
 	case EXTERRCTL_DISABLE:
 		if ((td->td_pflags2 & TDP2_UEXTERR) == 0)
@@ -2347,8 +2357,8 @@ sys_exterrctl(struct thread *td, struct exterrctl_args *uap)
 }
 
 int
-exterr_set(int eerror, int category, const char *mmsg, uintptr_t pp1,
-    uintptr_t pp2, int line)
+exterr_set(int eerror, int category, const char *mmsg, uint64ptr_t pp1,
+    uint64ptr_t pp2, int line)
 {
 	struct thread *td;
 

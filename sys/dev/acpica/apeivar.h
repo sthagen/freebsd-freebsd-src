@@ -38,16 +38,17 @@ int	apei_unmap_register(device_t dev, struct resource_map *map);
 
 #ifdef __i386__
 static __inline uint64_t
-bus_read_8(struct resource_map *res, bus_size_t offset)
+bus_space_read_8(bus_space_tag_t tag, bus_space_handle_t bsh, bus_size_t offset)
 {
-	return (bus_read_4(res, offset) |
-	    ((uint64_t)bus_read_4(res, offset + 4)) << 32);
+	return (bus_space_read_4(tag, bsh, offset) |
+	    ((uint64_t)bus_space_read_4(tag, bsh, offset + 4)) << 32);
 }
 static __inline void
-bus_write_8(struct resource_map *res, bus_size_t offset, uint64_t val)
+bus_space_write_8(bus_space_tag_t tag, bus_space_handle_t bsh,
+    bus_size_t offset, uint64_t val)
 {
-	bus_write_4(res, offset, val);
-	bus_write_4(res, offset + 4, val >> 32);
+	bus_space_write_4(tag, bsh, offset, val);
+	bus_space_write_4(tag, bsh, offset + 4, val >> 32);
 }
 #endif
 

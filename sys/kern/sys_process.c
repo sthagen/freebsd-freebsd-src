@@ -733,6 +733,7 @@ sys_ptrace(struct thread *td, struct ptrace_args *uap)
 		syscallarg_t args[nitems(td->td_sa.args)];
 		struct ptrace_sc_ret psr;
 		int ptevents;
+		struct ptrace_child *children;
 	} r;
 	syscallarg_t pscr_args[nitems(td->td_sa.args)];
 	void *addr;
@@ -751,6 +752,12 @@ sys_ptrace(struct thread *td, struct ptrace_args *uap)
 	case PT_LWPINFO:
 	case PT_GET_SC_ARGS:
 	case PT_GET_SC_RET:
+		break;
+	case PT_SET_SC_RET:
+		if (uap->data != sizeof(r.psr))
+			error = EINVAL;
+		else
+			error = copyin(uap->addr, &r.psr, sizeof(r.psr));
 		break;
 	case PT_GETREGS:
 		bzero(&r.reg, sizeof(r.reg));
@@ -810,6 +817,14 @@ sys_ptrace(struct thread *td, struct ptrace_args *uap)
 			break;
 		r.sr.pscr_args = pscr_args;
 		break;
+	case PT_GET_CHILDREN:
+		if (uap->addr == NULL)
+			addr = NULL;
+		else if (uap->data < 0)
+			error = EINVAL;
+		else
+			addr = &r.children;
+		break;
 	case PTINTERNAL_FIRST ... PTINTERNAL_LAST:
 		error = EINVAL;
 		break;
@@ -864,6 +879,13 @@ sys_ptrace(struct thread *td, struct ptrace_args *uap)
 		    offsetof(struct ptrace_sc_remote, pscr_ret),
 		    sizeof(r.sr.pscr_ret));
 		break;
+	case PT_GET_CHILDREN:
+		if (uap->addr != NULL) {
+			error = copyout(r.children, uap->addr,
+			    td->td_retval[0] * sizeof(struct ptrace_child));
+			free(r.children, M_TEMP);
+		}
+		break;
 	}
 
 	return (error);
@@ -917,7 +939,7 @@ ptrace_unsuspend(struct proc *p)
 }
 
 static int
-proc_can_ptrace(struct thread *td, struct proc *p)
+proc_can_ptrace1(struct thread *td, struct proc *p)
 {
 	int error;
 
@@ -925,10 +947,21 @@ proc_can_ptrace(struct thread *td, struct proc *p)
 
 	if ((p->p_flag & P_WEXIT) != 0)
 		return (ESRCH);
-
 	if ((error = p_cansee(td, p)) != 0)
 		return (error);
 	if ((error = p_candebug(td, p)) != 0)
+		return (error);
+	return (0);
+}
+
+static int
+proc_can_ptrace(struct thread *td, struct proc *p)
+{
+	int error;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+
+	if ((error = proc_can_ptrace1(td, p)) != 0)
 		return (error);
 
 	/* not being traced... */
@@ -946,6 +979,64 @@ proc_can_ptrace(struct thread *td, struct proc *p)
 		return (EBUSY);
 
 	return (0);
+}
+
+static int
+ptrace_count_children(struct thread *td, struct proc *p, bool count_everything)
+{
+	struct proc *pp;
+	int error, num;
+
+	sx_assert(&proctree_lock, SX_LOCKED);
+	num = 0;
+	LIST_FOREACH(pp, &p->p_children, p_sibling) {
+		if (count_everything) {
+			error = 0;
+		} else {
+			PROC_LOCK(pp);
+			error = p_cansee(td, pp);
+			PROC_UNLOCK(pp);
+		}
+		if (error != 0)
+			continue;
+		num++;
+	}
+	LIST_FOREACH(pp, &p->p_orphans, p_orphan) {
+		if (count_everything) {
+			error = 0;
+		} else {
+			PROC_LOCK(pp);
+			error = p_cansee(td, pp);
+			PROC_UNLOCK(pp);
+		}
+		if (error != 0)
+			continue;
+		num++;
+	}
+	return (num);
+}
+
+static bool
+ptrace_report_child(struct thread *td, struct proc *p, struct proc *pp,
+    struct ptrace_child *ptc)
+{
+	sx_assert(&proctree_lock, SX_LOCKED);
+
+	PROC_LOCK(pp);
+	if (p_cansee(td, pp) != 0) {
+		PROC_UNLOCK(pp);
+		return (false);
+	}
+	ptc->pid = pp->p_pid;
+	if ((pp->p_flag & P_TRACED) != 0) {
+		ptc->flags |= PTCHLD_TRACED;
+		if (pp->p_pptr == td->td_proc)
+			ptc->flags |= PTCHLD_TRACED_BY_ME;
+	}
+	if ((pp->p_flag & P_WEXIT) != 0)
+		ptc->flags |= PTCHLD_EXITED;
+	PROC_UNLOCK(pp);
+	return (true);
 }
 
 static struct thread *
@@ -978,12 +1069,13 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	struct ptrace_coredump *pc;
 	struct thr_coredump_req *tcq;
 	struct thr_syscall_req *tsr;
-	int error, num, tmp;
+	struct ptrace_child *children, *ptc;
+	int error, num, num1, tmp;
 	lwpid_t tid = 0, *buf;
 #ifdef COMPAT_FREEBSD32
 	int wrap32 = 0, safe = 0;
 #endif
-	bool proctree_locked, p2_req_set;
+	bool need_can_ptrace, proctree_locked, p2_req_set;
 
 	curp = td->td_proc;
 	proctree_locked = false;
@@ -1004,6 +1096,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	case PT_SET_EVENT_MASK:
 	case PT_DETACH:
 	case PT_GET_SC_ARGS:
+	case PT_GET_CHILDREN:
 		sx_xlock(&proctree_lock);
 		proctree_locked = true;
 		break;
@@ -1035,14 +1128,8 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	}
 	AUDIT_ARG_PROCESS(p);
 
-	if ((p->p_flag & P_WEXIT) != 0) {
-		error = ESRCH;
-		goto fail;
-	}
-	if ((error = p_cansee(td, p)) != 0)
-		goto fail;
-
-	if ((error = p_candebug(td, p)) != 0)
+	error = proc_can_ptrace1(td, p);
+	if (error != 0)
 		goto fail;
 
 	/*
@@ -1075,6 +1162,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	/*
 	 * Permissions check
 	 */
+	need_can_ptrace = true;
 	switch (req) {
 	case PT_TRACE_ME:
 		/*
@@ -1117,20 +1205,24 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		/* OK */
 		break;
 
-	case PT_CLEARSTEP:
-		/* Allow thread to clear single step for itself */
-		if (td->td_tid == tid)
-			break;
-
-		/* FALLTHROUGH */
 	default:
+		/*
+		 * Allow thread to clear single step for itself.
+		 * PT_GET_CHILDREN on itself does not need P_TRACED.
+		 */
+		if ((req == PT_CLEARSTEP && td->td_tid == tid) ||
+		    (req == PT_GET_CHILDREN && p == curp))
+			need_can_ptrace = false;
+
 		/*
 		 * Check for ptrace eligibility before waiting for
 		 * holds to drain.
 		 */
-		error = proc_can_ptrace(td, p);
-		if (error != 0)
-			goto fail;
+		if (need_can_ptrace) {
+			error = proc_can_ptrace(td, p);
+			if (error != 0)
+				goto fail;
+		}
 
 		/*
 		 * Block parallel ptrace requests.  Most important, do
@@ -1148,7 +1240,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			}
 			if (error == 0 && td2->td_proc != p)
 				error = ESRCH;
-			if (error == 0)
+			if (error == 0 && need_can_ptrace)
 				error = proc_can_ptrace(td, p);
 			if (error != 0)
 				goto fail;
@@ -1319,7 +1411,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		break;
 
 	case PT_GET_SC_RET:
-		if ((td2->td_dbgflags & (TDB_SCX)) == 0
+		if ((td2->td_dbgflags & TDB_SCX) == 0
 #ifdef COMPAT_FREEBSD32
 		    || (wrap32 && !safe)
 #endif
@@ -1338,6 +1430,24 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		    "PT_GET_SC_RET: pid %d error %d retval %#lx,%#lx",
 		    p->p_pid, psr->sr_error, psr->sr_retval[0],
 		    psr->sr_retval[1]);
+		break;
+
+	case PT_SET_SC_RET:
+		if ((td2->td_dbgflags & TDB_SCE) == 0
+#ifdef COMPAT_FREEBSD32
+		    || (wrap32 && !safe)
+#endif
+		    ) {
+			error = EINVAL;
+			break;
+		}
+		psr = addr;
+		td2->td_errno = psr->sr_error;
+		if (td2->td_errno == 0) {
+			td2->td_retval[0] = psr->sr_retval[0];
+			td2->td_retval[1] = psr->sr_retval[1];
+		}
+		td2->td_dbgflags |= TDB_SET_SC_RET;
 		break;
 
 	case PT_STEP:
@@ -1833,6 +1943,59 @@ coredump_cleanup_nofp:
 		error = 0;
 		memcpy(&pscr->pscr_ret, &tsr->ts_ret, sizeof(tsr->ts_ret));
 		free(tsr, M_TEMP);
+		break;
+
+	case PT_GET_CHILDREN:
+		PROC_UNLOCK(p);
+get_children_repeat:
+		/*
+		 * If addr != NULL, we should ignore p_cansee() to
+		 * allocate enough space for the children array,
+		 * because the process is allowed to change visibility
+		 * between loops.  But do not count children which
+		 * we cannot see when only returning the count, to
+		 * avoid a leak of information.
+		 */
+		num = ptrace_count_children(td, p, addr != NULL);
+
+		if (addr == NULL) {
+			td->td_retval[0] = num;
+			PROC_LOCK(p);
+			break;
+		}
+		if (data < num * sizeof(struct ptrace_child)) {
+			error = ENOMEM;
+			PROC_LOCK(p);
+			break;
+		}
+		sx_xunlock(&proctree_lock);
+		children = mallocarray(num, sizeof(struct ptrace_child),
+		    M_TEMP, M_WAITOK | M_ZERO);
+		sx_xlock(&proctree_lock);
+		num1 = ptrace_count_children(td, p, true);
+		if (num1 > num) {
+			free(children, M_TEMP);
+			goto get_children_repeat;
+		}
+		num = num1;
+		num1 = 0;
+		LIST_FOREACH(pp, &p->p_children, p_sibling) {
+			MPASS(num1 < num);
+			ptc = &children[num1];
+			if (ptrace_report_child(td, p, pp, ptc))
+				num1++;
+		}
+		LIST_FOREACH(pp, &p->p_orphans, p_orphan) {
+			MPASS(num1 < num);
+			ptc = &children[num1];
+			if (ptrace_report_child(td, p, pp, ptc)) {
+				num1++;
+				ptc->flags |= PTCHLD_ORPHAN;
+			}
+		}
+		*(struct ptrace_child **)addr = children;
+		td->td_retval[0] = num1;
+		PROC_LOCK(p);
 		break;
 
 	default:

@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 19, 2026
+.Dd July 12, 2026
 .Dt FWISOUND 4
 .Os
 .Sh NAME
@@ -20,7 +20,8 @@ driver provides audio capture from Apple FireWire devices that use a
 proprietary isochronous audio protocol
 .Pq not IEC 61883/AMDTP .
 .Pp
-The driver matches FireWire units with Apple OUI
+The driver attaches to unit directories in the device CSR configuration ROM
+with Apple OUI
 .Pq 0x000a27
 and decodes the
 .Qq sght

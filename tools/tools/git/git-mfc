@@ -59,7 +59,7 @@ def origin_branch():
         err(1, f"could not determine BRANCH from {newvers}")
     if branch == "CURRENT":
         err(1, "this is a CURRENT tree, we do not MFC to CURRENT")
-    if branch == "STABLE":
+    if branch == "STABLE" or branch == "PRERELEASE":
         return "main"
     if re.match(r'^RELEASE(-p\d+)?$', branch):
         if revision is None:
@@ -154,7 +154,7 @@ def reverts(commit):
     reverts, or None.
     """
     for line in commit.message.splitlines():
-        m = re.match(r'^This reverts commit ([0-9a-f]{40})\.', line)
+        m = re.match(r'^This reverts commit ([0-9a-f]{40})', line)
         if m:
             return m.group(1)
     return None
@@ -501,11 +501,11 @@ def main():
     if args.remote:
         remote = args.remote
     else:
-        try:
-            tracking = repo.active_branch.tracking_branch()
-            remote = tracking.remote_name if tracking else 'freebsd'
-        except (TypeError, ValueError):
-            remote = 'freebsd'
+        tracking = repo.active_branch.tracking_branch()
+        if tracking:
+            remote = tracking.remote_name
+        else:
+            err(1, "could not find upstream branch, use --remote")
 
     upstream = remote + '/' + origin
 

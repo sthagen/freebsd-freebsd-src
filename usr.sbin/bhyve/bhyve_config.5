@@ -226,6 +226,9 @@ This value is used for the guest's System Management BIOS System Information str
 Stock keeping unit of the chassis.
 It's also called product ID or purchase order number.
 This value is used for the guest's System Management BIOS System Information structure.
+.It Va oemstring.N Ta string Ta none Ta
+This value is returned for the guest's Nth System Management BIOS System Information OEM Strings structure.
+Configuration can specify up to 255 strings.
 .It Va rundir Ta String Ta Pa /var/run/bhyve/ Ta
 Path to the runtime directory for
 .Xr bhyve 8

@@ -46,12 +46,9 @@ SYSCTL_INT(_hw_firewire_fwisound, OID_AUTO, iso_channel, CTLFLAG_RWTUN,
 			printf("fwisound: " fmt, ## __VA_ARGS__);	\
 	} while (0)
 
-static void	fwisound_identify(driver_t *, device_t);
 static int	fwisound_probe(device_t);
 static int	fwisound_attach(device_t);
 static int	fwisound_detach(device_t);
-static void	fwisound_post_busreset(void *);
-static void	fwisound_post_explore(void *);
 static void	fwisound_probe_task(void *, int);
 static void	fwisound_start_task(void *, int);
 static void	fwisound_stop_task(void *, int);
@@ -105,49 +102,40 @@ fwisound_write_quadlet(struct fwisound_softc *sc, uint32_t offset, uint32_t val)
 	return (err);
 }
 
+/*
+ * Extract the audio command base register (key 0x40) from the unit directory.
+ */
 static uint32_t
-fwisound_find_audio_unit(struct fw_device *fwdev)
+fwisound_find_audio_base(struct fw_unit *unit)
 {
-	struct csrhdr *hdr;
-	struct csrdirectory *root, *udir;
-	struct csrreg *reg, *u;
-	int i, j, spec_ok, ver_ok;
-	uint32_t audio_base;
+	struct fw_device *fwdev = unit->fwdev;
+	struct csrdirectory *udir;
+	struct csrreg *reg;
+	uint32_t udir_qoff, udir_len, rom_quads;
+	int i;
 
-	hdr = (struct csrhdr *)fwdev->csrrom;
-	if (hdr->info_len <= 1)
+	rom_quads = CSRROMSIZE / 4;
+	udir_qoff = unit->dir_offset / 4;
+	if (udir_qoff >= rom_quads)
 		return (0);
 
-	root = (struct csrdirectory *)(fwdev->csrrom + 1 + hdr->info_len);
-
-	for (i = 0; i < root->crc_len; i++) {
-		reg = &root->entry[i];
-
-		if (reg->key != CROM_UDIR)
-			continue;
-
-		udir = (struct csrdirectory *)(reg + reg->val);
-
-		spec_ok = 0;
-		ver_ok = 0;
-		audio_base = 0;
-
-		for (j = 0; j < udir->crc_len; j++) {
-			u = &udir->entry[j];
-
-			if (u->key == CSRKEY_SPEC && u->val == FWISOUND_SPEC_ID)
-				spec_ok = 1;
-			else if (u->key == CSRKEY_VER &&
-			    u->val == FWISOUND_VERSION)
-				ver_ok = 1;
-			else if (u->key == IIDC_CROM_CMD_BASE)
-				audio_base = u->val;
-		}
-
-		if (spec_ok && ver_ok && audio_base != 0)
-			return (audio_base);
+	udir = (struct csrdirectory *)&fwdev->csrrom[udir_qoff];
+	udir_len = udir->crc_len;
+	if (udir_qoff + 1 + udir_len > rom_quads)
+		return (0);
+	if (!crom_crc_valid((uint32_t *)&udir->entry[0], udir_len, udir->crc)) {
+		if (firewire_debug)
+			printf("fwisound: bad CRC in unit directory at 0x%x\n",
+			    udir_qoff);
 	}
 
+	for (i = 0; i < (int)udir_len; i++) {
+		if (udir_qoff + 1 + i >= rom_quads)
+			break;
+		reg = &udir->entry[i];
+		if (reg->key == IIDC_CROM_CMD_BASE && reg->val != 0)
+			return (reg->val);
+	}
 	return (0);
 }
 
@@ -393,7 +381,7 @@ fwisound_iso_input(struct fw_xferq *xferq)
 		}
 
 		sample_count = ntohl(pay->sample_count);
-		if (sample_count == 0 || sample_count > 475) {
+		if (sample_count == 0 || sample_count > FWISOUND_MAX_SAMPLES) {
 			m_freem(m);
 			continue;
 		}
@@ -445,96 +433,50 @@ fwisound_iso_input(struct fw_xferq *xferq)
 	    &sc->dma_ch, dma_ch);
 }
 
-static void
-fwisound_post_explore(void *arg)
-{
-	struct fwisound_softc *sc = (struct fwisound_softc *)arg;
-	struct fw_device *fwdev;
-	uint32_t audio_base;
-	int err;
-
-	FWISOUND_LOCK(sc);
-	if (sc->state == FWISOUND_STATE_DETACHING) {
-		FWISOUND_UNLOCK(sc);
-		return;
-	}
-
-	if (sc->fwdev != NULL) {
-		STAILQ_FOREACH(fwdev, &sc->fd.fc->devices, link) {
-			if (fwdev == sc->fwdev &&
-			    fwdev->status == FWDEVATTACHED)
-				break;
-		}
-		if (fwdev == NULL) {
-			device_printf(sc->dev, "device disconnected\n");
-			sc->fwdev = NULL;
-			sc->state = FWISOUND_STATE_IDLE;
-			FWISOUND_UNLOCK(sc);
-			fwisound_iso_stop(sc);
-			FWISOUND_LOCK(sc);
-		}
-	}
-
-	if (sc->fwdev == NULL) {
-		STAILQ_FOREACH(fwdev, &sc->fd.fc->devices, link) {
-			if (fwdev->status != FWDEVATTACHED)
-				continue;
-
-			audio_base = fwisound_find_audio_unit(fwdev);
-			if (audio_base == 0)
-				continue;
-
-			sc->fwdev = fwdev;
-			sc->cmd_hi = 0xffff;
-			sc->cmd_lo = 0xf0000000 | (audio_base << 2);
-
-			FWISOUND_UNLOCK(sc);
-			err = taskqueue_enqueue(taskqueue_thread,
-			    &sc->probe_task);
-			if (err != 0)
-				device_printf(sc->dev,
-				    "taskqueue_enqueue failed: %d\n", err);
-			return;
-		}
-	}
-
-	FWISOUND_UNLOCK(sc);
-}
-
-static void
-fwisound_post_busreset(void *arg __unused)
-{
-
-}
-
-static void
-fwisound_identify(driver_t *driver, device_t parent)
-{
-
-	if (device_find_child(parent, "fwisound", DEVICE_UNIT_ANY) == NULL)
-		BUS_ADD_CHILD(parent, 0, "fwisound", DEVICE_UNIT_ANY);
-}
 
 static int
 fwisound_probe(device_t dev)
 {
+	struct fw_unit *unit;
+
+	unit = fw_get_unit(dev);
+	if (unit == NULL)
+		return (ENXIO);
+
+	if (unit->spec_id != FWISOUND_SPEC_ID ||
+	    unit->sw_version != FWISOUND_VERSION)
+		return (ENXIO);
 
 	device_set_desc(dev, "Apple FireWire Audio");
-	return (0);
+	return (BUS_PROBE_DEFAULT);
 }
 
 static int
 fwisound_attach(device_t dev)
 {
 	struct fwisound_softc *sc;
+	struct fw_unit *unit;
+	uint32_t audio_base;
+
+	unit = fw_get_unit(dev);
+	if (unit == NULL || unit->fwdev == NULL)
+		return (ENXIO);
+
+	audio_base = fwisound_find_audio_base(unit);
+	if (audio_base == 0) {
+		device_printf(dev, "no audio base in unit directory\n");
+		return (ENXIO);
+	}
 
 	sc = device_get_softc(dev);
 	sc->fd.dev = dev;
-	sc->fd.fc = device_get_ivars(dev);
+	sc->fd.fc = fw_get_comm(dev);
 	sc->dev = dev;
 	mtx_init(&sc->mtx, "fwisound", NULL, MTX_DEF);
 
-	sc->fwdev = NULL;
+	sc->fwdev = unit->fwdev;
+	sc->cmd_hi = 0xffff;
+	sc->cmd_lo = 0xf0000000 | (audio_base << 2);
 	sc->state = FWISOUND_STATE_IDLE;
 	sc->dma_ch = -1;
 	sc->iso_active = 0;
@@ -543,9 +485,6 @@ fwisound_attach(device_t dev)
 	TASK_INIT(&sc->probe_task, 0, fwisound_probe_task, sc);
 	TASK_INIT(&sc->start_task, 0, fwisound_start_task, sc);
 	TASK_INIT(&sc->stop_task, 0, fwisound_stop_task, sc);
-
-	sc->fd.post_busreset = fwisound_post_busreset;
-	sc->fd.post_explore = fwisound_post_explore;
 
 	sc->pcm_dev = device_add_child(dev, "pcm", DEVICE_UNIT_ANY);
 	if (sc->pcm_dev == NULL) {
@@ -556,7 +495,8 @@ fwisound_attach(device_t dev)
 
 	bus_attach_children(dev);
 
-	fwisound_post_explore(sc);
+	if (taskqueue_enqueue(taskqueue_thread, &sc->probe_task) != 0)
+		device_printf(dev, "failed to enqueue probe task\n");
 
 	return (0);
 }
@@ -589,7 +529,6 @@ fwisound_detach(device_t dev)
 }
 
 static device_method_t fwisound_methods[] = {
-	DEVMETHOD(device_identify,	fwisound_identify),
 	DEVMETHOD(device_probe,		fwisound_probe),
 	DEVMETHOD(device_attach,	fwisound_attach),
 	DEVMETHOD(device_detach,	fwisound_detach),
