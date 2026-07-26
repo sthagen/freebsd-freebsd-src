@@ -253,8 +253,18 @@
 #define IGB_EITR_DIVIDEND	1000000
 #define IGB_EITR_SHIFT		2
 #define IGB_QVECTOR_MASK	0x7FFC
-#define IGB_INTS_TO_EITR(i)	(((IGB_EITR_DIVIDEND/i) & IGB_QVECTOR_MASK) << \
-				    IGB_EITR_SHIFT)
+#define IGB_INTS_TO_EITR(i)	\
+	(((IGB_EITR_DIVIDEND / (i)) << IGB_EITR_SHIFT) & IGB_QVECTOR_MASK)
+#define IGB_EITR_TO_INTS(i)	((IGB_EITR_DIVIDEND << IGB_EITR_SHIFT) / \
+					    ((i) & IGB_QVECTOR_MASK))
+
+/*
+ * The average packet size calculation in em_ring_itr() yields an EITR
+ * interval field value.  That field is quarter microsecond granular (see
+ * IGB_EITR_SHIFT), so an interval of V is 1000000 / (V / 4) interrupts per
+ * second.
+ */
+#define EM_AIM_DIVIDEND		(IGB_EITR_DIVIDEND << IGB_EITR_SHIFT)
 
 #define IGB_LINK_ITR		2000
 #define I210_LINK_DELAY		1000
@@ -408,8 +418,18 @@ struct tx_ring {
 
 	/* Soft stats */
 	unsigned long		tx_irq;
-	unsigned long		tx_packets;
-	unsigned long		tx_bytes;
+
+	/*
+	 * Free running AIM counters.  The producer updates these while
+	 * encapsulating packets, then publishes both together at the TX
+	 * doorbell.  The interrupt handler samples only the published value,
+	 * so it cannot observe one counter without the other.
+	 */
+	u32			tx_packets;
+	u32			tx_bytes;
+	uint64_t		tx_aim_snapshot __aligned(8);
+	u32			tx_packets_last;
+	u32			tx_bytes_last;
 
 	/* Saved csum offloading context information */
 	int			csum_flags;
@@ -423,6 +443,15 @@ struct tx_ring {
 	uint32_t		csum_txd_upper;
 	uint32_t		csum_txd_lower;	/* last field */
 };
+
+static __inline void
+em_aim_publish(struct tx_ring *txr)
+{
+	uint64_t snapshot;
+
+	snapshot = ((uint64_t)txr->tx_bytes << 32) | txr->tx_packets;
+	atomic_store_rel_64(&txr->tx_aim_snapshot, snapshot);
+}
 
 /*
  * The Receive ring, one per rx queue
@@ -443,12 +472,28 @@ struct rx_ring {
 	/* Soft stats */
 	unsigned long		rx_irq;
 	unsigned long		rx_discarded;
-	unsigned long		rx_packets;
-	unsigned long		rx_bytes;
 
-	/* Next requested ITR latency */
-	u8			rx_nextlatency;
+	/*
+	 * Free running AIM counters.  RX publishes both together when iflib
+	 * returns descriptors to hardware.  The interrupt handler samples only
+	 * the published value, so watchdog-driven RX processing cannot expose
+	 * one counter without the other.
+	 */
+	u32			rx_packets;
+	u32			rx_bytes;
+	uint64_t		rx_aim_snapshot __aligned(8);
+	u32			rx_packets_last;
+	u32			rx_bytes_last;
 };
+
+static __inline void
+em_aim_publish_rx(struct rx_ring *rxr)
+{
+	uint64_t snapshot;
+
+	snapshot = ((uint64_t)rxr->rx_bytes << 32) | rxr->rx_packets;
+	atomic_store_rel_64(&rxr->rx_aim_snapshot, snapshot);
+}
 
 struct em_tx_queue {
 	struct e1000_softc	*sc;
@@ -468,6 +513,14 @@ struct em_rx_queue {
 	u64			irqs;
 	struct if_irq		que_irq;
 };  
+
+/* Driver-observed link state and its publication barrier. */
+enum em_link_state {
+	EM_LINK_STATE_DOWN = 0,
+	EM_LINK_STATE_DOWN_RESET_PENDING,
+	EM_LINK_STATE_UP,
+	EM_LINK_STATE_UP_RESET_PENDING,
+};
 
 /* Our softc structure */
 struct e1000_softc {
@@ -530,7 +583,7 @@ struct e1000_softc {
 	u32			shadow_vfta[EM_VFTA_SIZE];
 
 	/* Info about the interface */
-	u16			link_active;
+	enum em_link_state	link_state;
 	u16			fc;
 	u16			link_speed;
 	u16			link_duplex;

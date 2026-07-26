@@ -462,7 +462,7 @@ static int	em_get_rs(SYSCTL_HANDLER_ARGS);
 static void	em_print_debug_info(struct e1000_softc *);
 static int 	em_is_valid_ether_addr(u8 *);
 static void	em_newitr(struct e1000_softc *, struct em_rx_queue *,
-    struct tx_ring *, struct rx_ring *);
+    struct rx_ring *);
 static bool	em_automask_tso(if_ctx_t);
 static int	em_sysctl_tso_tcp_flags_mask(SYSCTL_HANDLER_ARGS);
 static int	em_sysctl_int_delay(SYSCTL_HANDLER_ARGS);
@@ -496,6 +496,7 @@ static int	em_get_regs(SYSCTL_HANDLER_ARGS);
 
 static void	lem_smartspeed(struct e1000_softc *);
 static void	igb_configure_queues(struct e1000_softc *);
+static void	igb_initialize_interrupt_rate(struct e1000_softc *);
 static void	em_flush_desc_rings(struct e1000_softc *);
 
 
@@ -967,6 +968,13 @@ em_if_attach_pre(if_ctx_t ctx)
 	INIT_DEBUGOUT("em_if_attach_pre: begin");
 	dev = iflib_get_dev(ctx);
 	sc = iflib_get_softc(ctx);
+
+	if (em_max_interrupt_rate <= 0) {
+		device_printf(dev,
+		    "Invalid max_interrupt_rate %d; using default %d\n",
+		    em_max_interrupt_rate, EM_INTS_DEFAULT);
+		em_max_interrupt_rate = EM_INTS_DEFAULT;
+	}
 
 	sc->ctx = sc->osdep.ctx = ctx;
 	sc->dev = sc->osdep.dev = dev;
@@ -1562,6 +1570,10 @@ em_if_init(if_ctx_t ctx)
 
 	/* Initialize the hardware */
 	em_reset(ctx);
+	/* Re-arm a link-up transition deferred for this reset. */
+	if (sc->link_state == EM_LINK_STATE_DOWN_RESET_PENDING ||
+	    sc->link_state == EM_LINK_STATE_UP_RESET_PENDING)
+		sc->link_state = EM_LINK_STATE_DOWN;
 	em_if_update_admin_status(ctx);
 
 	for (i = 0, tx_que = sc->tx_queues; i < sc->tx_num_queues;
@@ -1618,6 +1630,8 @@ em_if_init(if_ctx_t ctx)
 		/* Set up queue routing */
 		igb_configure_queues(sc);
 	}
+	if (sc->hw.mac.type >= igb_mac_min)
+		igb_initialize_interrupt_rate(sc);
 
 	/* this clears any pending interrupts */
 	E1000_READ_REG(&sc->hw, E1000_ICR);
@@ -1637,12 +1651,101 @@ em_if_init(if_ctx_t ctx)
 	}
 }
 
-enum itr_latency_target {
-	itr_latency_disabled = 0,
-	itr_latency_lowest = 1,
-	itr_latency_low = 2,
-	itr_latency_bulk = 3
-};
+/*
+ * RX publishes its byte and packet counters as one snapshot when iflib
+ * returns descriptors to hardware.  This also covers watchdog-driven RX
+ * processing, which can run while the interrupt vector is unmasked.
+ */
+static __inline void
+em_aim_rx_delta(struct rx_ring *rxr, u32 *bytes, u32 *packets)
+{
+	uint64_t snapshot;
+	u32 now_bytes, now_packets;
+
+	snapshot = atomic_load_acq_64(&rxr->rx_aim_snapshot);
+	now_bytes = snapshot >> 32;
+	now_packets = (u32)snapshot;
+	*bytes = now_bytes - rxr->rx_bytes_last;
+	*packets = now_packets - rxr->rx_packets_last;
+	rxr->rx_bytes_last = now_bytes;
+	rxr->rx_packets_last = now_packets;
+}
+
+/*
+ * TX publishes its byte and packet counters as one snapshot at the doorbell,
+ * because encapsulation can overlap the interrupt filter.  The two halves
+ * remain independent free running u32 counters, so their deltas are correct
+ * across wrap.
+ */
+static __inline void
+em_aim_tx_delta(struct tx_ring *txr, u32 *bytes, u32 *packets)
+{
+	uint64_t snapshot;
+	u32 now_bytes, now_packets;
+
+	snapshot = atomic_load_acq_64(&txr->tx_aim_snapshot);
+	now_bytes = snapshot >> 32;
+	now_packets = (u32)snapshot;
+	*bytes = now_bytes - txr->tx_bytes_last;
+	*packets = now_packets - txr->tx_packets_last;
+	txr->tx_bytes_last = now_bytes;
+	txr->tx_packets_last = now_packets;
+}
+
+/*********************************************************************
+ *
+ *  Do Adaptive Interrupt Moderation:
+ *    - Calculate based on average size over the last interval
+ *
+ *  Returns interrupts per second rather than a register value, so that the
+ *  caller's EM_INTS_TO_ITR()/IGB_INTS_TO_EITR() conversion applies, or zero
+ *  if the interval carried no packet to measure.
+ *
+ *********************************************************************/
+static u32
+em_ring_itr(struct e1000_softc *sc, u32 rxbytes, u32 rxpackets, u32 txbytes,
+    u32 txpackets)
+{
+	u32 newitr = 0;
+
+	if (txbytes && txpackets)
+		newitr = txbytes / txpackets;
+	if (rxbytes && rxpackets)
+		newitr = max(newitr, rxbytes / rxpackets);
+
+	/*
+	 * No packet was observed, so there is no size to work from.  Report no
+	 * observation and let the caller keep the rate it already has.
+	 */
+	if (newitr == 0)
+		return (0);
+
+	newitr += 24; /* account for hardware frame, crc */
+	/* set an upper boundary */
+	newitr = min(newitr, 3000);
+	/* Be nice to the mid range */
+	if ((newitr > 300) && (newitr < 1200))
+		newitr = (newitr / 3);
+	else
+		newitr = (newitr / 2);
+
+	/* The value above was written straight to EITR; make it a rate */
+	newitr = EM_AIM_DIVIDEND / newitr;
+
+	/*
+	 * Cap the rate: enable_aim=1 is the normal setting, enable_aim=2 opts
+	 * into the low latency end.  The original was unbounded and would ask
+	 * for ~95k ints/s on minimum sized frames.  There is deliberately no
+	 * floor, so jumbo traffic settles near 2.7k ints/s.
+	 */
+	if (sc->enable_aim == 1)
+		newitr = min(newitr, EM_INTS_20K);
+	else
+		newitr = min(newitr, EM_INTS_70K);
+
+	return (newitr);
+}
+
 /*********************************************************************
  *
  *  Helper to calculate next (E)ITR value for AIM
@@ -1650,126 +1753,51 @@ enum itr_latency_target {
  *********************************************************************/
 static void
 em_newitr(struct e1000_softc *sc, struct em_rx_queue *que,
-    struct tx_ring *txr, struct rx_ring *rxr)
+    struct rx_ring *rxr)
 {
 	struct e1000_hw *hw = &sc->hw;
-	unsigned long bytes, bytes_per_packet, packets;
-	unsigned long rxbytes, rxpackets, txbytes, txpackets;
+	struct em_tx_queue *tx_que;
+	u32 ringbytes, ringpackets, rxbytes, rxpackets, txbytes, txpackets;
 	u32 newitr;
-	u8 nextlatency;
+	int i;
 
-	rxbytes = atomic_load_long(&rxr->rx_bytes);
-	txbytes = atomic_load_long(&txr->tx_bytes);
+	em_aim_rx_delta(rxr, &rxbytes, &rxpackets);
+
+	/*
+	 * A vector can service more than one TX ring when iflib is configured
+	 * with unequal RX and TX queue counts.  Sample every ring routed to
+	 * this vector rather than treating the vector as a TX queue index.
+	 */
+	txbytes = txpackets = 0;
+	for (i = 0; i < sc->tx_num_queues; i++) {
+		tx_que = &sc->tx_queues[i];
+		if (tx_que->msix != que->msix)
+			continue;
+		em_aim_tx_delta(&tx_que->txr, &ringbytes, &ringpackets);
+		txbytes += ringbytes;
+		txpackets += ringpackets;
+	}
 
 	/* Idle, do nothing */
 	if (txbytes == 0 && rxbytes == 0)
 		return;
 
-	newitr = 0;
-
-	if (sc->enable_aim) {
-		nextlatency = rxr->rx_nextlatency;
-
-		/* Use half default (4K) ITR if sub-gig */
-		if (sc->link_speed != 1000) {
-			newitr = EM_INTS_4K;
-			goto em_set_next_itr;
-		}
-		/* Want at least enough packet buffer for two frames to AIM */
-		if (sc->shared->isc_max_frame_size * 2 > (sc->pba << 10)) {
-			newitr = em_max_interrupt_rate;
-			sc->enable_aim = 0;
-			goto em_set_next_itr;
-		}
-
-		bytes = bytes_per_packet = 0;
-		/* Get largest values from the associated tx and rx ring */
-		txpackets = atomic_load_long(&txr->tx_packets);
-		if (txpackets != 0) {
-			bytes = txbytes;
-			bytes_per_packet = txbytes / txpackets;
-			packets = txpackets;
-		}
-		rxpackets = atomic_load_long(&rxr->rx_packets);
-		if (rxpackets != 0) {
-			bytes = lmax(bytes, rxbytes);
-			bytes_per_packet =
-			    lmax(bytes_per_packet, rxbytes / rxpackets);
-			packets = lmax(packets, rxpackets);
-		}
-
-		/* Latency state machine */
-		switch (nextlatency) {
-		case itr_latency_disabled: /* Bootstrapping */
-			nextlatency = itr_latency_low;
-			break;
-		case itr_latency_lowest: /* 70k ints/s */
-			/* TSO and jumbo frames */
-			if (bytes_per_packet > 8000)
-				nextlatency = itr_latency_bulk;
-			else if ((packets < 5) && (bytes > 512))
-				nextlatency = itr_latency_low;
-			break;
-		case itr_latency_low: /* 20k ints/s */
-			if (bytes > 10000) {
-				/* Handle TSO */
-				if (bytes_per_packet > 8000)
-					nextlatency = itr_latency_bulk;
-				else if ((packets < 10) ||
-				    (bytes_per_packet > 1200))
-					nextlatency = itr_latency_bulk;
-				else if (packets > 35)
-					nextlatency = itr_latency_lowest;
-			} else if (bytes_per_packet > 2000) {
-				nextlatency = itr_latency_bulk;
-			} else if (packets < 3 && bytes < 512) {
-				nextlatency = itr_latency_lowest;
-			}
-			break;
-		case itr_latency_bulk: /* 4k ints/s */
-			if (bytes > 25000) {
-				if (packets > 35)
-					nextlatency = itr_latency_low;
-			} else if (bytes < 1500)
-				nextlatency = itr_latency_low;
-			break;
-		default:
-			nextlatency = itr_latency_low;
-			device_printf(sc->dev,
-			    "Unexpected newitr transition %d\n", nextlatency);
-			break;
-		}
-
-		/* Trim itr_latency_lowest for default AIM setting */
-		if (sc->enable_aim == 1 && nextlatency == itr_latency_lowest)
-			nextlatency = itr_latency_low;
-
-		/* Request new latency */
-		rxr->rx_nextlatency = nextlatency;
-	} else {
-		/* We may have toggled to AIM disabled */
-		nextlatency = itr_latency_disabled;
-		rxr->rx_nextlatency = nextlatency;
-	}
-
-	/* ITR state machine */
-	switch(nextlatency) {
-	case itr_latency_lowest:
-		newitr = EM_INTS_70K;
-		break;
-	case itr_latency_low:
-		newitr = EM_INTS_20K;
-		break;
-	case itr_latency_bulk:
-		newitr = EM_INTS_4K;
-		break;
-	case itr_latency_disabled:
-	default:
+	if (sc->enable_aim == 0) {
 		newitr = em_max_interrupt_rate;
-		break;
+	} else if (sc->link_speed < SPEED_1000) {
+		/* Use half default (4K) ITR if sub-gig */
+		newitr = EM_INTS_4K;
+	} else if (sc->shared->isc_max_frame_size * 2 > (sc->pba << 10)) {
+		/* Want at least enough packet buffer for two frames to AIM */
+		newitr = em_max_interrupt_rate;
+	} else {
+		newitr = em_ring_itr(sc, rxbytes, rxpackets, txbytes,
+		    txpackets);
+		/* No usable observation; leave the rate where it is */
+		if (newitr == 0)
+			return;
 	}
 
-em_set_next_itr:
 	if (hw->mac.type >= igb_mac_min) {
 		newitr = IGB_INTS_TO_EITR(newitr);
 
@@ -1788,7 +1816,8 @@ em_set_next_itr:
 
 		if (newitr != que->itr_setting) {
 			que->itr_setting = newitr;
-			if (hw->mac.type == e1000_82574 && que->msix) {
+			if (hw->mac.type == e1000_82574 &&
+			    sc->intr_type == IFLIB_INTR_MSIX) {
 				E1000_WRITE_REG(hw,
 				    E1000_EITR_82574(que->msix),
 				    que->itr_setting);
@@ -1811,7 +1840,6 @@ em_intr(void *arg)
 	struct e1000_softc *sc = arg;
 	struct e1000_hw *hw = &sc->hw;
 	struct em_rx_queue *que = &sc->rx_queues[0];
-	struct tx_ring *txr = &sc->tx_queues[0].txr;
 	struct rx_ring *rxr = &que->rxr;
 	if_ctx_t ctx = sc->ctx;
 	u32 reg_icr;
@@ -1850,13 +1878,7 @@ em_intr(void *arg)
 		sc->rx_overruns++;
 
 	if (hw->mac.type >= e1000_82540)
-		em_newitr(sc, que, txr, rxr);
-
-	/* Reset state */
-	txr->tx_bytes = 0;
-	txr->tx_packets = 0;
-	rxr->rx_bytes = 0;
-	rxr->rx_packets = 0;
+		em_newitr(sc, que, rxr);
 
 	return (FILTER_SCHEDULE_THREAD);
 }
@@ -1911,18 +1933,11 @@ em_msix_que(void *arg)
 {
 	struct em_rx_queue *que = arg;
 	struct e1000_softc *sc = que->sc;
-	struct tx_ring *txr = &sc->tx_queues[que->msix].txr;
 	struct rx_ring *rxr = &que->rxr;
 
 	++que->irqs;
 
-	em_newitr(sc, que, txr, rxr);
-
-	/* Reset state */
-	txr->tx_bytes = 0;
-	txr->tx_packets = 0;
-	rxr->rx_bytes = 0;
-	rxr->rx_packets = 0;
+	em_newitr(sc, que, rxr);
 
 	return (FILTER_SCHEDULE_THREAD);
 }
@@ -1999,7 +2014,8 @@ em_if_media_status(if_ctx_t ctx, struct ifmediareq *ifmr)
 	ifmr->ifm_status = IFM_AVALID;
 	ifmr->ifm_active = IFM_ETHER;
 
-	if (!sc->link_active) {
+	if (sc->link_state == EM_LINK_STATE_DOWN ||
+	    sc->link_state == EM_LINK_STATE_DOWN_RESET_PENDING) {
 		return;
 	}
 
@@ -2219,7 +2235,7 @@ em_if_update_admin_status(if_ctx_t ctx)
 	struct e1000_hw *hw = &sc->hw;
 	device_t dev = iflib_get_dev(ctx);
 	u32 link_check, thstat, ctrl;
-	bool automasked = false;
+	bool reset_requested = false;
 
 	link_check = thstat = ctrl = 0;
 	/* Get the cached link value or read phy for real */
@@ -2262,7 +2278,13 @@ em_if_update_admin_status(if_ctx_t ctx)
 	}
 
 	/* Now check for a transition */
-	if (link_check && (sc->link_active == 0)) {
+	if (link_check &&
+	    (sc->link_state == EM_LINK_STATE_DOWN ||
+	    sc->link_state == EM_LINK_STATE_DOWN_RESET_PENDING)) {
+		bool reset_pending;
+
+		reset_pending =
+		    sc->link_state == EM_LINK_STATE_DOWN_RESET_PENDING;
 		e1000_get_speed_and_duplex(hw, &sc->link_speed,
 		    &sc->link_duplex);
 		/* Check if we must disable SPEED_MODE bit on PCI-E */
@@ -2279,7 +2301,7 @@ em_if_update_admin_status(if_ctx_t ctx)
 			    sc->link_speed,
 			    ((sc->link_duplex == FULL_DUPLEX) ?
 			    "Full Duplex" : "Half Duplex"));
-		sc->link_active = 1;
+		sc->link_state = EM_LINK_STATE_UP;
 		sc->smartspeed = 0;
 		if ((ctrl & E1000_CTRL_EXT_LINK_MODE_MASK) ==
 		    E1000_CTRL_EXT_LINK_MODE_GMII &&
@@ -2299,17 +2321,33 @@ em_if_update_admin_status(if_ctx_t ctx)
 		}
 		/* Only do TSO on gigabit for older chips due to errata */
 		if (hw->mac.type < igb_mac_min)
-			automasked = em_automask_tso(ctx);
+			reset_requested = em_automask_tso(ctx);
 
-		/* Automasking resets the interface so don't mark it up yet */
-		if (!automasked)
+		if (reset_pending || reset_requested) {
+			/*
+			 * The PHY is up, but publish it only after the TSO
+			 * capability-change reset.
+			 */
+			sc->link_state = EM_LINK_STATE_UP_RESET_PENDING;
+		} else {
 			iflib_link_state_change(ctx, LINK_STATE_UP,
 			    IF_Mbps(sc->link_speed));
-	} else if (!link_check && (sc->link_active == 1)) {
+		}
+	} else if (!link_check &&
+	    (sc->link_state == EM_LINK_STATE_UP ||
+	    sc->link_state == EM_LINK_STATE_UP_RESET_PENDING)) {
+		bool link_was_published;
+		bool reset_pending;
+
+		link_was_published = sc->link_state == EM_LINK_STATE_UP;
+		reset_pending =
+		    sc->link_state == EM_LINK_STATE_UP_RESET_PENDING;
 		sc->link_speed = 0;
 		sc->link_duplex = 0;
-		sc->link_active = 0;
-		iflib_link_state_change(ctx, LINK_STATE_DOWN, 0);
+		sc->link_state = reset_pending ?
+		    EM_LINK_STATE_DOWN_RESET_PENDING : EM_LINK_STATE_DOWN;
+		if (link_was_published)
+			iflib_link_state_change(ctx, LINK_STATE_DOWN, 0);
 	}
 	em_update_stats_counters(sc);
 
@@ -2558,7 +2596,7 @@ igb_configure_queues(struct e1000_softc *sc)
 	struct e1000_hw *hw = &sc->hw;
 	struct em_rx_queue *rx_que;
 	struct em_tx_queue *tx_que;
-	u32 tmp, ivar = 0, newitr = 0;
+	u32 tmp, ivar = 0;
 
 	/* First turn on RSS capability */
 	if (hw->mac.type != e1000_82575)
@@ -2682,22 +2720,28 @@ igb_configure_queues(struct e1000_softc *sc)
 		break;
 	}
 
-	/* Set the igb starting interrupt rate */
-	if (em_max_interrupt_rate > 0) {
-		newitr = IGB_INTS_TO_EITR(em_max_interrupt_rate);
-
-		if (hw->mac.type == e1000_82575)
-			newitr |= newitr << 16;
-		else
-			newitr |= E1000_EITR_CNT_IGNR;
-
-		for (int i = 0; i < sc->rx_num_queues; i++) {
-			rx_que = &sc->rx_queues[i];
-			E1000_WRITE_REG(hw, E1000_EITR(rx_que->msix), newitr);
-		}
-	}
-
 	return;
+}
+
+static void
+igb_initialize_interrupt_rate(struct e1000_softc *sc)
+{
+	struct e1000_hw *hw = &sc->hw;
+	struct em_rx_queue *rx_que;
+	u32 newitr;
+
+	newitr = IGB_INTS_TO_EITR(em_max_interrupt_rate);
+	if (hw->mac.type == e1000_82575)
+		newitr |= newitr << 16;
+	else
+		newitr |= E1000_EITR_CNT_IGNR;
+
+	for (int i = 0; i < sc->rx_num_queues; i++) {
+		rx_que = &sc->rx_queues[i];
+		rx_que->itr_setting = newitr;
+		E1000_WRITE_REG(hw, E1000_EITR(rx_que->msix),
+		    rx_que->itr_setting);
+	}
 }
 
 static void
@@ -2758,7 +2802,9 @@ lem_smartspeed(struct e1000_softc *sc)
 {
 	u16 phy_tmp;
 
-	if (sc->link_active || (sc->hw.phy.type != e1000_phy_igp) ||
+	if (sc->link_state == EM_LINK_STATE_UP ||
+	    sc->link_state == EM_LINK_STATE_UP_RESET_PENDING ||
+	    (sc->hw.phy.type != e1000_phy_igp) ||
 	    sc->hw.mac.autoneg == 0 ||
 	    (sc->hw.phy.autoneg_advertised & ADVERTISE_1000_FULL) == 0)
 		return;
@@ -3229,9 +3275,10 @@ em_reset(if_ctx_t ctx)
 		hw->fc.refresh_time = 0xFFFF;
 		/* Jumbos need adjusted PBA */
 		if (if_getmtu(ifp) > ETHERMTU)
-			E1000_WRITE_REG(hw, E1000_PBA, 12);
+			pba = E1000_PBA_12K;
 		else
-			E1000_WRITE_REG(hw, E1000_PBA, 26);
+			pba = E1000_PBA_26K;
+		E1000_WRITE_REG(hw, E1000_PBA, pba);
 		break;
 	case e1000_82575:
 	case e1000_82576:
@@ -3513,6 +3560,9 @@ em_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 		/* Set up some basics */
 
 		struct tx_ring *txr = &que->txr;
+		KASSERT(__is_aligned(&txr->tx_aim_snapshot, sizeof(uint64_t)),
+		    ("%s: misaligned TX AIM snapshot %p", __func__,
+		    &txr->tx_aim_snapshot));
 		txr->sc = que->sc = sc;
 		que->me = txr->me =  i;
 
@@ -3566,6 +3616,9 @@ em_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 	for (i = 0, que = sc->rx_queues; i < nrxqsets; i++, que++) {
 		/* Set up some basics */
 		struct rx_ring *rxr = &que->rxr;
+		KASSERT(__is_aligned(&rxr->rx_aim_snapshot, sizeof(uint64_t)),
+		    ("%s: misaligned RX AIM snapshot %p", __func__,
+		    &rxr->rx_aim_snapshot));
 		rxr->sc = que->sc = sc;
 		rxr->que = que;
 		que->me = rxr->me =  i;
@@ -3805,6 +3858,19 @@ em_initialize_receive_unit(if_ctx_t ctx)
 			/* Set the default interrupt throttling rate */
 			E1000_WRITE_REG(hw, E1000_ITR,
 			    EM_INTS_TO_ITR(em_max_interrupt_rate));
+
+			/*
+			 * The 82574 MSI-X EITR registers are programmed
+			 * with the same value further below.  Either way
+			 * the hardware now holds the default rate, so seed
+			 * the software copy to match; otherwise a stale
+			 * itr_setting left over from AIM makes em_newitr()
+			 * skip the write that would restore it.
+			 */
+			for (i = 0, que = sc->rx_queues; i < sc->rx_num_queues;
+			    i++, que++)
+				que->itr_setting =
+				    EM_INTS_TO_ITR(em_max_interrupt_rate);
 		}
 
 		/* XXX TEMPORARY WORKAROUND: on some systems with 82573
@@ -4342,6 +4408,8 @@ em_automask_tso(if_ctx_t ctx)
 	struct e1000_softc *sc = iflib_get_softc(ctx);
 	if_softc_ctx_t scctx = iflib_get_softc_ctx(ctx);
 	if_t ifp = iflib_get_ifp(ctx);
+	bool reset_needed;
+	int drvflags;
 
 	if (!em_unsupported_tso && sc->link_speed &&
 	    sc->link_speed != SPEED_1000 &&
@@ -4351,20 +4419,32 @@ em_automask_tso(if_ctx_t ctx)
 		sc->tso_automasked = scctx->isc_capenable & IFCAP_TSO;
 		scctx->isc_capenable &= ~IFCAP_TSO;
 		if_setcapenablebit(ifp, 0, IFCAP_TSO);
-		/* iflib_init_locked handles ifnet hwassistbits */
-		iflib_request_reset(ctx);
-		return true;
 	} else if (sc->link_speed == SPEED_1000 && sc->tso_automasked) {
 		device_printf(sc->dev, "Re-enabling TSO for GbE.\n");
 		scctx->isc_capenable |= sc->tso_automasked;
 		if_setcapenablebit(ifp, sc->tso_automasked, 0);
 		sc->tso_automasked = 0;
-		/* iflib_init_locked handles ifnet hwassistbits */
-		iflib_request_reset(ctx);
-		return true;
+	} else {
+		return (false);
 	}
 
-	return false;
+	/*
+	 * Reset a running interface, or one being initialized while
+	 * administratively up.  OACTIVE remains set after iflib_stop(), so
+	 * it alone cannot distinguish initialization from an interface that
+	 * is down.  In other states, the next initialization will apply the
+	 * updated capabilities.
+	 */
+	drvflags = if_getdrvflags(ifp);
+	reset_needed = (drvflags & IFF_DRV_RUNNING) != 0 ||
+	    ((drvflags & IFF_DRV_OACTIVE) != 0 &&
+	    (if_getflags(ifp) & IFF_UP) != 0);
+	if (!reset_needed)
+		return (false);
+
+	/* iflib_init_locked handles ifnet hwassistbits */
+	iflib_request_reset(ctx);
+	return (true);
 }
 
 /*
@@ -4913,9 +4993,10 @@ em_sysctl_interrupt_rate_handler(SYSCTL_HANDLER_ARGS)
 		tque = oidp->oid_arg1;
 		hw = &tque->sc->hw;
 		if (hw->mac.type >= igb_mac_min)
-			reg = E1000_READ_REG(hw, E1000_EITR(tque->me));
-		else if (hw->mac.type == e1000_82574 && tque->msix)
-			reg = E1000_READ_REG(hw, E1000_EITR_82574(tque->me));
+			reg = E1000_READ_REG(hw, E1000_EITR(tque->msix));
+		else if (hw->mac.type == e1000_82574 &&
+		    tque->sc->intr_type == IFLIB_INTR_MSIX)
+			reg = E1000_READ_REG(hw, E1000_EITR_82574(tque->msix));
 		else
 			reg = E1000_READ_REG(hw, E1000_ITR);
 	} else {
@@ -4923,7 +5004,8 @@ em_sysctl_interrupt_rate_handler(SYSCTL_HANDLER_ARGS)
 		hw = &rque->sc->hw;
 		if (hw->mac.type >= igb_mac_min)
 			reg = E1000_READ_REG(hw, E1000_EITR(rque->msix));
-		else if (hw->mac.type == e1000_82574 && rque->msix)
+		else if (hw->mac.type == e1000_82574 &&
+		    rque->sc->intr_type == IFLIB_INTR_MSIX)
 			reg = E1000_READ_REG(hw,
 			    E1000_EITR_82574(rque->msix));
 		else
@@ -4938,7 +5020,7 @@ em_sysctl_interrupt_rate_handler(SYSCTL_HANDLER_ARGS)
 	} else {
 		usec = (reg & IGB_QVECTOR_MASK);
 		if (usec > 0)
-			rate = IGB_INTS_TO_EITR(usec);
+			rate = IGB_EITR_TO_INTS(usec);
 		else
 			rate = 0;
 	}
