@@ -38,6 +38,8 @@
 #include <sys/types.h>
 #include <sys/cdefs.h>
 #include <sys/bus.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <machine/atomic.h>
 #include <machine/cpufunc.h>
 #include <machine/bus.h>
@@ -193,6 +195,10 @@ struct aq_hw {
 	uint32_t chip_features;
 	uint64_t fw_caps;
 
+	/* Atlantic 1: MDIO port address of the PHY, discovered once. */
+	uint8_t phy_id;
+	bool phy_id_valid;
+
 	bool lro_enabled;
 
 	uint32_t mbox_addr;
@@ -207,6 +213,12 @@ struct aq_hw {
 
 	/* Atlantic 2: firmware statistics interface version (A0/B0). */
 	uint32_t aq2_iface;
+
+	/* Atlantic 2: firmware banner already announced for this attach. */
+	bool fw_announced;
+
+	/* Serialises the F/W MPI control register and mailbox. */
+	struct mtx fw_mtx;
 };
 
 #define AQ_HW_MAC      0U

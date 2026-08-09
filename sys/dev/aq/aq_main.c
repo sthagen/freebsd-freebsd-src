@@ -332,11 +332,13 @@ aq_if_attach_pre(if_ctx_t ctx)
 	struct aq_dev *softc;
 	struct aq_hw *hw;
 	if_softc_ctx_t scctx;
-	int rc;
+	int dbg, rc;
 
 	AQ_DBG_ENTER();
 	softc = iflib_get_softc(ctx);
 	rc = 0;
+
+	sysctl_ctx_init(&softc->aq_sysctl_ctx);
 
 	softc->ctx = ctx;
 	softc->dev = iflib_get_dev(ctx);
@@ -344,6 +346,9 @@ aq_if_attach_pre(if_ctx_t ctx)
 	softc->scctx = iflib_get_softc_ctx(ctx);
 	softc->sctx = iflib_get_sctx(ctx);
 	scctx = softc->scctx;
+
+	mtx_init(&softc->hw.fw_mtx, device_get_nameunit(softc->dev),
+	    "aq firmware", MTX_DEF);
 
 	softc->mmio_rid = PCIR_BAR(0);
 	softc->mmio_res = bus_alloc_resource_any(softc->dev, SYS_RES_MEMORY,
@@ -361,6 +366,7 @@ aq_if_attach_pre(if_ctx_t ctx)
 	softc->hw.hw_tag = softc->mmio_tag;
 	softc->hw.hw_handle = softc->mmio_handle;
 	softc->hw.dev = softc->dev;
+	softc->hw.aq_dev = softc;
 	softc->hw.device_id = pci_get_device(softc->dev);
 	if (aq_is_atlantic2(softc->hw.device_id))
 		softc->hw.chip_features |= AQ_HW_CHIP_ATLANTIC2;
@@ -370,6 +376,17 @@ aq_if_attach_pre(if_ctx_t ctx)
 	hw->fc.fc_rx = 1;
 	hw->fc.fc_tx = 1;
 	softc->linkup = 0U;
+	/* Set here, not in aq_if_init(): a recovery re-init must not reset it. */
+	softc->thermal_retry_ticks = ticks;
+
+	softc->dbg_level = AQ_DBG_LEVEL_DEFAULT;
+	softc->dbg_categories = AQ_DBG_CATEGORIES_DEFAULT;
+	if (resource_int_value(device_get_name(softc->dev),
+	    device_get_unit(softc->dev), "debug", &dbg) == 0)
+		softc->dbg_level = dbg;
+	if (resource_int_value(device_get_name(softc->dev),
+	    device_get_unit(softc->dev), "debug_categories", &dbg) == 0)
+		softc->dbg_categories = dbg;
 
 	/* Look up ops and caps. */
 	rc = aq_hw_mpi_create(hw);
@@ -438,6 +455,8 @@ fail:
 	if (softc->mmio_res != NULL)
 		bus_release_resource(softc->dev, SYS_RES_MEMORY,
 		    softc->mmio_rid, softc->mmio_res);
+	/* iflib skips ifdi_detach when ifdi_attach_pre fails. */
+	mtx_destroy(&softc->hw.fw_mtx);
 
 	AQ_DBG_EXIT(rc);
 	return (rc);
@@ -467,7 +486,8 @@ aq_if_attach_post(if_ctx_t ctx)
 	goto exit;
 		break;
 	case IFLIB_INTR_MSI:
-		break;
+		rc = EOPNOTSUPP;
+		goto exit;
 	case IFLIB_INTR_MSIX:
 		break;
 	default:
@@ -503,6 +523,8 @@ aq_if_detach(if_ctx_t ctx)
 	AQ_DBG_ENTER();
 	softc = iflib_get_softc(ctx);
 
+	sysctl_ctx_free(&softc->aq_sysctl_ctx);
+
 	aq_hw_deinit(&softc->hw);
 
 	for (i = 0; i < softc->rx_rings_count; i++)
@@ -515,6 +537,8 @@ aq_if_detach(if_ctx_t ctx)
 		    softc->mmio_rid, softc->mmio_res);
 
 	free(softc->vlan_tags, M_AQ);
+
+	mtx_destroy(&softc->hw.fw_mtx);
 
 	AQ_DBG_EXIT(0);
 	return (0);
@@ -535,6 +559,8 @@ aq_if_suspend(if_ctx_t ctx)
 
 	aq_if_stop(ctx);
 	aq_hw_deinit(&softc->hw);
+	/* iflib_device_suspend() does not stop the interface for us. */
+	if_setdrvflagbits(iflib_get_ifp(ctx), IFF_DRV_OACTIVE, IFF_DRV_RUNNING);
 
 	AQ_DBG_EXIT(0);
 	return (0);
@@ -606,7 +632,7 @@ aq_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 						   M_AQ, M_NOWAIT | M_ZERO);
 		if (!ring){
 			rc = ENOMEM;
-			device_printf(softc->dev, "atlantic: tx_ring malloc fail\n");
+			device_printf(softc->dev, "tx_ring malloc fail\n");
 			goto fail;
 		}
 		ring->tx_descs = (volatile struct aq_tx_desc*)vaddrs[i];
@@ -621,7 +647,7 @@ aq_if_tx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 		rc = aq_ring_stats_alloc(ring);
 		if (rc != 0) {
 			device_printf(softc->dev,
-			    "atlantic: tx_ring stats alloc fail\n");
+			    "tx_ring stats alloc fail\n");
 			goto fail;
 		}
 	}
@@ -652,7 +678,7 @@ aq_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 		if (!ring){
 			rc = ENOMEM;
 			device_printf(softc->dev,
-			    "atlantic: rx_ring malloc fail\n");
+			    "rx_ring malloc fail\n");
 			goto fail;
 		}
 
@@ -667,7 +693,7 @@ aq_if_rx_queues_alloc(if_ctx_t ctx, caddr_t *vaddrs, uint64_t *paddrs,
 		rc = aq_ring_stats_alloc(ring);
 		if (rc != 0) {
 			device_printf(softc->dev,
-			    "atlantic: rx_ring stats alloc fail\n");
+			    "rx_ring stats alloc fail\n");
 			goto fail;
 		}
 	}
@@ -726,15 +752,30 @@ aq_if_init(if_ctx_t ctx)
 
 	atomic_store_rel_long(&hw->flags, 0);
 
+	softc->phy_fault_last = 0;
+	softc->thermal_state = AQ_THERMAL_NORMAL;
+	softc->reset_pending = false;
 	hw->tx_rings_count = softc->tx_rings_count;
+
+	/* Pick up a locally administered address set since the last init. */
+	bcopy(if_getlladdr(iflib_get_ifp(ctx)), hw->mac_addr, ETHER_ADDR_LEN);
 
 	err = aq_hw_init(&softc->hw, softc->hw.mac_addr, softc->msix,
 	    softc->scctx->isc_intr == IFLIB_INTR_MSIX);
 	if (err != 0) {
-		device_printf(softc->dev, "atlantic: aq_hw_init: %d\n", err);
+		device_printf(softc->dev, "aq_hw_init: %d\n", err);
+		softc->init_failed = true;
 		AQ_DBG_EXIT(err);
 		return;
 	}
+	softc->init_failed = false;
+	softc->init_retries = 0;
+
+	/* aq_hw_init reloads the PHY, resetting the thermal-shutdown arming. */
+	if (hw->fw_ops->thermal_arm != NULL &&
+	    hw->fw_ops->thermal_arm(hw) != 0)
+		device_printf(softc->dev,
+		    "could not arm PHY thermal shutdown\n");
 
 	aq_if_media_status(ctx, &ifmr);
 
@@ -745,12 +786,12 @@ aq_if_init(if_ctx_t ctx)
 		err = aq_ring_tx_init(&softc->hw, ring);
 		if (err) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_tx_init: %d\n", err);
+			    "aq_ring_tx_init: %d\n", err);
 		}
 		err = aq_ring_tx_start(hw, ring);
 		if (err != 0) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_tx_start: %d\n", err);
+			    "aq_ring_tx_start: %d\n", err);
 		}
 	}
 	for (i = 0; i < softc->rx_rings_count; i++) {
@@ -759,12 +800,12 @@ aq_if_init(if_ctx_t ctx)
 		err = aq_ring_rx_init(&softc->hw, ring);
 		if (err) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_rx_init: %d\n", err);
+			    "aq_ring_rx_init: %d\n", err);
 		}
 		err = aq_ring_rx_start(hw, ring);
 		if (err != 0) {
 			device_printf(softc->dev,
-			    "atlantic: aq_ring_rx_start: %d\n", err);
+			    "aq_ring_rx_start: %d\n", err);
 		}
 		aq_if_rx_queue_intr_enable(ctx, i);
 	}
@@ -778,7 +819,9 @@ aq_if_init(if_ctx_t ctx)
 		aq_hw_udp_rss_enable(hw, (aq_rss_hashconfig() &
 		    (RSS_HASHTYPE_RSS_UDP_IPV4 | RSS_HASHTYPE_RSS_UDP_IPV6 |
 		    RSS_HASHTYPE_RSS_UDP_IPV6_EX)) != 0);
-	aq_hw_set_link_speed(hw, hw->link_rate);
+	err = aq_hw_set_link_speed(hw, hw->link_rate);
+	if (err != 0)
+		device_printf(softc->dev, "could not set link speed: %d\n", err);
 
 	/* iflib does not replay filter state after init; aq_hw_init() clears it. */
 	aq_if_multi_set(ctx);
@@ -815,8 +858,13 @@ aq_if_stop(if_ctx_t ctx)
 
 	aq_hw_reset(&softc->hw, true);
 	memset(&softc->last_stats, 0, sizeof(softc->last_stats));
-	softc->linkup = false;
-	aq_if_update_admin_status(ctx);
+	/* Each bring-up gets its own budget of re-init attempts. */
+	softc->init_retries = 0;
+	if (softc->linkup) {
+		softc->linkup = false;
+		softc->link_speed = 0;
+		iflib_link_state_change(ctx, LINK_STATE_DOWN, 0);
+	}
 	AQ_DBG_EXIT(0);
 }
 
@@ -845,13 +893,13 @@ aq_mc_filter_apply(void *arg, struct sockaddr_dl *dl, u_int count)
 	struct aq_hw *hw = &softc->hw;
 	uint8_t *mac_addr = NULL;
 
-	if (count == AQ_HW_MAC_MAX)
+	if (count >= AQ_HW_MAC_MAX - 1)
 		return (0);
 
 	mac_addr = LLADDR(dl);
 	aq_hw_mac_addr_set(hw, mac_addr, count + 1);
 
-	aq_log_detail("set %d mc address %6D", count + 1, mac_addr, ":");
+	aq_log_detail(hw, "set %d mc address %6D", count + 1, mac_addr, ":");
 	return (1);
 }
 
@@ -1055,13 +1103,14 @@ aq_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		rc = iflib_irq_alloc_generic(ctx, &softc->rx_rings[i]->irq,
 		    vector + 1, IFLIB_INTR_RXTX, aq_isr_rx, softc->rx_rings[i],
 			softc->rx_rings[i]->index, irq_name);
-		device_printf(softc->dev, "Assign IRQ %u to rx ring %u\n",
-					  vector, softc->rx_rings[i]->index);
-
 		if (rc) {
 			device_printf(softc->dev, "failed to set up RX handler\n");
 			goto fail;
 		}
+		if (bootverbose)
+			device_printf(softc->dev,
+			    "Assign IRQ %u to rx ring %u\n", vector,
+			    softc->rx_rings[i]->index);
 
 		softc->rx_rings[i]->msix = vector;
 	}
@@ -1075,20 +1124,24 @@ aq_if_msix_intr_assign(if_ctx_t ctx, int msix)
 		    &softc->rx_rings[softc->tx_rings[i]->msix]->irq,
 		    IFLIB_INTR_TX, softc->tx_rings[i],
 		    softc->tx_rings[i]->index, irq_name);
-		device_printf(softc->dev, "Assign IRQ %u to tx ring %u\n",
-		    softc->tx_rings[i]->msix, softc->tx_rings[i]->index);
+		if (bootverbose)
+			device_printf(softc->dev,
+			    "tx ring %u shares IRQ %u\n",
+			    softc->tx_rings[i]->index,
+			    softc->tx_rings[i]->msix);
 	}
 
 	rc = iflib_irq_alloc_generic(ctx, &softc->irq, rx_vectors + 1,
 	    IFLIB_INTR_ADMIN, aq_linkstat_isr, softc, 0, "aq");
-	softc->msix = rx_vectors;
-	device_printf(softc->dev, "Assign IRQ %u to admin proc \n",
-	    rx_vectors);
 	if (rc) {
 		device_printf(iflib_get_dev(ctx),
 		    "Failed to register admin handler\n");
 		goto fail;
 	}
+	softc->msix = rx_vectors;
+	if (bootverbose)
+		device_printf(softc->dev, "Assign IRQ %u to admin proc\n",
+		    rx_vectors);
 	AQ_DBG_EXIT(0);
 	return (0);
 
@@ -1291,107 +1344,92 @@ aq_sysctl_print_rss_config(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
-static int
-aq_sysctl_print_tx_head(SYSCTL_HANDLER_ARGS)
-{
-	struct aq_ring  *ring = arg1;
-	int             error = 0;
-	unsigned int   val;
+enum aq_ring_ptr {
+	AQ_RING_TX_HEAD,
+	AQ_RING_TX_TAIL,
+	AQ_RING_RX_HEAD,
+	AQ_RING_RX_TAIL,
+};
 
-	if (!ring)
+static int
+aq_sysctl_print_ring_ptr(SYSCTL_HANDLER_ARGS)
+{
+	struct aq_ring	*ring = arg1;
+	unsigned int	val;
+
+	if (ring == NULL)
 		return (0);
 
-	val = tdm_tx_desc_head_ptr_get(&ring->dev->hw, ring->index);
+	switch (arg2) {
+	case AQ_RING_TX_HEAD:
+		val = tdm_tx_desc_head_ptr_get(&ring->dev->hw, ring->index);
+		break;
+	case AQ_RING_TX_TAIL:
+		val = reg_tx_dma_desc_tail_ptr_get(&ring->dev->hw, ring->index);
+		break;
+	case AQ_RING_RX_HEAD:
+		val = rdm_rx_desc_head_ptr_get(&ring->dev->hw, ring->index);
+		break;
+	default: /* AQ_RING_RX_TAIL */
+		val = reg_rx_dma_desc_tail_ptr_get(&ring->dev->hw, ring->index);
+		break;
+	}
 
-	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error || !req->newptr)
-		return (error);
-
-	return (0);
+	return (sysctl_handle_int(oidp, &val, 0, req));
 }
 
 static int
-aq_sysctl_print_tx_tail(SYSCTL_HANDLER_ARGS)
+aq_sysctl_temperature(SYSCTL_HANDLER_ARGS)
 {
-	struct aq_ring  *ring = arg1;
-	int             error = 0;
-	unsigned int   val;
+	struct aq_dev   *softc = arg1;
+	int             error, temp_mc, val;
 
-	if (!ring)
-		return (0);
+	if (softc->hw.fw_ops == NULL || softc->hw.fw_ops->get_temp == NULL)
+		return (ENOTSUP);
 
-	val = reg_tx_dma_desc_tail_ptr_get(&ring->dev->hw, ring->index);
-
-	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error || !req->newptr)
+	error = softc->hw.fw_ops->get_temp(&softc->hw, &temp_mc);
+	if (error != 0)
 		return (error);
 
-	return (0);
-}
+	/* millidegrees Celsius -> decikelvin */
+	val = temp_mc / 100 + 2732;
 
-static int
-aq_sysctl_print_rx_head(SYSCTL_HANDLER_ARGS)
-{
-	struct aq_ring  *ring = arg1;
-	int             error = 0;
-	unsigned int   val;
-
-	if (!ring)
-		return (0);
-
-	val = rdm_rx_desc_head_ptr_get(&ring->dev->hw, ring->index);
-
-	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error || !req->newptr)
-		return (error);
-
-	return (0);
-}
-
-static int
-aq_sysctl_print_rx_tail(SYSCTL_HANDLER_ARGS)
-{
-	struct aq_ring  *ring = arg1;
-	int             error = 0;
-	unsigned int   val;
-
-	if (!ring)
-		return (0);
-
-	val = reg_rx_dma_desc_tail_ptr_get(&ring->dev->hw, ring->index);
-
-	error = sysctl_handle_int(oidp, &val, 0, req);
-	if (error || !req->newptr)
-		return (error);
-
-	return (0);
+	return (sysctl_handle_int(oidp, &val, 0, req));
 }
 
 static void
 aq_add_stats_sysctls(struct aq_dev *softc)
 {
 	device_t                dev = softc->dev;
-	struct sysctl_ctx_list  *ctx = device_get_sysctl_ctx(dev);
+	struct sysctl_ctx_list  *ctx = &softc->aq_sysctl_ctx;
 	struct sysctl_oid       *tree = device_get_sysctl_tree(dev);
 	struct sysctl_oid_list  *child = SYSCTL_CHILDREN(tree);
 	struct aq_stats *stats = &softc->curr_stats;
 	struct sysctl_oid       *stat_node, *queue_node;
 	struct sysctl_oid_list  *stat_list, *queue_list;
+	int                     temp_mc;
 
 #define QUEUE_NAME_LEN 32
 	char                    namebuf[QUEUE_NAME_LEN];
+
 	/* RSS configuration */
 	SYSCTL_ADD_PROC(ctx, child, OID_AUTO, "print_rss_config",
 	    CTLTYPE_STRING | CTLFLAG_RD, softc, 0,
 	    aq_sysctl_print_rss_config, "A", "Prints RSS Configuration");
 
-	/* Runtime trace controls (global) */
 	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug",
-	    CTLFLAG_RW, &aq_dbg_level, 0,
+	    CTLFLAG_RW, &softc->dbg_level, 0,
 	    "Trace verbosity: 0=off, 3=err, 4=+warn, 5=+trace, 6=+detail");
 	SYSCTL_ADD_U32(ctx, child, OID_AUTO, "debug_categories",
-	    CTLFLAG_RW, &aq_dbg_categories, 0,
+	    CTLFLAG_RW, &softc->dbg_categories, 0,
 	    "Trace category mask: init=1 config=2 tx=4 rx=8 intr=16 fw=32");
+
+	/* ENOTSUP means no sensor; other errors may just be a cold PHY. */
+	if (softc->hw.fw_ops != NULL && softc->hw.fw_ops->get_temp != NULL &&
+	    softc->hw.fw_ops->get_temp(&softc->hw, &temp_mc) != ENOTSUP)
+		SYSCTL_ADD_PROC(ctx, child, OID_AUTO, "temperature",
+		    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE, softc, 0,
+		    aq_sysctl_temperature, "IK", "PHY temperature");
 
 	/* Driver Statistics */
 	for (int i = 0; i < softc->tx_rings_count; i++) {
@@ -1406,11 +1444,11 @@ aq_add_stats_sysctls(struct aq_dev *softc)
 		SYSCTL_ADD_COUNTER_U64(ctx, queue_list, OID_AUTO, "tx_bytes",
 		    CTLFLAG_RD, &(ring->stats.tx_bytes), "TX Octets");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "tx_head",
-		    CTLTYPE_UINT | CTLFLAG_RD, ring, 0,
-		    aq_sysctl_print_tx_head, "IU", "ring head pointer");
+		    CTLTYPE_UINT | CTLFLAG_RD, ring, AQ_RING_TX_HEAD,
+		    aq_sysctl_print_ring_ptr, "IU", "ring head pointer");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "tx_tail",
-		    CTLTYPE_UINT | CTLFLAG_RD, ring, 0,
-		aq_sysctl_print_tx_tail, "IU", "ring tail pointer");
+		    CTLTYPE_UINT | CTLFLAG_RD, ring, AQ_RING_TX_TAIL,
+		    aq_sysctl_print_ring_ptr, "IU", "ring tail pointer");
 	}
 
 	for (int i = 0; i < softc->rx_rings_count; i++) {
@@ -1429,11 +1467,11 @@ aq_add_stats_sysctls(struct aq_dev *softc)
 		SYSCTL_ADD_COUNTER_U64(ctx, queue_list, OID_AUTO, "irq",
 		    CTLFLAG_RD, &(ring->stats.irq), "RX interrupts");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "rx_head",
-		    CTLTYPE_UINT | CTLFLAG_RD, ring, 0,
-		aq_sysctl_print_rx_head, "IU", "ring head pointer");
+		    CTLTYPE_UINT | CTLFLAG_RD, ring, AQ_RING_RX_HEAD,
+		    aq_sysctl_print_ring_ptr, "IU", "ring head pointer");
 		SYSCTL_ADD_PROC(ctx, queue_list, OID_AUTO, "rx_tail",
-		    CTLTYPE_UINT | CTLFLAG_RD, ring, 0,
-		aq_sysctl_print_rx_tail, "IU", " ring tail pointer");
+		    CTLTYPE_UINT | CTLFLAG_RD, ring, AQ_RING_RX_TAIL,
+		    aq_sysctl_print_ring_ptr, "IU", "ring tail pointer");
 	}
 
 	stat_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, "mac",

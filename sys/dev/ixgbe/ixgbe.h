@@ -122,6 +122,14 @@
 #define DBA_ALIGN		128
 
 /*
+ * iflib uses the RS bit to select the descriptors whose status it polls.
+ * Keep WTHRESH zero so the hardware honors RS, and retain the driver's
+ * established descriptor-prefetch settings.
+ */
+#define IXGBE_TXDCTL_THRESH_MASK		0x007f7f7f
+#define IXGBE_TXDCTL_THRESH_DEFAULT	((32 << 0) | (1 << 8))
+
+/*
  * This is the max watchdog interval, ie. the time that can
  * pass between any two TX clean operations, such only happening
  * when the TX hardware is functioning.
@@ -345,17 +353,34 @@ struct ix_tx_queue {
 
 #define IXGBE_MAX_VF_MC	30	/* Max number of multicast entries */
 
+struct ixgbe_vf_mac_filter {
+	uint16_t	rar_index;
+	uint16_t	pool;
+	bool		active;
+	uint8_t		mac[ETHER_ADDR_LEN];
+};
+
 struct ixgbe_vf {
 	u_int		pool;
 	u_int		rar_index;
 	u_int		maximum_frame_size;
 	uint32_t	flags;
+	struct timeval	last_mdd_log;
+	struct timeval	last_dma_abort_log;
 	uint8_t		ether_addr[ETHER_ADDR_LEN];
 	uint16_t	mc_hash[IXGBE_MAX_VF_MC];
+	uint32_t	vlans[IXGBE_VFTA_SIZE];
 	uint16_t	num_mc_hashes;
+	uint16_t	num_mac_filters;
+	uint16_t	num_vlans;
 	uint16_t	default_vlan;
-	uint16_t	vlan_tag;
 	uint16_t	api_ver;
+	uint16_t	pci_saved_command;
+	uint32_t	recovery_tx_head[IXGBE_VF_MAX_TX_QUEUES];
+	uint8_t		xcast_mode;
+	uint8_t		primary_abort_count;
+	uint8_t		recovery_tx_pending;
+	sbintime_t	mbx_cleanup_deadline;
 };
 
 /* Our softc structure */
@@ -396,6 +421,11 @@ struct ixgbe_softc {
 	 * to repopulate it.
 	 */
 	u32			shadow_vfta[IXGBE_VFTA_SIZE];
+	u32			vf_vfta_retry[IXGBE_VFTA_SIZE];
+	sbintime_t		vf_vlan_retry_deadline;
+	u32			vf_vlan_retry_tick;
+	u16			vf_vlan_retry_cursor;
+	bool			vf_mcast_overflow_warned;
 
 	/* Info about the interface */
 	int			advertise;	/* link speeds */
@@ -441,6 +471,22 @@ struct ixgbe_softc {
 	int			num_vfs;
 	int			pool;
 	struct ixgbe_vf		*vfs;
+	struct ixgbe_vf_mac_filter *vf_mac_filters;
+	int			num_vf_mac_filters;
+	bool			iov_mta_valid;
+	bool			iov_vfta_valid;
+	bool			iov_vlan_promisc;
+	bool			iov_mbx_cleanup_pending;
+	bool			iov_pf_mdd_reset_pending;
+	struct timeval		iov_last_mdd_log;
+	struct task		iov_recovery_task;
+	sbintime_t		iov_recovery_time;
+	bool			iov_recovery_stop;
+	uint8_t			iov_recovery_cursor;
+	uint64_t		iov_dma_abort_events;
+	uint64_t		iov_dma_abort_flr_failures;
+	uint64_t		iov_dma_abort_quarantines;
+	uint64_t		iov_quarantined_vfs;
 
 	/* Bypass */
 	struct ixgbe_bp_data	bypass;
@@ -453,7 +499,6 @@ struct ixgbe_softc {
 	unsigned long		dropped_pkts;
 	unsigned long		mbuf_header_failed;
 	unsigned long		mbuf_packet_failed;
-	unsigned long		watchdog_events;
 	unsigned long		link_irq;
 	union {
 		struct ixgbe_hw_stats pf;
@@ -606,6 +651,7 @@ void ixgbe_free_transmit_structures(struct ixgbe_softc *);
 int  ixgbe_setup_receive_structures(struct ixgbe_softc *);
 void ixgbe_free_receive_structures(struct ixgbe_softc *);
 int  ixgbe_get_regs(SYSCTL_HANDLER_ARGS);
+void ixgbe_setup_vlan_hw_support(if_ctx_t);
 
 void ixgbe_add_fw_logging_tunables(struct ixgbe_softc *sc,
 	struct sysctl_oid *parent);

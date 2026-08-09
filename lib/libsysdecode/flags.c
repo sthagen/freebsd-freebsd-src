@@ -63,7 +63,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
-#include <sysdecode.h>
 #include <unistd.h>
 #include <sys/bitstring.h>
 #include <netgraph/bluetooth/include/ng_hci.h>
@@ -73,6 +72,7 @@
 #include <netlink/netlink.h>
 
 #include "support.h"
+#include "sysdecode.h"
 
 #define	X(a)	{ a, #a },
 #define	XEND	{ 0, NULL }
@@ -377,7 +377,7 @@ static struct name_table kevent_vnode_fflags[] = {
 };
 
 static struct name_table kevent_proc_fflags[] = {
-	X(NOTE_EXIT) X(NOTE_FORK) X(NOTE_EXEC) X(NOTE_PDSIGCHLD)
+	X(NOTE_EXIT) X(NOTE_FORK) X(NOTE_EXEC) X(NOTE_PDSIGCHLD) X(NOTE_REAP)
 	X(NOTE_TRACK) X(NOTE_TRACKERR) X(NOTE_CHILD) XEND
 };
 
@@ -1217,9 +1217,14 @@ sysdecode_pfnl_cmd(int cmd)
 	return (lookup_value(pfnl_cmd, cmd));
 }
 
-const char *
-sysdecode_nlm_flag(int flag)
+void
+sysdecode_nlm_flag(FILE *fp, int flags)
 {
 
-	return (lookup_value(nlm_flag, flag));
+	int rem;
+
+	if (!print_mask_int(fp, nlm_flag, flags, &rem))
+		fprintf(fp, "0x%x", rem);
+	else if (rem != 0)
+		fprintf(fp, "|0x%x", rem);
 }

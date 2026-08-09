@@ -359,7 +359,7 @@ cc_ack_received(struct tcpcb *tp, struct tcphdr *th, uint16_t nsegs,
 void
 cc_conn_init(struct tcpcb *tp)
 {
-	struct hc_metrics_lite metrics;
+	struct tcp_hc_metrics metrics;
 	struct inpcb *inp = tptoinpcb(tp);
 	u_int maxseg;
 	int rtt;
@@ -2125,20 +2125,26 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
 		 * - RST drops connection only if SEG.SEQ == RCV.NXT.
 		 * - If RST is in window, we send challenge ACK.
 		 *
-		 * Note: to take into account delayed ACKs, we should
-		 *   test against last_ack_sent instead of rcv_nxt.
+		 * Note 1: to take into account delayed ACKs, we should
+		 *   test against last_ack_sent in addition to rcv_nxt.
 		 * Note 2: we handle special case of closed window, not
 		 *   covered by the RFC.
+		 * Note 3 (XXXMT): check against rcv_adv instead of
+		 *   tp->rcv_nxt + tp->rcv_wnd.
 		 */
-		if ((SEQ_GEQ(th->th_seq, tp->last_ack_sent) &&
-		    SEQ_LT(th->th_seq, tp->last_ack_sent + tp->rcv_wnd)) ||
-		    (tp->rcv_wnd == 0 && tp->last_ack_sent == th->th_seq)) {
+		if ((tp->rcv_wnd > 0 &&
+		     SEQ_GEQ(th->th_seq, tp->last_ack_sent) &&
+		     SEQ_LT(th->th_seq, tp->rcv_nxt + tp->rcv_wnd)) ||
+		    (tp->rcv_wnd == 0 &&
+		     (tp->last_ack_sent == th->th_seq ||
+		      tp->rcv_nxt == th->th_seq))) {
 			KASSERT(tp->t_state != TCPS_SYN_SENT,
 			    ("%s: TH_RST for TCPS_SYN_SENT th %p tp %p",
 			    __func__, th, tp));
 
 			if (V_tcp_insecure_rst ||
-			    tp->last_ack_sent == th->th_seq) {
+			    tp->last_ack_sent == th->th_seq ||
+			    tp->rcv_nxt == th->th_seq) {
 				TCPSTAT_INC(tcps_drops);
 				/* Drop the connection. */
 				switch (tp->t_state) {
@@ -3714,12 +3720,12 @@ tcp_xmit_timer(struct tcpcb *tp, int rtt)
  */
 void
 tcp_mss_update(struct tcpcb *tp, int offer, int mtuoffer,
-    struct hc_metrics_lite *metricptr, struct tcp_ifcap *cap)
+    struct tcp_hc_metrics *metricptr, struct tcp_ifcap *cap)
 {
 	int mss = 0;
 	uint32_t maxmtu = 0;
 	struct inpcb *inp = tptoinpcb(tp);
-	struct hc_metrics_lite metrics;
+	struct tcp_hc_metrics metrics;
 #ifdef INET6
 	int isipv6 = ((inp->inp_vflag & INP_IPV6) != 0) ? 1 : 0;
 	size_t min_protoh = isipv6 ?
@@ -3765,7 +3771,7 @@ tcp_mss_update(struct tcpcb *tp, int offer, int mtuoffer,
 		 * if there was no cache hit.
 		 */
 		if (metricptr != NULL)
-			bzero(metricptr, sizeof(struct hc_metrics_lite));
+			bzero(metricptr, sizeof(struct tcp_hc_metrics));
 		return;
 	}
 
@@ -3876,7 +3882,7 @@ tcp_mss(struct tcpcb *tp, int offer)
 	uint32_t bufsize;
 	struct inpcb *inp = tptoinpcb(tp);
 	struct socket *so;
-	struct hc_metrics_lite metrics;
+	struct tcp_hc_metrics metrics;
 	struct tcp_ifcap cap;
 
 	KASSERT(tp != NULL, ("%s: tp == NULL", __func__));

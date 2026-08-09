@@ -96,6 +96,11 @@ em_dump_rs(struct e1000_softc *sc)
 	int16_t rs_cidx;
 	uint8_t status;
 
+	if (sc->tx_queues == NULL) {
+		device_printf(sc->dev, "queue state is unavailable\n");
+		return;
+	}
+
 	printf("\n");
 	ntxd = scctx->isc_ntxd[0];
 	for (qid = 0; qid < sc->tx_num_queues; qid++) {
@@ -856,6 +861,12 @@ em_determine_rsstype(uint32_t pkt_info)
 		return M_HASHTYPE_RSS_IPV6;
 	case E1000_RXDADV_RSSTYPE_IPV6_TCP_EX:
 		return M_HASHTYPE_RSS_TCP_IPV6_EX;
+	case E1000_RXDADV_RSSTYPE_IPV4_UDP:
+		return M_HASHTYPE_RSS_UDP_IPV4;
+	case E1000_RXDADV_RSSTYPE_IPV6_UDP:
+		return M_HASHTYPE_RSS_UDP_IPV6;
+	case E1000_RXDADV_RSSTYPE_IPV6_UDP_EX:
+		return M_HASHTYPE_RSS_UDP_IPV6_EX;
 	default:
 		return M_HASHTYPE_NONE;
 	}

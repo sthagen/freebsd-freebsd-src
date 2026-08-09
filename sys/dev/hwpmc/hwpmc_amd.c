@@ -403,9 +403,6 @@ amd_allocate_pmc(int cpu __unused, int ri, struct pmc *pm,
 	if (pd->pd_class != a->pm_class)
 		return (EINVAL);
 
-	if ((a->pm_flags & PMC_F_EV_PMU) == 0)
-		return (EINVAL);
-
 	caps = pm->pm_caps;
 
 	PMCDBG2(MDP, ALL, 1,"amd-allocate ri=%d caps=0x%x", ri, caps);
@@ -418,7 +415,8 @@ amd_allocate_pmc(int cpu __unused, int ri, struct pmc *pm,
 	    ((pd->pd_caps & PMC_CAP_PRECISE) == 0))
 		return (EINVAL);
 
-	if (strlen(pmc_cpuid) != 0) {
+	/* PMC_F_EV_PMU: config comes from pmu-events tables. */
+	if ((a->pm_flags & PMC_F_EV_PMU) != 0) {
 		config = a->pm_md.pm_amd.pm_amd_config;
 		if ((config & ~amd_config_mask(amd_pmcdesc[ri].pm_subclass,
 		    caps)) != 0)
@@ -1083,12 +1081,13 @@ pmc_amd_initialize(void)
 
 	/*
 	 * These processors have two or three classes of PMCs: the TSC,
-	 * programmable PMCs, and AMD IBS.
+	 * programmable PMCs, and AMD IBS.  One extra class slot is reserved
+	 * for the optional RAPL energy counters.
 	 */
 	if ((amd_feature2 & AMDID2_IBS) != 0) {
-		nclasses = 3;
+		nclasses = 4;
 	} else {
-		nclasses = 2;
+		nclasses = 3;
 	}
 
 	pmc_mdep = pmc_mdep_alloc(nclasses);
@@ -1134,11 +1133,16 @@ pmc_amd_initialize(void)
 
 	PMCDBG0(MDP, INI, 0, "amd-initialize");
 
-	if (nclasses >= 3) {
+	if ((amd_feature2 & AMDID2_IBS) != 0) {
 		error = pmc_ibs_initialize(pmc_mdep, ncpus);
 		if (error != 0)
 			goto error;
 	}
+
+	/* RAPL takes the reserved last slot; drop it if the probe fails. */
+	error = pmc_rapl_initialize(pmc_mdep, ncpus, pmc_mdep->pmd_nclass - 1);
+	if (error != 0)
+		pmc_mdep->pmd_nclass--;
 
 	return (pmc_mdep);
 
@@ -1154,6 +1158,9 @@ void
 pmc_amd_finalize(struct pmc_mdep *md)
 {
 	PMCDBG0(MDP, INI, 1, "amd-finalize");
+
+	/* Safe even if the RAPL class was skipped at initialize time. */
+	pmc_rapl_finalize(md);
 
 	pmc_tsc_finalize(md);
 

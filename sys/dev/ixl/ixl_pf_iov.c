@@ -397,6 +397,7 @@ ixl_reinit_vf(struct ixl_pf *pf, struct ixl_vf *vf)
 	int i, error;
 
 	hw = &pf->hw;
+	vf->vf_flags &= ~VF_FLAG_INITIALIZED;
 
 	error = ixl_flush_pcie(pf, vf);
 	if (error != 0)
@@ -550,6 +551,7 @@ ixl_vf_get_resources_msg(struct ixl_pf *pf, struct ixl_vf *vf, void *msg,
 
 	ixl_send_vf_msg(pf, vf, VIRTCHNL_OP_GET_VF_RESOURCES,
 	    I40E_SUCCESS, &reply, sizeof(reply));
+	vf->vf_flags |= VF_FLAG_INITIALIZED;
 }
 
 static int
@@ -1022,7 +1024,7 @@ ixl_vf_mac_valid(struct ixl_vf *vf, const uint8_t *addr)
 	 * is not its assigned MAC.
 	 */
 	if (!(vf->vf_flags & VF_FLAG_SET_MAC_CAP) &&
-	    !(ETHER_IS_MULTICAST(addr) || !ixl_ether_is_equal(addr, vf->mac)))
+	    !(ETHER_IS_MULTICAST(addr) || ixl_ether_is_equal(addr, vf->mac)))
 		return (EPERM);
 
 	return (0);
@@ -1824,4 +1826,3 @@ out:
 
 	return (error);
 }
-
