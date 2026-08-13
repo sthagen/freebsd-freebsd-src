@@ -66,6 +66,7 @@
 
 /* Extended Device Control */
 #define E1000_CTRL_EXT_LPCD		0x00000004 /* LCD Power Cycle Done */
+#define E1000_CTRL_EXT_DPG_EN		0x00000008 /* Dynamic Power Gating */
 #define E1000_CTRL_EXT_SDP4_DATA	0x00000010 /* SW Definable Pin 4 data */
 #define E1000_CTRL_EXT_SDP6_DATA	0x00000040 /* SW Definable Pin 6 data */
 #define E1000_CTRL_EXT_SDP3_DATA	0x00000080 /* SW Definable Pin 3 data */
@@ -535,6 +536,7 @@
 /* SW Semaphore Register */
 #define E1000_SWSM_SMBI		0x00000001 /* Driver Semaphore bit */
 #define E1000_SWSM_SWESMBI	0x00000002 /* FW Semaphore bit */
+#define E1000_SWSM_TIMEOUT	2000       /* 100 ms at 50 us per poll */
 #define E1000_SWSM_DRV_LOAD	0x00000008 /* Driver Loaded Bit */
 
 #define E1000_SWSM2_LOCK	0x00000002 /* Secondary driver semaphore bit */
@@ -1176,6 +1178,7 @@
 
 /* For checksumming, the sum of all words in the NVM should equal 0xBABA. */
 #define NVM_SUM				0xBABA
+#define NVM_CHECKSUM_UNINITIALIZED	0xFFFF
 
 /* PBA (printed board assembly) number words */
 #define NVM_PBA_OFFSET_0		8

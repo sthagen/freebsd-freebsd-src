@@ -242,6 +242,16 @@ out:
 	return (-1);
 }
 
+void
+bhyve_cfg_warn(const char *old, const char *new)
+{
+	if (get_config_value(old) != NULL &&
+	    get_config_value(new) == NULL) {
+		warnx("'%s' is deprecated, use '%s' instead", old, new);
+		set_config_value(new, get_config_value(old));
+	}
+}
+
 static void
 calc_mem_affinity(size_t vm_memsize)
 {
@@ -552,7 +562,7 @@ int
 fbsdrun_virtio_msix(void)
 {
 
-	return (get_config_bool_default("virtio_msix", true));
+	return (get_config_bool_default("virtio.msix", true));
 }
 
 struct vcpu *

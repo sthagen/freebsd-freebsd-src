@@ -316,6 +316,10 @@ static const pci_vendor_info_t em_vendor_info_array[] =
 	    "Intel(R) I219-LM PTP(27)"),
 	PVID(0x8086, E1000_DEV_ID_PCH_PTP_I219_V27,
 	    "Intel(R) I219-V PTP(27)"),
+	PVID(0x8086, E1000_DEV_ID_PCH_NVL_I219_LM29,
+	    "Intel(R) I219-LM NVL(29)"),
+	PVID(0x8086, E1000_DEV_ID_PCH_NVL_I219_V29,
+	    "Intel(R) I219-V NVL(29)"),
 	/* required last entry */
 	PVID_END
 };
@@ -458,6 +462,7 @@ static void	em_initialize_vf_stats(struct e1000_softc *);
 static void	em_rebase_vf_stats(struct e1000_softc *);
 static void	em_update_vf_stats_counters(struct e1000_softc *);
 static void	em_add_hw_stats(struct e1000_softc *);
+static bool	em_mac_has_eee(enum e1000_mac_type);
 static int	em_if_set_promisc(if_ctx_t, int);
 static bool	em_if_defer_promisc(struct e1000_softc *);
 static bool	em_if_vlan_filter_capable(if_ctx_t);
@@ -665,7 +670,6 @@ static device_method_t igb_if_methods[] = {
 	DEVMETHOD(ifdi_iov_init, igb_if_iov_init),
 	DEVMETHOD(ifdi_iov_uninit, igb_if_iov_uninit),
 	DEVMETHOD(ifdi_iov_vf_add, igb_if_iov_vf_add),
-	DEVMETHOD(ifdi_vf_status, igb_if_vf_status),
 #endif
 	DEVMETHOD_END
 };
@@ -1547,9 +1551,13 @@ em_if_attach_pre(if_ctx_t ctx)
 	** important in reading the nvm and
 	** mac from that.
 	*/
-	if (e1000_reset_hw(hw) != E1000_SUCCESS && sc->vf_ifp)
-		device_printf(dev,
-		    "PF is not ready; VF mailbox initialization deferred\n");
+	error = e1000_reset_hw(hw);
+	if (sc->vf_ifp) {
+		atomic_store_rel_32(&sc->vf_mbx_ready,
+		    error == E1000_SUCCESS);
+		if (error != E1000_SUCCESS)
+			igbv_log_reset_failure(sc, error, true);
+	}
 
 	/* Make sure a PF has a good EEPROM before we read from it. */
 	if (!sc->vf_ifp && e1000_validate_nvm_checksum(hw) < 0) {
@@ -1687,10 +1695,12 @@ em_if_detach(if_ctx_t ctx)
 	INIT_DEBUGOUT("em_if_detach: begin");
 
 	igb_iov_detach(sc);
-	if (sc->vf_ifp)
+	if (sc->vf_ifp) {
 		igbv_queue_retry_detach(sc);
-	if (!sc->vf_ifp)
+		igbv_mbx_retry_detach(sc);
+	} else {
 		e1000_phy_hw_reset(&sc->hw);
+	}
 
 	em_release_manageability(sc);
 	em_release_hw_control(sc);
@@ -1721,8 +1731,10 @@ em_if_suspend(if_ctx_t ctx)
 {
 	struct e1000_softc *sc = iflib_get_softc(ctx);
 
-	if (sc->vf_ifp)
+	if (sc->vf_ifp) {
 		igbv_queue_retry_stop(sc);
+		igbv_mbx_retry_stop(sc);
+	}
 	em_release_manageability(sc);
 	em_release_hw_control(sc);
 	em_enable_wakeup(ctx);
@@ -1762,6 +1774,7 @@ em_if_mtu_set(if_ctx_t ctx, uint32_t mtu)
 	case e1000_pch_adp:
 	case e1000_pch_mtp:
 	case e1000_pch_ptp:
+	case e1000_pch_nvp:
 	case e1000_82574:
 	case e1000_82583:
 	case e1000_80003es2lan:
@@ -1807,13 +1820,12 @@ em_if_init(if_ctx_t ctx)
 	if_softc_ctx_t scctx = sc->shared;
 	if_t ifp = iflib_get_ifp(ctx);
 	struct em_tx_queue *tx_que;
-	bool vf_mbx_ready;
 	int i;
 
 	INIT_DEBUGOUT("em_if_init: begin");
-	vf_mbx_ready = !sc->vf_ifp;
 	if (sc->vf_ifp) {
 		igbv_queue_retry_prepare(sc);
+		igbv_mbx_retry_prepare(sc);
 		sc->vf_reset_pending = true;
 	}
 
@@ -1842,7 +1854,7 @@ em_if_init(if_ctx_t ctx)
 	/* Initialize the hardware */
 	igb_iov_reset_prepare(sc);
 	if (sc->vf_ifp) {
-		vf_mbx_ready = igbv_reset(ctx);
+		(void)igbv_reset(ctx);
 		em_rebase_vf_stats(sc);
 	} else {
 		em_reset(ctx);
@@ -1851,13 +1863,18 @@ em_if_init(if_ctx_t ctx)
 		/*
 		 * Do not program or enable rings while retained queue state
 		 * might still contain a previous VF owner's DMA address.  A
-		 * bounded callout retries initialization after iflib returns;
-		 * the deferred admin task clears its optimistic RUNNING flag.
+		 * bounded callout retries initialization after iflib leaves the
+		 * failed initialization stopped.
 		 */
 		igbv_queue_retry_failed(ctx);
 		return;
 	}
-	if (sc->vf_ifp && vf_mbx_ready)
+	if (sc->vf_ifp &&
+	    atomic_load_acq_32(&sc->vf_mbx_ready) == 0) {
+		igbv_mbx_retry_failed(ctx);
+		return;
+	}
+	if (sc->vf_ifp)
 		igbv_reconcile_mac(sc, ifp);
 	/* Re-arm a link-up transition deferred for this reset. */
 	if (sc->link_state == EM_LINK_STATE_DOWN_RESET_PENDING ||
@@ -1904,8 +1921,7 @@ em_if_init(if_ctx_t ctx)
 	 * state.  The reset detector schedules another complete init, which
 	 * replays these interface-owned lists after the handshake succeeds.
 	 */
-	if (vf_mbx_ready)
-		em_if_multi_set(ctx);
+	em_if_multi_set(ctx);
 
 	sc->rx_mbuf_sz = iflib_get_rx_mbuf_sz(ctx);
 	if (sc->vf_ifp)
@@ -1913,13 +1929,11 @@ em_if_init(if_ctx_t ctx)
 	else
 		em_initialize_receive_unit(ctx);
 
-	if (vf_mbx_ready) {
-		/* Set up VLAN support and filter. */
-		em_setup_vlan_hw_support(ctx);
+	/* Set up VLAN support and filter. */
+	em_setup_vlan_hw_support(ctx);
 
-		/* Don't lose promiscuous settings. */
-		em_if_set_promisc_impl(ctx, if_getflags(ifp));
-	}
+	/* Don't lose promiscuous settings. */
+	em_if_set_promisc_impl(ctx, if_getflags(ifp));
 	atomic_readandclear_32(&sc->promisc_pending);
 
 	/* Restore PF/VF pool configuration after the global reset. */
@@ -2801,21 +2815,35 @@ em_if_stop(if_ctx_t ctx)
 
 	INIT_DEBUGOUT("em_if_stop: begin");
 
-	if (sc->vf_ifp)
+	if (sc->vf_ifp) {
 		igbv_queue_retry_stop(sc);
+		igbv_mbx_retry_stop(sc);
+	}
 
 	/* I219 needs special flushing to avoid hangs */
 	if (sc->hw.mac.type >= e1000_pch_spt && sc->hw.mac.type < igb_mac_min)
 		em_flush_desc_rings(sc);
 
 	igb_iov_reset_prepare(sc);
-	e1000_reset_hw(&sc->hw);
+	if (!sc->vf_ifp ||
+	    (atomic_load_acq_32(&sc->vf_mbx_ready) != 0 &&
+	    (if_getflags(iflib_get_ifp(ctx)) & IFF_UP) == 0))
+		e1000_reset_hw(&sc->hw);
+	if (sc->vf_ifp)
+		atomic_store_rel_32(&sc->vf_mbx_ready, 0);
 	if (sc->hw.mac.type >= e1000_82544 && !sc->vf_ifp)
 		E1000_WRITE_REG(&sc->hw, E1000_WUFC, 0);
 
 	if (!sc->vf_ifp) {
 		e1000_led_off(&sc->hw);
 		e1000_cleanup_led(&sc->hw);
+	} else {
+		sc->link_speed = 0;
+		sc->link_duplex = 0;
+		if (sc->link_state != EM_LINK_STATE_DOWN) {
+			sc->link_state = EM_LINK_STATE_DOWN;
+			iflib_link_state_change(ctx, LINK_STATE_DOWN, 0);
+		}
 	}
 }
 
@@ -3625,6 +3653,7 @@ em_reset(if_ctx_t ctx)
 	case e1000_pch_adp:
 	case e1000_pch_mtp:
 	case e1000_pch_ptp:
+	case e1000_pch_nvp:
 		pba = E1000_PBA_26K;
 		break;
 	case e1000_82575:
@@ -3738,6 +3767,7 @@ em_reset(if_ctx_t ctx)
 	case e1000_pch_adp:
 	case e1000_pch_mtp:
 	case e1000_pch_ptp:
+	case e1000_pch_nvp:
 		hw->fc.high_water = 0x5C20;
 		hw->fc.low_water = 0x5048;
 		hw->fc.pause_time = 0xFFFF;
@@ -4174,6 +4204,7 @@ em_legacy_txdctl(struct e1000_hw *hw)
 	case e1000_pch_adp:
 	case e1000_pch_mtp:
 	case e1000_pch_ptp:
+	case e1000_pch_nvp:
 		/* Preserve the required bit set by the integrated shared code. */
 		txdctl |= (1U << 22);
 		break;
@@ -4506,6 +4537,7 @@ em_integrated_jumbo_rx(struct e1000_hw *hw)
 	case e1000_pch_adp:
 	case e1000_pch_mtp:
 	case e1000_pch_ptp:
+	case e1000_pch_nvp:
 		return (true);
 	default:
 		return (false);
@@ -5485,7 +5517,10 @@ em_if_led_func(if_ctx_t ctx, int onoff)
 
 	if (onoff) {
 		e1000_setup_led(&sc->hw);
-		e1000_led_on(&sc->hw);
+		if (sc->hw.phy.media_type == e1000_media_type_internal_serdes)
+			e1000_blink_led(&sc->hw);
+		else
+			e1000_led_on(&sc->hw);
 	} else {
 		e1000_led_off(&sc->hw);
 		e1000_cleanup_led(&sc->hw);
@@ -5611,6 +5646,12 @@ em_update_stats_counters(struct e1000_softc *sc)
 	stats->mptc += E1000_READ_REG(&sc->hw, E1000_MPTC);
 	stats->bptc += E1000_READ_REG(&sc->hw, E1000_BPTC);
 
+	/* TLPIC and RLPIC are clear-on-read. */
+	if (em_mac_has_eee(sc->hw.mac.type)) {
+		stats->tlpic += E1000_READ_REG(&sc->hw, E1000_TLPIC);
+		stats->rlpic += E1000_READ_REG(&sc->hw, E1000_RLPIC);
+	}
+
 	/* Interrupt Counts */
 
 	stats->iac += E1000_READ_REG(&sc->hw, E1000_IAC);
@@ -5637,6 +5678,14 @@ em_update_stats_counters(struct e1000_softc *sc)
 		stats->tsctfc +=
 		E1000_READ_REG(&sc->hw, E1000_TSCTFC);
 	}
+}
+
+static bool
+em_mac_has_eee(enum e1000_mac_type type)
+{
+
+	return ((type >= e1000_pch2lan && type < e1000_82575) ||
+	    (type >= e1000_i350 && type <= e1000_i211));
 }
 
 static void
@@ -6028,6 +6077,19 @@ em_add_hw_stats(struct e1000_softc *sc)
 	}
 
 	stats = &sc->ustats.stats;
+	if (em_mac_has_eee(sc->hw.mac.type)) {
+		struct sysctl_oid *eee_node;
+		struct sysctl_oid_list *eee_list;
+
+		eee_node = SYSCTL_ADD_NODE(ctx, child, OID_AUTO, "eee",
+		    CTLFLAG_RD | CTLFLAG_MPSAFE, NULL,
+		    "Energy Efficient Ethernet statistics");
+		eee_list = SYSCTL_CHILDREN(eee_node);
+		SYSCTL_ADD_UQUAD(ctx, eee_list, OID_AUTO, "tx_lpi_count",
+		    CTLFLAG_RD, &stats->tlpic, "TX LPI event count");
+		SYSCTL_ADD_UQUAD(ctx, eee_list, OID_AUTO, "rx_lpi_count",
+		    CTLFLAG_RD, &stats->rlpic, "RX LPI event count");
+	}
 
 	SYSCTL_ADD_UQUAD(ctx, stat_list, OID_AUTO, "excess_coll",
 	    CTLFLAG_RD, &stats->ecol,
@@ -6687,9 +6749,6 @@ em_print_debug_info(struct e1000_softc *sc)
 		device_printf(dev, "queue state is unavailable\n");
 		return;
 	}
-	txr = &sc->tx_queues->txr;
-	rxr = &sc->rx_queues->rxr;
-
 	if (if_getdrvflags(ifp) & IFF_DRV_RUNNING)
 		printf("Interface is RUNNING ");
 	else
@@ -6700,14 +6759,16 @@ em_print_debug_info(struct e1000_softc *sc)
 	else
 		printf("and ACTIVE\n");
 
-	for (int i = 0; i < sc->tx_num_queues; i++, txr++) {
+	for (int i = 0; i < sc->tx_num_queues; i++) {
+		txr = &sc->tx_queues[i].txr;
 		device_printf(dev, "TX Queue %d ------\n", i);
 		device_printf(dev, "hw tdh = %d, hw tdt = %d\n",
 		    E1000_READ_REG(&sc->hw, E1000_TDH(txr->me)),
 		    E1000_READ_REG(&sc->hw, E1000_TDT(txr->me)));
 
 	}
-	for (int j=0; j < sc->rx_num_queues; j++, rxr++) {
+	for (int j = 0; j < sc->rx_num_queues; j++) {
+		rxr = &sc->rx_queues[j].rxr;
 		device_printf(dev, "RX Queue %d ------\n", j);
 		device_printf(dev, "hw rdh = %d, hw rdt = %d\n",
 		    E1000_READ_REG(&sc->hw, E1000_RDH(rxr->me)),

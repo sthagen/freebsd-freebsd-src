@@ -32,16 +32,18 @@
  *  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  *  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- *  Minimal V4L2 definitions for the FreeBSD UVC driver.
+ *  Minimal V4L2 definitions for the video(4) framework.
  *  Extracted from OpenBSD sys/videoio.h.
  */
 
-#ifndef _UVIDEO_V4L2_H_
-#define _UVIDEO_V4L2_H_
+#ifndef _SYS_VIDEOIO_H_
+#define _SYS_VIDEOIO_H_
 
 #include <sys/types.h>
 #include <sys/ioccom.h>
 #include <sys/time.h>
+
+typedef u_int64_t v4l2_std_id;
 
 /*
  *  Four-character-code (FOURCC)
@@ -194,18 +196,45 @@ struct v4l2_pix_format {
 };
 
 /*
- * v4l2_format: the system header (v4l_compat) includes struct v4l2_window
- * (which contains a pointer) in the fmt union, forcing 8-byte alignment.
- * This creates 4 bytes of implicit padding after 'type' on LP64.
- * We must match this layout for ioctl ABI compatibility.
- * Total size: 4 (type) + 4 (pad) + 200 (union) = 208.
+ *  Multi-planar capture (VIDIOC_*_MPLANE)
  */
+#define VIDEO_MAX_PLANES	8
+
+struct v4l2_plane_pix_format {
+	u_int32_t	sizeimage;
+	u_int32_t	bytesperline;
+	u_int16_t	reserved[6];
+} __packed;
+
+struct v4l2_pix_format_mplane {
+	u_int32_t			width;
+	u_int32_t			height;
+	u_int32_t			pixelformat;
+	u_int32_t			field;
+	u_int32_t			colorspace;
+	struct v4l2_plane_pix_format	plane_fmt[VIDEO_MAX_PLANES];
+	u_int8_t			num_planes;
+	u_int8_t			flags;
+	union {
+		u_int8_t		ycbcr_enc;
+		u_int8_t		hsv_enc;
+	};
+	u_int8_t			quantization;
+	u_int8_t			xfer_func;
+	u_int8_t			reserved[7];
+} __packed;
+
+#define V4L2_TYPE_IS_MULTIPLANAR(type)				\
+	((type) == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||	\
+	 (type) == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
+
 struct v4l2_format {
 	u_int32_t	type;
-	u_int32_t	_pad;
 	union {
-		struct v4l2_pix_format	pix;
-		u_int8_t		raw_data[200];
+		struct v4l2_pix_format		pix;
+		struct v4l2_pix_format_mplane	pix_mp;
+		void				*_align;
+		u_int8_t			raw_data[200];
 	} fmt;
 };
 
@@ -244,6 +273,7 @@ struct v4l2_buffer {
 	union {
 		u_int32_t		offset;
 		unsigned long		userptr;
+		struct v4l2_plane	*planes;
 		int32_t			fd;
 	} m;
 	u_int32_t			length;
@@ -291,6 +321,27 @@ struct v4l2_input {
 	u_int32_t	status;
 	u_int32_t	capabilities;
 	u_int32_t	reserved[3];
+};
+
+struct v4l2_standard {
+	u_int32_t		index;
+	v4l2_std_id		id;
+	u_int8_t		name[24];
+	struct v4l2_fract	frameperiod;
+	u_int32_t		framelines;
+	u_int32_t		reserved[4];
+};
+
+struct v4l2_plane {
+	u_int32_t	bytesused;
+	u_int32_t	length;
+	union {
+		u_int32_t	mem_offset;
+		unsigned long	userptr;
+		int32_t		fd;
+	} m;
+	u_int32_t	data_offset;
+	u_int32_t	reserved[11];
 };
 
 struct v4l2_control {
@@ -365,16 +416,28 @@ struct v4l2_frmivalenum {
 /* Luminance+Chrominance formats */
 #define V4L2_PIX_FMT_YUYV	v4l2_fourcc('Y', 'U', 'Y', 'V')
 #define V4L2_PIX_FMT_UYVY	v4l2_fourcc('U', 'Y', 'V', 'Y')
+#define V4L2_PIX_FMT_YUV444	v4l2_fourcc('Y', '4', '4', '4')
+#define V4L2_PIX_FMT_Y41P	v4l2_fourcc('Y', '4', '1', 'P')
 #define V4L2_PIX_FMT_NV12	v4l2_fourcc('N', 'V', '1', '2')
 #define V4L2_PIX_FMT_NV21	v4l2_fourcc('N', 'V', '2', '1')
 #define V4L2_PIX_FMT_M420	v4l2_fourcc('M', '4', '2', '0')
 #define V4L2_PIX_FMT_YVU420	v4l2_fourcc('Y', 'V', '1', '2')
 #define V4L2_PIX_FMT_YUV420	v4l2_fourcc('Y', 'U', '1', '2')
+#define V4L2_PIX_FMT_YUV410	v4l2_fourcc('Y', 'U', 'V', '9')
+#define V4L2_PIX_FMT_YVU410	v4l2_fourcc('Y', 'V', 'U', '9')
+#define V4L2_PIX_FMT_YUV422P	v4l2_fourcc('4', '2', '2', 'P')
 
 /* Compressed formats */
 #define V4L2_PIX_FMT_MJPEG	v4l2_fourcc('M', 'J', 'P', 'G')
+#define V4L2_PIX_FMT_JPEG	v4l2_fourcc('J', 'P', 'E', 'G')
 #define V4L2_PIX_FMT_H264	v4l2_fourcc('H', '2', '6', '4')
 #define V4L2_PIX_FMT_HEVC	v4l2_fourcc('H', 'E', 'V', 'C')
+#define V4L2_PIX_FMT_MPEG4	v4l2_fourcc('M', 'P', 'G', '4')
+#define V4L2_PIX_FMT_CPIA1	v4l2_fourcc('C', 'P', 'I', 'A')
+
+/* YUV411 planar and vendor webcam formats */
+#define V4L2_PIX_FMT_YUV411P	v4l2_fourcc('4', '1', '1', 'P')
+#define V4L2_PIX_FMT_SN9C10X	v4l2_fourcc('S', '9', '1', '0')
 
 /* Grey formats */
 #define V4L2_PIX_FMT_GREY	v4l2_fourcc('G', 'R', 'E', 'Y')
@@ -383,9 +446,18 @@ struct v4l2_frmivalenum {
 #define V4L2_PIX_FMT_Y16	v4l2_fourcc('Y', '1', '6', ' ')
 
 /* RGB formats */
+#define V4L2_PIX_FMT_RGB24	v4l2_fourcc('R', 'G', 'B', '3')
+#define V4L2_PIX_FMT_RGB555	v4l2_fourcc('R', 'G', 'B', 'O')
+#define V4L2_PIX_FMT_RGB555X	v4l2_fourcc('R', 'G', 'B', 'Q')
 #define V4L2_PIX_FMT_RGB565	v4l2_fourcc('R', 'G', 'B', 'P')
+#define V4L2_PIX_FMT_RGB565X	v4l2_fourcc('R', 'G', 'B', 'R')
 #define V4L2_PIX_FMT_BGR24	v4l2_fourcc('B', 'G', 'R', '3')
+#define V4L2_PIX_FMT_BGR32	v4l2_fourcc('B', 'G', 'R', '4')
+#define V4L2_PIX_FMT_RGB32	v4l2_fourcc('R', 'G', 'B', '4')
 #define V4L2_PIX_FMT_XBGR32	v4l2_fourcc('X', 'R', '2', '4')
+#define V4L2_PIX_FMT_ABGR32	v4l2_fourcc('A', 'R', '2', '4')
+#define V4L2_PIX_FMT_ARGB32	v4l2_fourcc('B', 'A', '2', '4')
+#define V4L2_PIX_FMT_XRGB32	v4l2_fourcc('B', 'X', '2', '4')
 
 /* Bayer formats */
 #define V4L2_PIX_FMT_SBGGR8	v4l2_fourcc('B', 'A', '8', '1')
@@ -405,6 +477,7 @@ struct v4l2_frmivalenum {
  *  Capability flags
  */
 #define V4L2_CAP_VIDEO_CAPTURE		0x00000001
+#define V4L2_CAP_VIDEO_CAPTURE_MPLANE	0x00001000
 #define V4L2_CAP_STREAMING		0x04000000
 #define V4L2_CAP_EXT_PIX_FORMAT		0x00200000
 #define V4L2_CAP_READWRITE		0x01000000
@@ -428,6 +501,7 @@ struct v4l2_frmivalenum {
  *  Format flags
  */
 #define V4L2_FMT_FLAG_COMPRESSED	0x0001
+#define V4L2_FMT_FLAG_EMULATED		0x0002
 
 /*
  *  Buffer capabilities
@@ -440,10 +514,27 @@ struct v4l2_frmivalenum {
 #define V4L2_INPUT_TYPE_CAMERA		2
 
 /*
+ *  Analog TV standards
+ */
+#define V4L2_STD_NTSC_M		((v4l2_std_id)0x00001000)
+#define V4L2_STD_NTSC_M_JP	((v4l2_std_id)0x00002000)
+#define V4L2_STD_NTSC_443	((v4l2_std_id)0x00004000)
+#define V4L2_STD_NTSC_M_KR	((v4l2_std_id)0x00008000)
+#define V4L2_STD_NTSC		(V4L2_STD_NTSC_M | V4L2_STD_NTSC_M_JP | \
+				 V4L2_STD_NTSC_443 | V4L2_STD_NTSC_M_KR)
+
+/*
  *  Control IDs
  */
 #define V4L2_CTRL_CLASS_USER		0x00980000
+#define V4L2_CTRL_CLASS_MPEG		0x00990000
 #define V4L2_CID_BASE			(V4L2_CTRL_CLASS_USER | 0x900)
+
+/*
+ *  MPEG/codec control class
+ */
+#define V4L2_CID_MPEG_BASE		(V4L2_CTRL_CLASS_MPEG | 0x900)
+#define V4L2_CID_MPEG_VIDEO_B_FRAMES	(V4L2_CID_MPEG_BASE+14)
 #define V4L2_CID_BRIGHTNESS		(V4L2_CID_BASE + 0)
 #define V4L2_CID_CONTRAST		(V4L2_CID_BASE + 1)
 #define V4L2_CID_SATURATION		(V4L2_CID_BASE + 2)
@@ -487,6 +578,9 @@ struct v4l2_frmivalenum {
 #define VIDIOC_STREAMOFF	_IOW('V', 19, int)
 #define VIDIOC_G_PARM		_IOWR('V', 21, struct v4l2_streamparm)
 #define VIDIOC_S_PARM		_IOWR('V', 22, struct v4l2_streamparm)
+#define VIDIOC_G_STD		_IOR('V', 23, v4l2_std_id)
+#define VIDIOC_S_STD		_IOW('V', 24, v4l2_std_id)
+#define VIDIOC_ENUMSTD		_IOWR('V', 25, struct v4l2_standard)
 #define VIDIOC_ENUMINPUT	_IOWR('V', 26, struct v4l2_input)
 #define VIDIOC_G_CTRL		_IOWR('V', 27, struct v4l2_control)
 #define VIDIOC_S_CTRL		_IOWR('V', 28, struct v4l2_control)
@@ -499,4 +593,24 @@ struct v4l2_frmivalenum {
 #define VIDIOC_ENUM_FRAMESIZES	_IOWR('V', 74, struct v4l2_frmsizeenum)
 #define VIDIOC_ENUM_FRAMEINTERVALS _IOWR('V', 75, struct v4l2_frmivalenum)
 
-#endif /* _UVIDEO_V4L2_H_ */
+_Static_assert(sizeof(struct v4l2_pix_format) == 48, "v4l2_pix_format layout");
+_Static_assert(sizeof(struct v4l2_capability) == 104, "v4l2_capability layout");
+_Static_assert(sizeof(struct v4l2_requestbuffers) == 20,
+    "v4l2_requestbuffers layout");
+#ifdef __LP64__
+_Static_assert(__offsetof(struct v4l2_format, fmt) == 8, "v4l2_format layout");
+_Static_assert(sizeof(struct v4l2_format) == 208, "v4l2_format layout");
+_Static_assert(sizeof(struct v4l2_buffer) == 88, "v4l2_buffer layout");
+#elif defined(__i386__)
+/* i386 is the only 32-bit port with a 32-bit time_t. */
+_Static_assert(__offsetof(struct v4l2_format, fmt) == 4, "v4l2_format layout");
+_Static_assert(sizeof(struct v4l2_format) == 204, "v4l2_format layout");
+_Static_assert(sizeof(struct v4l2_buffer) == 68, "v4l2_buffer layout");
+#else
+/* ILP32 with a 64-bit time_t: arm, powerpc, mips, riscv32. */
+_Static_assert(__offsetof(struct v4l2_format, fmt) == 4, "v4l2_format layout");
+_Static_assert(sizeof(struct v4l2_format) == 204, "v4l2_format layout");
+_Static_assert(sizeof(struct v4l2_buffer) == 80, "v4l2_buffer layout");
+#endif
+
+#endif /* _SYS_VIDEOIO_H_ */

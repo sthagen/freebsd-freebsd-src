@@ -71,6 +71,12 @@ CODE {
 	{
 	}
 
+	static bool
+	null_led_supported(if_ctx_t _ctx __unused)
+	{
+		return (true);
+	}
+
 	static void
 	null_vlan_register_op(if_ctx_t _ctx __unused, uint16_t vtag __unused)
 	{
@@ -108,12 +114,6 @@ CODE {
 
 	static int
 	null_priv_ioctl(if_ctx_t _ctx __unused, u_long command, caddr_t data __unused)
-	{
-		return (ENOTSUP);
-	}
-
-	static int
-	null_vf_status(if_ctx_t _ctx __unused, nvlist_t *_status __unused)
 	{
 		return (ENOTSUP);
 	}
@@ -353,6 +353,10 @@ METHOD void led_func {
 	int _onoff;
 } DEFAULT null_led_func;
 
+METHOD bool led_supported {
+	if_ctx_t _ctx;
+} DEFAULT null_led_supported;
+
 METHOD void vlan_register {
 	if_ctx_t _ctx;
 	uint16_t _vtag;
@@ -381,8 +385,3 @@ METHOD int get_downreason {
 	if_ctx_t _ctx;
 	struct ifdownreason *_ifdr;
 } DEFAULT null_get_downreason;
-
-METHOD int vf_status {
-	if_ctx_t _ctx;
-	nvlist_t *_status;
-} DEFAULT null_vf_status;

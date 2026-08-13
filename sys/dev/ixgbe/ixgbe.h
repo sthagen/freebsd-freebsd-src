@@ -423,8 +423,14 @@ struct ixgbe_softc {
 	u32			shadow_vfta[IXGBE_VFTA_SIZE];
 	u32			vf_vfta_retry[IXGBE_VFTA_SIZE];
 	sbintime_t		vf_vlan_retry_deadline;
+	struct callout		vf_mbx_retry;
+	struct timeval		vf_mbx_last_log;
+	u32			vf_mbx_ready;
+	u32			vf_mbx_retry_pending;
 	u32			vf_vlan_retry_tick;
 	u16			vf_vlan_retry_cursor;
+	u8			vf_mbx_retry_stage;
+	bool			vf_mbx_retry_initialized;
 	bool			vf_mcast_overflow_warned;
 
 	/* Info about the interface */
@@ -435,9 +441,11 @@ struct ixgbe_softc {
 	u32			link_speed;
 	bool			link_up;
 	bool			link_enabled;
+	bool			led_active;
 	u32			vector;
 	u16			dmac;
 	u32			phy_layer;
+	u32			ledctl_default;
 
 	/* Power management-related */
 	bool			wol_support;
@@ -451,6 +459,7 @@ struct ixgbe_softc {
 
 	/* Flow Director */
 	int			fdir_reinit;
+	u_int			ecc_reset_pending;
 
 	u32			task_requests;
 
@@ -493,6 +502,7 @@ struct ixgbe_softc {
 
 	/* Firmware error check */
 	int			recovery_mode;
+	bool			overtemp_shutdown_pending;
 	struct callout		fw_mode_timer;
 
 	/* Misc stats maintained by the driver */
