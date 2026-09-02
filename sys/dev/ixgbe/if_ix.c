@@ -86,12 +86,18 @@ static const pci_vendor_info_t ixgbe_vendor_info_array[] =
     "Intel(R) 82598EB AF (Dual Fiber SR)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82598EB_SFP_LOM,
     "Intel(R) 82598EB LOM"),
+	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82598_BX,
+    "Intel(R) 82598EB BX Backplane"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_KX4,
     "Intel(R) X520 82599 (KX4)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_KX4_MEZZ,
     "Intel(R) X520 82599 (KX4 Mezzanine)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_SFP,
     "Intel(R) X520 82599ES (SFI/SFP+)"),
+	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_KR,
+    "Intel(R) X520 82599ES (KR Backplane)"),
+	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_SFP_EM,
+    "Intel(R) X520-P2 82599 (SFP+)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_XAUI_LOM,
     "Intel(R) X520 82599 (XAUI/BX4)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_82599_CX4,
@@ -129,6 +135,8 @@ static const pci_vendor_info_t ixgbe_vendor_info_array[] =
     "Intel(R) X552 (1000BASE-T)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_SFP,
     "Intel(R) X552 (SFP+)"),
+	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_X_XFI,
+    "Intel(R) X552 (XFI Backplane)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_KR,
     "Intel(R) X553 (KR Backplane)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_KR_L,
@@ -137,6 +145,10 @@ static const pci_vendor_info_t ixgbe_vendor_info_array[] =
     "Intel(R) X553 (SFP+)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SFP_N,
     "Intel(R) X553 N (SFP+)"),
+	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_QSFP,
+    "Intel(R) X553 (QSFP+)"),
+	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_QSFP_N,
+    "Intel(R) X553 N (QSFP+)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SGMII,
     "Intel(R) X553 (1GbE SGMII)"),
 	PVID(IXGBE_INTEL_VENDOR_ID, IXGBE_DEV_ID_X550EM_A_SGMII_L,
@@ -662,10 +674,13 @@ static void
 ixgbe_initialize_rss_mapping(struct ixgbe_softc *sc)
 {
 	struct ixgbe_hw *hw = &sc->hw;
-	u32 reta = 0, mrqc, rss_key[10];
-	int queue_id, reta_queues, table_size, index_mult;
-	int i, j;
+	bool per_pool_rss;
+	u32 reta = 0, mrqc, rss_fields, rss_key[10];
+	int i, index_mult, j, queue_id, reta_queues, table_size;
 	u32 rss_hash_config;
+#ifdef PCI_IOV
+	u32 pfmrqc;
+#endif
 
 	if (sc->feat_en & IXGBE_FEATURE_RSS) {
 		/* Fetch the configured RSS key */
@@ -677,6 +692,7 @@ ixgbe_initialize_rss_mapping(struct ixgbe_softc *sc)
 
 	/* Set multiplier for RETA setup and table size based on MAC */
 	index_mult = 0x1;
+	per_pool_rss = false;
 	table_size = 128;
 	switch (sc->hw.mac.type) {
 	case ixgbe_mac_82598EB:
@@ -687,6 +703,12 @@ ixgbe_initialize_rss_mapping(struct ixgbe_softc *sc)
 	case ixgbe_mac_X550EM_a:
 	case ixgbe_mac_E610:
 		table_size = 512;
+#ifdef PCI_IOV
+		if (sc->iov_mode != IXGBE_NO_VM) {
+			per_pool_rss = true;
+			table_size = 64;
+		}
+#endif
 		break;
 	default:
 		break;
@@ -694,13 +716,16 @@ ixgbe_initialize_rss_mapping(struct ixgbe_softc *sc)
 
 	/*
 	 * The global RETA is shared by the PF and VFs on 82599 and X540.
-	 * Program all four queue indices while SR-IOV is active so a VF can
-	 * use its full queue grant even when the PF uses fewer queues.
-	 * PSRTYPE.RQPL limits the subset selected within each pool.
+	 * X550-family devices instead use per-pool tables in multiple-RSS
+	 * mode; initialize only the PF pool here because each VF owns and
+	 * programs its own key and redirection table.
+	 * On the shared tables, program all four queue indices while SR-IOV
+	 * is active so a VF can use its full queue grant even when the PF uses
+	 * fewer queues.  PSRTYPE.RQPL limits the subset selected in each pool.
 	 */
 	reta_queues = sc->num_rx_queues;
 #ifdef PCI_IOV
-	if (sc->iov_mode != IXGBE_NO_VM)
+	if (sc->iov_mode != IXGBE_NO_VM && !per_pool_rss)
 		reta_queues = MAX(reta_queues, 4);
 #endif
 
@@ -727,7 +752,12 @@ ixgbe_initialize_rss_mapping(struct ixgbe_softc *sc)
 		reta = reta >> 8;
 		reta = reta | (((uint32_t)queue_id) << 24);
 		if ((i & 3) == 3) {
-			if (i < 128)
+			if (per_pool_rss) {
+#ifdef PCI_IOV
+				IXGBE_WRITE_REG(hw,
+				    IXGBE_PFVFRETA(i >> 2, sc->pool), reta);
+#endif
+			} else if (i < 128)
 				IXGBE_WRITE_REG(hw, IXGBE_RETA(i >> 2), reta);
 			else
 				IXGBE_WRITE_REG(hw,
@@ -737,8 +767,15 @@ ixgbe_initialize_rss_mapping(struct ixgbe_softc *sc)
 	}
 
 	/* Now fill our hash function seeds */
-	for (i = 0; i < 10; i++)
-		IXGBE_WRITE_REG(hw, IXGBE_RSSRK(i), rss_key[i]);
+	for (i = 0; i < 10; i++) {
+		if (per_pool_rss) {
+#ifdef PCI_IOV
+			IXGBE_WRITE_REG(hw, IXGBE_PFVFRSSRK(i, sc->pool),
+			    rss_key[i]);
+#endif
+		} else
+			IXGBE_WRITE_REG(hw, IXGBE_RSSRK(i), rss_key[i]);
+	}
 
 	/* Perform hash on these packet types */
 	if (sc->feat_en & IXGBE_FEATURE_RSS)
@@ -758,26 +795,50 @@ ixgbe_initialize_rss_mapping(struct ixgbe_softc *sc)
 	}
 
 	mrqc = ixgbe_get_mrqc(sc->iov_mode);
+	rss_fields = 0;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_IPV4)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV4;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV4;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_TCP_IPV4)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV4_TCP;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV4_TCP;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_IPV6)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV6;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_TCP_IPV6)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV6_TCP;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6_TCP;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_IPV6_EX)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV6_EX;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6_EX;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_TCP_IPV6_EX)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV6_EX_TCP;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6_EX_TCP;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_UDP_IPV4)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV4_UDP;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV4_UDP;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_UDP_IPV6)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV6_UDP;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6_UDP;
 	if (rss_hash_config & RSS_HASHTYPE_RSS_UDP_IPV6_EX)
-		mrqc |= IXGBE_MRQC_RSS_FIELD_IPV6_EX_UDP;
+		rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6_EX_UDP;
+	if (hw->mac.type == ixgbe_mac_E610) {
+		/* E610 folds IPv6 extension headers into the base selectors. */
+		if (rss_fields & IXGBE_MRQC_RSS_FIELD_IPV6_EX)
+			rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6;
+		if (rss_fields & IXGBE_MRQC_RSS_FIELD_IPV6_EX_TCP)
+			rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6_TCP;
+		if (rss_fields & IXGBE_MRQC_RSS_FIELD_IPV6_EX_UDP)
+			rss_fields |= IXGBE_MRQC_RSS_FIELD_IPV6_UDP;
+		rss_fields &= ~(IXGBE_MRQC_RSS_FIELD_IPV6_EX |
+		    IXGBE_MRQC_RSS_FIELD_IPV6_EX_TCP |
+		    IXGBE_MRQC_RSS_FIELD_IPV6_EX_UDP);
+	}
 
-	IXGBE_WRITE_REG(hw, IXGBE_MRQC, mrqc);
+	if (per_pool_rss) {
+#ifdef PCI_IOV
+		mrqc |= IXGBE_MRQC_MULTIPLE_RSS;
+		IXGBE_WRITE_REG(hw, IXGBE_MRQC, mrqc);
+
+		pfmrqc = IXGBE_MRQC_RSSEN | rss_fields;
+		IXGBE_WRITE_REG(hw, IXGBE_PFVFMRQC(sc->pool), pfmrqc);
+#endif
+	} else {
+		mrqc |= rss_fields;
+		IXGBE_WRITE_REG(hw, IXGBE_MRQC, mrqc);
+	}
 } /* ixgbe_initialize_rss_mapping */
 
 /************************************************************************
@@ -1554,8 +1615,9 @@ ixgbe_nvm_access_ioctl(struct ixgbe_softc *sc, struct ifdrv *ifd)
 	size_t ifd_len = ifd->ifd_len;
 	size_t malloc_len;
 	device_t dev = sc->dev;
+	s32 status;
 	u8 *nvm_buffer;
-	s32 error = 0;
+	int error = 0;
 
 	/*
 	 * ifioctl forwards SIOCxDRVSPEC to iflib without conducting
@@ -1604,10 +1666,10 @@ ixgbe_nvm_access_ioctl(struct ixgbe_softc *sc, struct ifdrv *ifd)
 	    (nvm_buffer + sizeof(struct ixgbe_nvm_access_cmd));
 
 	/* Handle the NVM access request */
-	error = ixgbe_handle_nvm_access(hw, cmd, data);
-	if (error) {
+	status = ixgbe_handle_nvm_access(hw, cmd, data);
+	if (status) {
 		device_printf(dev, "%s: NVM access request failed, error %d\n",
-		    __func__, error);
+		    __func__, status);
 	}
 
 	/* Copy the possibly modified contents of the handled request out */
@@ -1617,6 +1679,20 @@ ixgbe_nvm_access_ioctl(struct ixgbe_softc *sc, struct ifdrv *ifd)
 		    "user space failed, error %d\n",
 		    __func__, error);
 		goto cleanup_free_nvm_buffer;
+	}
+
+	/* Convert private status to an error code for proper ioctl response */
+	switch (status) {
+	case IXGBE_SUCCESS:
+		error = 0;
+		break;
+	case IXGBE_ERR_OUT_OF_RANGE:
+		error = ENOTTY;
+		break;
+	case IXGBE_ERR_PARAM:
+	default:
+		error = EINVAL;
+		break;
 	}
 
 cleanup_free_nvm_buffer:
@@ -6179,6 +6255,7 @@ ixgbe_init_device_features(struct ixgbe_softc *sc)
 		break;
 	case ixgbe_mac_E610:
 		sc->feat_cap |= IXGBE_FEATURE_RECOVERY_MODE;
+		sc->feat_cap |= IXGBE_FEATURE_SRIOV;
 		sc->feat_cap |= IXGBE_FEATURE_DBG_DUMP;
 		sc->feat_cap |= IXGBE_FEATURE_FW_LOGGING;
 		error = ixgbe_get_caps(&sc->hw);

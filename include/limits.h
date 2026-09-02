@@ -29,10 +29,14 @@
  * SUCH DAMAGE.
  */
 
-#ifndef __STDC_VERSION_LIMITS_H__
-#define __STDC_VERSION_LIMITS_H__	202311L
+#ifndef _LIMITS_H_
+#define _LIMITS_H_
 
 #include <sys/cdefs.h>
+
+#if __ISO_C_VISIBLE >= 2023 || __BSD_VISIBLE
+#define __STDC_VERSION_LIMITS_H__	202311L
+#endif
 
 #if __POSIX_VISIBLE
 #define	_POSIX_ARG_MAX		4096
@@ -148,4 +152,4 @@
 #include <sys/syslimits.h>
 #endif
 
-#endif /* !__STDC_VERSION_LIMITS_H__ */
+#endif /* !_LIMITS_H_ */
