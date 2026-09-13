@@ -1838,7 +1838,8 @@ nfsrpc_readrpc(vnode_t vp, struct uio *uiop, struct ucred *cred,
 	mbflag = 0;
 	if (NFSHASRDMA(nmp) && tsiz > 0) {
 		/* Assume the rest of the RPC without data is <= 1024 bytes. */
-		if ((uiop->uio_offset & PAGE_MASK) == 0)
+		if ((uiop->uio_offset & PAGE_MASK) == 0 &&
+		    uiop->uio_segflg == UIO_SYSSPACE)
 			did_rdma = true;
 		else if (tsiz <= PAGE_SIZE - 1024)
 			mbflag = M_PROTO7;
@@ -2054,7 +2055,8 @@ nfsrpc_writerpc(vnode_t vp, struct uio *uiop, int *iomode,
 	*attrflagp = 0;
 	tsiz = uiop->uio_resid;
 	did_rdma = false;
-	if (NFSHASRDMA(nmp) && (uiop->uio_offset & PAGE_MASK) == 0)
+	if (NFSHASRDMA(nmp) && (uiop->uio_offset & PAGE_MASK) == 0 &&
+	    uiop->uio_segflg == UIO_SYSSPACE)
 		did_rdma = true;
 	tmp_off = uiop->uio_offset + tsiz;
 	NFSLOCKMNT(nmp);
@@ -4197,7 +4199,7 @@ nfsrpc_readdirplus(vnode_t vp, struct uio *uiop, nfsuint64 *cookiep,
 		NFSCL_REQSTART(nd, NFSPROC_READDIRPLUS, vp, cred);
 		/* For RDMA, mark that a small rdma_reply is needed. */
 		if (NFSHASRDMA(nmp))
-			nd->nd_mreq->m_flags |= M_PROTO8;
+			nd->nd_mreq->m_flags |= M_PROTO9;
  		NFSM_BUILD(tl, u_int32_t *, 6 * NFSX_UNSIGNED);
 		*tl++ = cookie.lval[0];
 		*tl++ = cookie.lval[1];

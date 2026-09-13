@@ -27,7 +27,7 @@
 .Os
 .Sh NAME
 .Nm glabel
-.Nd "disk labelization control utility"
+.Nd "GEOM provider label utility"
 .Sh SYNOPSIS
 .Nm
 .Cm create
@@ -68,7 +68,14 @@
 .Sh DESCRIPTION
 The
 .Nm
-utility is used for GEOM provider labelization.
+utility is used for GEOM provider label management.
+.Pp
+This manual page will discuss three types of labels.
+Generic GEOM labels set with
+.Nm Em label ,
+filesystem labels recognized by a specific GEOM provider, and
+device metadata identifiers (like GPT IDs or Linux Swap UUIDs).
+.Pp
 A label can be set up on a GEOM provider in two ways:
 .Dq manual
 or
@@ -82,63 +89,49 @@ The
 method uses on-disk metadata to store the label and detect it automatically in
 the future.
 .Pp
-This GEOM class also provides volume label detection for file systems.
-Those labels cannot be set with
-.Nm ,
-but must be set with the appropriate file system utility, e.g.\& for UFS
-the file system label is set with
-.Xr tunefs 8 .
-Currently supported file systems are:
+Note that file system labels (such as those for UFS or FAT)
+and GPT-based identifiers (such as GPT labels or GPT UUIDs)
+are not created by
+.Nm
+but may appear alongside GEOM labels in
+.Pa /dev .
 .Pp
-.Bl -bullet -offset indent -compact
-.It
-UFS1 volume names (directory
-.Pa /dev/ufs/ ) .
-.It
-UFS2 volume names (directory
-.Pa /dev/ufs/ ) .
-.It
-UFS1 file system IDs (directory
-.Pa /dev/ufsid/ ) .
-.It
-UFS2 file system IDs (directory
-.Pa /dev/ufsid/ ) .
-.It
-MSDOSFS (FAT12, FAT16, FAT32) (directory
-.Pa /dev/msdosfs/ ) .
-.It
-CD ISO9660 (directory
-.Pa /dev/iso9660/ ) .
-.It
-EXT2FS (directory
-.Pa /dev/ext2fs/ ) .
-.It
-NTFS (directory
-.Pa /dev/ntfs/ ) .
-.It
-Swap Linux (directory
-.Pa /dev/swaplinux/ ) .
-.El
+GEOM labels are set in the GEOM area of disk metadata.
+Volume labels for file systems are set by the appropriate file system utility,
+often within the filesystem data.
+Device metadata identifiers are set during partitioning.
+All types of labels can be used at the same time,
+and will have appropriate entries under
+.Pa /dev .
 .Pp
-Support for partition metadata is implemented for:
-.Pp
-.Bl -bullet -offset indent -compact
-.It
-GPT labels (directory
-.Pa /dev/gpt/ ) .
-.It
-GPT UUIDs (directory
-.Pa /dev/gptid/ ) .
+If a GEOM provider is able to read and understand the filesystem
+label or device metadata identifier, a suitable entry will be created
+as shown below.
+.Bl -column "UFS1 or UFS2 volume names" "/dev/swaplinux/" "To set volume label"
+.It Em "Filesystem Type" Ta Em "Mount path/<label>" Ta Em "To set volume label"
+.It UFS1 or UFS2 volume names Ta Pa /dev/ufs/ Ta Xr tunefs 8
+.It UFS1 or UFS2 volume ids Ta Pa /dev/ufsid/ Ta Xr newfs 8
+.It MS-DOSFS (FAT12/FAT16/FAT32) Ta Pa /dev/msdosfs/ Ta Xr newfs_msdosfs 8
+.It CD9660 Ta Pa /dev/iso9660/ Ta Xr makefs 8
+.It EXT2FS Ta Pa /dev/ext2fs/ Ta Xr e2label 8
+.It Linux Swap Ta Pa /dev/swaplinux/ Ta Xr mkswap 8
+.It GPT label Ta Pa /dev/gpt/ Ta Xr gpart 8
+.It GPT UUIDs Ta Pa /dev/gptid/ Ta Xr gpart 8
 .El
 .Pp
 Generic disk ID strings are exported as labels in the format
 .Pa /dev/diskid/GEOM_CLASS-ident
 e.g.
 .Pa /dev/diskid/DISK-6QG3Z026  .
+These disk ID labels are not created by
+.Nm ,
+but may coexist with
+.Pa /dev/label/
+labels.
 .Pp
-Generic labels created and managed solely by
-.Nm
-are created in the
+Generic GEOM labels are created and managed solely by
+.Nm .
+Volumes with GEOM labels are mounted in the
 .Pa /dev/label/
 directory.
 Note that generic, automatic labels occupy some space on the device
@@ -199,7 +192,7 @@ The kernel module
 .Pa geom_label.ko
 will be loaded if it is not loaded already.
 .It Cm label
-Set up a label
+Set up a GEOM label
 .Ar name
 for the given provider.
 This is the
@@ -275,11 +268,11 @@ conflict with other classes in complex GEOM topologies.
 .Sh EXIT STATUS
 Exit status is 0 on success, and 1 if the command fails.
 .Sh EXAMPLES
-The following example shows how to set up a label for disk
-.Dq Li da2 ,
+The following example shows how to set up a GEOM label for disk
+.Dq Li ada2 ,
 create a file system on it, and mount it:
 .Bd -literal -offset indent
-glabel label -v usr /dev/da2
+glabel label -v usr /dev/ada2
 newfs /dev/label/usr
 mount /dev/label/usr /usr
 [...]
@@ -288,17 +281,41 @@ glabel stop usr
 glabel unload
 .Ed
 .Pp
-The next example shows how to set up a label for a UFS file system:
+To set the volume label for a UFS file system, use the
+.Fl L
+option with
+.Xr tunefs 8 .
 .Bd -literal -offset indent
-tunefs -L data /dev/da4s1a
+tunefs -L data /dev/ada4s1a
 mount /dev/ufs/data /mnt/data
+.Ed
+.Pp
+To set the volume label for an MS-DOSFS (FAT12/FAT16/FAT32), use the
+.Fl L
+option with
+.Xr newfs_msdos 8 .
+.Bd -literal -offset indent
+newfs_msdos -L MYLABEL /dev/ada0p1
+.Ed
+.Pp
+The label allows the partition to be found at
+.Pa /dev/msdosfs/MYLABEL .
+.Pp
+To set an ISO9660 volume label at filesystem creation time:
+.Bd -literal -offset indent
+makefs -t cd9660 -o volid=MYDISC
 .Ed
 .Sh SEE ALSO
 .Xr geom 4 ,
 .Xr loader.conf 5 ,
+.Xr e2label 8 ,
 .Xr geom 8 ,
+.Xr gpart 8 ,
+.Xr makefs 8 ,
+.Xr mkswap 8 ,
 .Xr mount 8 ,
 .Xr newfs 8 ,
+.Xr newfs_msdos 8 ,
 .Xr sysctl 8 ,
 .Xr tunefs 8 ,
 .Xr umount 8
