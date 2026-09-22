@@ -33,9 +33,6 @@
  */
 
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/bitstring.h>
 #include <sys/kernel.h>
@@ -360,7 +357,7 @@ aq_if_update_admin_status(if_ctx_t ctx)
 	}
 
 	/* A stopped or half-initialized interface has no link. */
-	running = (if_getdrvflags(iflib_get_ifp(ctx)) & IFF_DRV_RUNNING) != 0;
+	running = iflib_is_running(ctx);
 	if (!running || aq_dev->init_failed)
 		link_speed = 0;
 

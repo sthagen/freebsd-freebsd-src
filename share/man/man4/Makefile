@@ -53,6 +53,7 @@ MAN=	aac.4 \
 	${_amdsmn.4} \
 	${_amdsmu.4} \
 	${_amdtemp.4} \
+	${_apple_bce.4} \
 	${_bxe.4} \
 	${_aout.4} \
 	${_apic.4} \
@@ -210,6 +211,7 @@ MAN=	aac.4 \
 	h_ertt.4 \
 	hconf.4 \
 	hcons.4 \
+	hfsts.4 \
 	hgame.4 \
 	hidbus.4 \
 	hidquirk.4 \
@@ -262,6 +264,7 @@ MAN=	aac.4 \
 	${_imcsmb.4} \
 	inet.4 \
 	inet6.4 \
+	intel_pmc.4 \
 	intpm.4 \
 	intro.4 \
 	${_io.4} \
@@ -734,6 +737,7 @@ MLINKS+=em.4 if_em.4 \
 	em.4 lem.4 \
 	em.4 if_lem.4
 MLINKS+=enc.4 if_enc.4
+MLINKS+=enic.4 if_enic.4
 MLINKS+=epair.4 if_epair.4
 MLINKS+=et.4 if_et.4
 MLINKS+=ext2fs.4 ext4fs.4
@@ -756,6 +760,7 @@ MLINKS+=gpio.4 gpiobus.4
 MLINKS+=gpioths.4 dht11.4
 MLINKS+=gpioths.4 dht22.4
 MLINKS+=gre.4 if_gre.4
+MLINKS+=hfsts.4 hfstsfd.4
 MLINKS+=hpet.4 acpi_hpet.4
 MLINKS+=${_hv_netvsc.4} ${_hn.4} \
 	${_hv_netvsc.4} ${_if_hn.4}
@@ -970,6 +975,10 @@ MLINKS+=sume.4 if_sume.4
 _bhyve.4=	bhyve.4
 _vmm.4=		vmm.4
 .endif
+
+.if ${MK_USB} != "no"
+_apple_bce.4=	apple_bce.4
+.endif
 .endif
 
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "aarch64"
@@ -1079,14 +1088,6 @@ MAN+=		mlx5ib.4
 
 .if ${MK_MLX5TOOL} != "no"
 MAN+=		mlx5io.4
-.endif
-
-.if ${MK_TESTS} != "no"
-MANGROUPS+=	ATF
-ATFTOP=		${SRCTOP}/contrib/atf
-.PATH:          ${ATFTOP}/doc
-ATF=		atf-test-case.4
-ATFPACKAGE=	atf
 .endif
 
 .if ${MK_PF} != "no"

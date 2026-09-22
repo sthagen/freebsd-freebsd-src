@@ -1,3 +1,6 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
 .\" Copyright (c) 2004-2005 Pawel Jakub Dawidek <pjd@FreeBSD.org>
 .\" All rights reserved.
 .\"
@@ -22,12 +25,12 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd April 19, 2024
+.Dd September 13, 2026
 .Dt GLABEL 8
 .Os
 .Sh NAME
 .Nm glabel
-.Nd "GEOM provider label utility"
+.Nd GEOM provider disk label utility
 .Sh SYNOPSIS
 .Nm
 .Cm create
@@ -89,7 +92,7 @@ The
 method uses on-disk metadata to store the label and detect it automatically in
 the future.
 .Pp
-Note that file system labels (such as those for UFS or FAT)
+Note that filesystem labels (such as those for UFS or FAT)
 and GPT-based identifiers (such as GPT labels or GPT UUIDs)
 are not created by
 .Nm
@@ -97,7 +100,7 @@ but may appear alongside GEOM labels in
 .Pa /dev .
 .Pp
 GEOM labels are set in the GEOM area of disk metadata.
-Volume labels for file systems are set by the appropriate file system utility,
+Volume labels for filesystems are set by the appropriate filesystem utility,
 often within the filesystem data.
 Device metadata identifiers are set during partitioning.
 All types of labels can be used at the same time,
@@ -106,12 +109,12 @@ and will have appropriate entries under
 .Pp
 If a GEOM provider is able to read and understand the filesystem
 label or device metadata identifier, a suitable entry will be created
-as shown below.
-.Bl -column "UFS1 or UFS2 volume names" "/dev/swaplinux/" "To set volume label"
-.It Em "Filesystem Type" Ta Em "Mount path/<label>" Ta Em "To set volume label"
-.It UFS1 or UFS2 volume names Ta Pa /dev/ufs/ Ta Xr tunefs 8
-.It UFS1 or UFS2 volume ids Ta Pa /dev/ufsid/ Ta Xr newfs 8
-.It MS-DOSFS (FAT12/FAT16/FAT32) Ta Pa /dev/msdosfs/ Ta Xr newfs_msdosfs 8
+as shown below:
+.Bl -column "FFS/UFS volume names" "/dev/swaplinux/" "newfs_msdosfs(8)"
+.It Em "Filesystem Type" Ta Em "Mount Path" Ta Em "Label Utility"
+.It FFS/UFS volume names Ta Pa /dev/ufs/ Ta Xr tunefs 8
+.It FFS/UFS volume IDs Ta Pa /dev/ufsid/ Ta Xr newfs 8
+.It FAT12/FAT16/FAT32 Ta Pa /dev/msdosfs/ Ta Xr newfs_msdosfs 8
 .It CD9660 Ta Pa /dev/iso9660/ Ta Xr makefs 8
 .It EXT2FS Ta Pa /dev/ext2fs/ Ta Xr e2label 8
 .It Linux Swap Ta Pa /dev/swaplinux/ Ta Xr mkswap 8
@@ -134,22 +137,22 @@ Generic GEOM labels are created and managed solely by
 Volumes with GEOM labels are mounted in the
 .Pa /dev/label/
 directory.
-Note that generic, automatic labels occupy some space on the device
-and thus should not be added to a device already containing a file system.
+Note that generic, automatic labels occupy some space on the device and
+thus should not be added to a device already containing a filesystem.
 In particular,
 .Nm
 reserves the last sector of the device to store the label information.
-If the device already contains a file system,
+If the device already contains a filesystem,
 .Nm
-will overwrite the last sector, possibly damaging the file system, and the
-file system may later overwrite the label sector.
-Instead, create a label before initializing the file system, and initialize
-that file system on the device created by
+will overwrite the last sector, possibly damaging the filesystem,
+and the filesystem may later overwrite the label sector.
+Instead, create a label before initializing the filesystem,
+and initialize that filesystem on the device created by
 .Nm
 under the
 .Pa /dev/label/
 directory.
-Then the file system will correctly account for the space occupied by the
+Then the filesystem will correctly account for the space occupied by the
 generic label,
 since the
 .Nm
@@ -169,11 +172,11 @@ and
 .Nm
 requires write access to a device to create, modify, and destroy
 "automatic" labels.
-It will fail to persist changes if they are applied while a file
-system on the device is currently mounted.
-To ensure that modifications are stored across a reboot, the file system
+It will fail to persist changes if they are applied while a filesystem
+on the device is currently mounted.
+To ensure that modifications are stored across a reboot, the filesystem
 needs to be unmounted first.
-If the device holds the system's root file system, entering into
+If the device holds the system's root filesystem, entering into
 single user mode and mounting in read-only mode is required to persist
 the change.
 .Pp
@@ -270,7 +273,7 @@ Exit status is 0 on success, and 1 if the command fails.
 .Sh EXAMPLES
 The following example shows how to set up a GEOM label for disk
 .Dq Li ada2 ,
-create a file system on it, and mount it:
+create a filesystem on it, and mount it:
 .Bd -literal -offset indent
 glabel label -v usr /dev/ada2
 newfs /dev/label/usr
@@ -281,7 +284,7 @@ glabel stop usr
 glabel unload
 .Ed
 .Pp
-To set the volume label for a UFS file system, use the
+To set the volume label for a UFS filesystem, use the
 .Fl L
 option with
 .Xr tunefs 8 .
@@ -290,7 +293,7 @@ tunefs -L data /dev/ada4s1a
 mount /dev/ufs/data /mnt/data
 .Ed
 .Pp
-To set the volume label for an MS-DOSFS (FAT12/FAT16/FAT32), use the
+To set the volume label for a FAT filesystem, use the
 .Fl L
 option with
 .Xr newfs_msdos 8 .

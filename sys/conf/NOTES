@@ -439,6 +439,13 @@ options 	QUEUE_MACRO_DEBUG_TRASH
 options 	SYSCTL_DEBUG
 
 #
+# Compile test-only failure-injection hooks in supporting device drivers.
+# These expose destructive controls below debug.fail_point and are omitted
+# by default.
+#
+options 	DRIVER_FAILPOINTS
+
+#
 # Enable textdump by default, this disables kernel core dumps.
 #
 options 	TEXTDUMP_PREFERRED
@@ -626,6 +633,11 @@ options 	NUM_CORE_FILES=5
 #
 options 	TSLOG
 options 	TSLOGSIZE=262144
+
+#
+# The KLD_DEBUG debug option enables debug printfs in the kernel linker.
+#
+options 	KLD_DEBUG=3
 
 
 #####################################################################

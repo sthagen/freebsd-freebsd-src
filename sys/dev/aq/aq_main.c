@@ -32,9 +32,6 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_rss.h"
@@ -507,12 +504,13 @@ aq_if_attach_post(if_ctx_t ctx)
 	aq_add_stats_sysctls(softc);
 	/* RSS */
 	uint32_t rss_qs = MIN(softc->rx_rings_count, HW_ATL_RSS_INDIRECTION_QUEUES_MAX);
-#ifdef RSS
+	_Static_assert(sizeof(softc->rss_key) == RSS_KEYSIZE,
+	    "RSS key size mismatch");
 	rss_getkey(softc->rss_key);
+#ifdef RSS
 	for (int i = nitems(softc->rss_table); i--;)
 		softc->rss_table[i] = rss_get_indirection_to_bucket(i) % rss_qs;
 #else
-	arc4rand(softc->rss_key, HW_ATL_RSS_HASHKEY_SIZE, 0);
 	for (int i = nitems(softc->rss_table); i--;)
 		softc->rss_table[i] = i % rss_qs;
 #endif
