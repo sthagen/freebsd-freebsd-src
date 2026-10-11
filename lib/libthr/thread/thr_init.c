@@ -118,7 +118,7 @@ size_t		_thr_guard_default;
 size_t		_thr_stack_default = THR_STACK_DEFAULT;
 size_t		_thr_stack_initial = THR_STACK_INITIAL;
 int		_thr_page_size;
-int		_thr_spinloops;
+int		_thr_spinloops = MUTEX_ADAPTIVE_SPINS;
 int		_thr_yieldloops;
 int		_thr_queuefifo = 4;
 int		_gc_count;
@@ -539,6 +539,9 @@ init_private(void)
 				    mint, NULL, NULL);
 			}
 		}
+		env = getenv("LIBPTHREAD_PSHARED_LOCK_DESTROY_IMMEDIATE_GC");
+		if (env)
+			__thr_pshared_destroy_imm_gc = true;
 	}
 	init_once = 1;
 }

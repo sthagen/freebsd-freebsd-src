@@ -399,9 +399,10 @@ try_disk_and_partitions(pdinfo_t *disk, EFI_HANDLE skip_handle)
 }
 
 /*
- * Search the boot device first (i.e. the ESP and any sibling partitions).
- * Per the UEFI specification, filesystems on other devices must not be
- * preferred until the boot device has been fully exhausted.
+ * Search the boot device first (i.e. the device we were loaded from and any
+ * sibling partitions).  Per the UEFI specification, filesystems on other
+ * devices must not be preferred until the boot device has been fully
+ * exhausted.
  */
 static int
 try_boot_device_partitions(void)
@@ -418,6 +419,16 @@ try_boot_device_partitions(void)
 		printf("Trying ESP device: %S\n", text);
 		efi_free_devpath_name(text);
 	}
+
+	/*
+	 * Usually this is the ESP, which holds no root filesystem, and the
+	 * sibling walk below is what finds the root.  But when we have been
+	 * chainloaded (gptboot.efi hands us the partition it selected with
+	 * the GPT bootme attribute), this is the partition we are meant to
+	 * boot from, so it must be tried before its siblings.
+	 */
+	if (try_as_currdev(dp, false))
+		return (0);
 
 	return (try_disk_and_partitions(dp->pd_parent, dp->pd_handle));
 }
@@ -1369,6 +1380,18 @@ main(int argc, CHAR16 *argv[])
 	 */
 	efiblk_memdisk_preload();
 
+	/*
+	 * Parse command line arguments before any operation that may configure
+	 * the network so DHCP overrides are available on the first attempt.
+	 */
+	howto = parse_args(argc, argv);
+
+	/*
+	 * We want to initialize after giving loader args a chance to elect a
+	 * different console than what we autodetect, but we need efinet to
+	 * have initialized before netbooting an initmd has any chance of
+	 * working.
+	 */
 	devinit();
 
 	/*
@@ -1383,7 +1406,6 @@ main(int argc, CHAR16 *argv[])
 	 * args (eg -h) or via the UEFI ConOut variable.
 	 */
 	has_kbd = has_keyboard();
-	howto = parse_args(argc, argv);
 	if (!has_kbd && (howto & RB_PROBE))
 		howto |= RB_SERIAL | RB_MULTIPLE;
 	howto &= ~RB_PROBE;

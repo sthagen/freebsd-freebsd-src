@@ -155,6 +155,12 @@ TAILQ_HEAD(mutex_queue, pthread_mutex);
 #define MAX_DEFER_WAITERS       50
 
 /*
+ * For adaptive mutexes, how many times to spin doing trylock2
+ * before entering the kernel to block
+ */
+#define MUTEX_ADAPTIVE_SPINS	2000
+
+/*
  * Values for pthread_mutex m_ps indicator.
  */
 #define	PMUTEX_INITSTAGE_ALLOC	0
@@ -172,13 +178,17 @@ struct pthread_mutex {
 	int				m_yieldloops;
 	int				m_ps;	/* pshared init stage */
 	/*
+	 * Deliberately put m_qe and m_lock into different cache line to prevent
+	 * false sharing.
+	 */
+	struct pthread_mutex		*m_rb_prev;
+	/*
 	 * Link for all mutexes a thread currently owns, of the same
 	 * prio type.
 	 */
 	TAILQ_ENTRY(pthread_mutex)	m_qe;
 	/* Link for all private mutexes a thread currently owns. */
 	TAILQ_ENTRY(pthread_mutex)	m_pqe;
-	struct pthread_mutex		*m_rb_prev;
 };
 
 struct pthread_mutex_attr {
@@ -780,6 +790,7 @@ extern struct pthread	*_single_thread __hidden;
 extern bool		_thr_after_fork __hidden;
 
 extern int	__thr_new_flags;
+extern bool	__thr_pshared_destroy_imm_gc __hidden;
 
 /*
  * Function prototype definitions.

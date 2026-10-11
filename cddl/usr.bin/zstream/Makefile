@@ -1,3 +1,6 @@
+.include <bsd.init.mk>
+.include <bsd.compiler.mk>
+
 .PATH: ${ZFSTOP}/cmd/zstream
 .PATH: ${ZFSTOP}/man/man8
 
@@ -12,7 +15,7 @@ SRCS= \
 	zstream_byteswap.c \
 	zstream_chain.c \
 	zstream_decompress.c \
-	zstream_drop_record.c \
+	zstream_drop_records.c \
 	zstream_dump.c \
 	zstream_fletcher4.c \
 	zstream_io.c \
@@ -43,6 +46,9 @@ CFLAGS+= \
 	-include ${ZFSTOP}/include/os/freebsd/spl/sys/ccompile.h \
 	-DHAVE_ISSETUGID \
 	-include ${SRCTOP}/sys/modules/zfs/zfs_config.h
+.if ${COMPILER_TYPE} == "clang"
+CFLAGS.zstream_io.c+=	-Wno-error=atomic-alignment
+.endif
 
 LIBADD=	geom m nvpair umem avl spl zfs_core zfs zutil zpool pthread
 

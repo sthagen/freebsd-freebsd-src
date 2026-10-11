@@ -246,8 +246,14 @@ uiomove_object_page(vm_object_t obj, size_t len, struct uio *uio)
 
 found:
 	error = uiomove_fromphys(&m, offset, tlen, uio);
-	if (uio->uio_rw == UIO_WRITE && error == 0)
+	if (uio->uio_rw == UIO_WRITE) {
+		/*
+		 * Even a failed copy may have changed the page's contents,
+		 * because uiomove_fromphys() can copy part of the data before
+		 * it fails.
+		 */
 		vm_page_set_dirty(m);
+	}
 	vm_page_activate(m);
 	vm_page_sunbusy(m);
 
@@ -723,12 +729,7 @@ static int
 shm_partial_page_invalidate(vm_object_t object, vm_pindex_t idx, int base,
     int end)
 {
-	int error;
-
-	error = vm_page_grab_zero_partial(object, idx, base, end);
-	if (error == EIO)
-		VM_OBJECT_WUNLOCK(object);
-	return (error);
+	return (vm_page_grab_zero_partial(object, idx, base, end));
 }
 
 static int
@@ -2093,7 +2094,7 @@ shm_deallocate(struct shmfd *shmfd, off_t *offset, off_t *length, int flags)
 	}
 
 out:
-	VM_OBJECT_WUNLOCK(shmfd->shm_object);
+	VM_OBJECT_WUNLOCK(object);
 	*offset = off;
 	*length = len;
 	return (error);

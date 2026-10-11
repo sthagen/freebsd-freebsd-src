@@ -57,6 +57,7 @@ MAN=	aac.4 \
 	${_bxe.4} \
 	${_aout.4} \
 	${_apic.4} \
+	${_apm.4} \
 	aq.4 \
 	arcmsr.4 \
 	arswitch.4 \
@@ -736,6 +737,7 @@ MLINKS+=em.4 if_em.4 \
 	em.4 if_igbv.4 \
 	em.4 lem.4 \
 	em.4 if_lem.4
+MLINKS+=ena.4 if_ena.4
 MLINKS+=enc.4 if_enc.4
 MLINKS+=enic.4 if_enic.4
 MLINKS+=epair.4 if_epair.4
@@ -795,6 +797,7 @@ MLINKS+=me.4 if_me.4
 MLINKS+=mem.4 kmem.4
 MLINKS+=mfi.4 mfi_linux.4 \
 	mfi.4 mfip.4
+MLINKS+=${_mgb.4} ${_if_mgb.4}
 MLINKS+=mlx5en.4 mce.4 \
 	mlx5en.4 if_mce.4
 MLINKS+=mos.4 if_mos.4
@@ -875,6 +878,7 @@ _acpi_wmi.4=	acpi_wmi.4
 _aesni.4=	aesni.4
 _aout.4=	aout.4
 _apic.4=	apic.4
+_apm.4=		apm.4
 _atrtc.4=	atrtc.4
 _attimer.4=	attimer.4
 _aibs.4=	aibs.4
@@ -910,6 +914,7 @@ _i8254.4=	i8254.4
 _ichwd.4=	ichwd.4
 _if_bxe.4=	if_bxe.4
 _if_hn.4=	if_hn.4
+_if_mgb.4=	if_mgb.4
 _if_nfe.4=	if_nfe.4
 _if_urtw.4=	if_urtw.4
 _if_wpi.4=	if_wpi.4

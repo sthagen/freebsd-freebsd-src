@@ -33,6 +33,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 
@@ -58,8 +59,6 @@ typedef const char *ccharp;
 static int opt_a, opt_b, opt_m, opt_q, opt_s, opt_u, opt_x;
 static ccharp *bindirs, *mandirs, *sourcedirs;
 static char **query;
-
-static const char *sourcepath = PATH_SOURCES;
 
 static char	*colonify(ccharp *);
 static int	 contains(ccharp *, const char *);
@@ -251,7 +250,7 @@ colonify(ccharp *cpp)
 static void
 defaults(void)
 {
-	size_t s;
+	size_t i, s;
 	char *b, buf[BUFSIZ], *cp;
 	const char *path_ports;
 	int nele;
@@ -309,11 +308,12 @@ defaults(void)
 	/* -s defaults to precompiled list, plus subdirs of
 	 * $PORTSDIR. If not set, it defaults to /usr/ports */
 	if (!sourcedirs) {
-		b = strdup(sourcepath);
-		if (b == NULL)
+		s = nitems(sourcepaths);
+		sourcedirs = malloc(s * sizeof(char *));
+		if (sourcedirs == NULL)
 			abort();
-		nele = 0;
-		decolonify(b, &sourcedirs, &nele);
+		for (i = 0; i < s; i++)
+			sourcedirs[i] = sourcepaths[i];
 
 		path_ports = getenv("PORTSDIR");
 		if (path_ports == NULL)
@@ -332,6 +332,15 @@ defaults(void)
 			return;
 		if ((dir = opendir(path_ports)) == NULL)
 			err(EX_OSERR, "opendir(%s)", path_ports);
+
+		/*
+		 * Move the index one element back so if we end up adding some
+		 * port directories, we place them back to back to the
+		 * sourcepaths and the NULL element shows only at the end (used
+		 * later on as end-o-array marker)
+		 */
+		--i;
+
 		while ((dirp = readdir(dir)) != NULL) {
 			/*
 			 * Not everything below path_ports is of
@@ -354,12 +363,8 @@ defaults(void)
 			    (dirp->d_name[0] >= 'A' && dirp->d_name[0] <= 'Z') ||
 			    strcmp(dirp->d_name, "distfiles") == 0)
 				continue;
-			if ((b = malloc(strlen(path_ports) + 1 + dirp->d_namlen + 1))
-			    == NULL)
+			if (asprintf(&b, "%s/%s", path_ports, dirp->d_name) < 0)
 				abort();
-			strcpy(b, path_ports);
-			strcat(b, "/");
-			strcat(b, dirp->d_name);
 			if (stat(b, &sb) == -1 ||
 			    (sb.st_mode & S_IFMT) != S_IFDIR ||
 			    access(b, R_OK | X_OK) != 0) {
@@ -367,11 +372,11 @@ defaults(void)
 				continue;
 			}
 			sourcedirs = realloc(sourcedirs,
-					     (nele + 2) * sizeof(char *));
+					     (i + 2) * sizeof(char *));
 			if (sourcedirs == NULL)
 				abort();
-			sourcedirs[nele++] = b;
-			sourcedirs[nele] = NULL;
+			sourcedirs[i++] = b;
+			sourcedirs[i] = NULL;
 		}
 		closedir(dir);
 	}
@@ -405,7 +410,9 @@ main(int argc, char **argv)
 		errx(EX_DATAERR, "no directories to search");
 
 	if (opt_m) {
-		setenv("MANPATH", colonify(mandirs), 1);
+		char *mp = colonify(mandirs);
+		setenv("MANPATH", mp, 1);
+		free(mp);
 		if ((i = regcomp(&re, MANWHEREISMATCH, REG_EXTENDED)) != 0) {
 			regerror(i, &re, buf, BUFSIZ - 1);
 			errx(EX_UNAVAILABLE, "regcomp(%s) failed: %s",
@@ -446,12 +453,8 @@ main(int argc, char **argv)
 			 */
 			unusual = unusual | NO_BIN_FOUND;
 			for (dp = bindirs; *dp != NULL; dp++) {
-				cp = malloc(strlen(*dp) + 1 + s + 1);
-				if (cp == NULL)
+				if (asprintf(&cp, "%s/%s", *dp, name) < 0)
 					abort();
-				strcpy(cp, *dp);
-				strcat(cp, "/");
-				strcat(cp, name);
 				if (stat(cp, &sb) == 0 &&
 				    (sb.st_mode & S_IFMT) == S_IFREG &&
 				    (sb.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
@@ -559,12 +562,8 @@ main(int argc, char **argv)
 			 */
 			unusual = unusual | NO_SRC_FOUND;
 			for (dp = sourcedirs; *dp != NULL; dp++) {
-				cp = malloc(strlen(*dp) + 1 + s + 1);
-				if (cp == NULL)
+				if (asprintf(&cp, "%s/%s", *dp, name) < 0)
 					abort();
-				strcpy(cp, *dp);
-				strcat(cp, "/");
-				strcat(cp, name);
 				if (stat(cp, &sb) == 0 &&
 				    (sb.st_mode & S_IFMT) == S_IFDIR) {
 					unusual = unusual & ~NO_SRC_FOUND;
@@ -615,12 +614,8 @@ main(int argc, char **argv)
 				for (dp = sourcedirs;
 				     (src == NULL || opt_a) && *dp != NULL;
 				     dp++) {
-					cp2 = malloc(strlen(*dp) + 9);
-					if (cp2 == NULL)
+					if (asprintf(&cp2, "^%s/[^/]+/", *dp) < 0)
 						abort();
-					strcpy(cp2, "^");
-					strcat(cp2, *dp);
-					strcat(cp2, "/[^/]+/");
 					if ((i = regcomp(&re2, cp2,
 							 REG_EXTENDED|REG_NOSUB))
 					    != 0) {

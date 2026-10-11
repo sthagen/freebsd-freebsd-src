@@ -27,6 +27,8 @@
  * SUCH DAMAGE.
  */
 
+#include "opt_inet.h"
+#include "opt_inet6.h"
 #include "opt_kern_tls.h"
 
 #include <sys/param.h>
@@ -637,6 +639,7 @@ sendfile_getsock(struct thread *td, int s, struct file **sock_fp,
 int
 sendfile_wait_generic(struct socket *so, off_t need, int *space)
 {
+	u_int lowat, newlowat;
 	int error;
 
 	MPASS(need > 0);
@@ -657,9 +660,15 @@ sendfile_wait_generic(struct socket *so, off_t need, int *space)
 	 */
 	error = 0;
 	SOCK_SENDBUF_LOCK(so);
+	lowat = so->so_snd.sb_lowat;
 	if (so->so_snd.sb_flags & SB_AUTOLOWAT) {
-		if (so->so_snd.sb_lowat < so->so_snd.sb_hiwat / 2)
-			so->so_snd.sb_lowat = so->so_snd.sb_hiwat / 2;
+#if defined(INET) || defined(INET6)
+		newlowat = min(V_tcp_sendspace, so->so_snd.sb_hiwat) / 2;
+#else
+		newlowat = so->so_snd.sb_hiwat / 2;
+#endif
+		if (so->so_snd.sb_lowat < newlowat)
+			so->so_snd.sb_lowat = newlowat;
 		if (so->so_snd.sb_lowat < PAGE_SIZE &&
 		    so->so_snd.sb_hiwat >= PAGE_SIZE)
 			so->so_snd.sb_lowat = PAGE_SIZE;
@@ -679,7 +688,7 @@ retry_space:
 	}
 
 	*space = sbspace(&so->so_snd);
-	if (*space < need && (*space <= 0 || *space < so->so_snd.sb_lowat)) {
+	if (*space < need && (*space <= 0 || *space < lowat)) {
 		if (so->so_state & SS_NBIO) {
 			error = EAGAIN;
 			goto done;

@@ -363,7 +363,7 @@ nvme_ctrlr_enable(struct nvme_controller *ctrlr)
 	uint32_t	csts;
 	uint32_t	aqa;
 	uint32_t	qsize;
-	uint8_t		en, rdy;
+	uint8_t		css, en, rdy;
 	int		err;
 
 	cc = nvme_mmio_read_4(ctrlr, cc);
@@ -400,7 +400,16 @@ nvme_ctrlr_enable(struct nvme_controller *ctrlr)
 	/* Initialization values for CC */
 	cc = 0;
 	cc |= NVMEF(NVME_CC_REG_EN, 1);
-	cc |= NVMEF(NVME_CC_REG_CSS, 0);
+	/* No CSI support; prefer the NVM command set when present. */
+	css = NVME_CAP_HI_CSS(ctrlr->cap_hi);
+	if ((css & NVME_CAP_CSS_NVM) != 0)
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_NVM);
+	else if ((css & NVME_CAP_CSS_NOIOCSS) != 0)
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_ADMIN);
+	else if ((css & NVME_CAP_CSS_IOCSS) != 0)
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_IOCSS);
+	else
+		cc |= NVMEF(NVME_CC_REG_CSS, NVME_CC_CSS_NVM);
 	cc |= NVMEF(NVME_CC_REG_AMS, 0);
 	cc |= NVMEF(NVME_CC_REG_SHN, 0);
 	cc |= NVMEF(NVME_CC_REG_IOSQES, ctrlr->io_sqes);
@@ -603,7 +612,7 @@ nvme_ctrlr_create_qpairs(struct nvme_controller *ctrlr)
 	return (0);
 }
 
-static int
+int
 nvme_ctrlr_delete_qpairs(struct nvme_controller *ctrlr)
 {
 	struct nvme_completion_poll_status	status;
@@ -876,6 +885,54 @@ out:
 	free(data, M_NVME);
 }
 
+/* XXX revisit the ordering if the clock ever comes up earlier. */
+static void
+nvme_ctrlr_set_timestamp(struct nvme_controller *ctrlr)
+{
+	struct nvme_completion_poll_status status;
+	struct nvme_timestamp_data *ts;
+	struct timespec now;
+	uint64_t ms;
+	int i;
+
+	ts = malloc(sizeof(*ts), M_NVME, M_WAITOK | M_ZERO);
+	getnanotime(&now);
+	ms = (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+	for (i = 0; i < nitems(ts->tstmp); i++)
+		ts->tstmp[i] = (ms >> (i * 8)) & 0xff;
+
+	status.done = 0;
+	nvme_ctrlr_cmd_set_feature(ctrlr, NVME_FEAT_TIMESTAMP, 0, 0, 0, 0, 0,
+	    ts, sizeof(*ts), nvme_completion_poll_cb, &status);
+	nvme_completion_poll(&status);
+	if (nvme_completion_is_error(&status.cpl) && bootverbose)
+		nvme_printf(ctrlr, "failed to set the timestamp\n");
+	free(ts, M_NVME);
+}
+
+static void
+nvme_ctrlr_timestamp_mountroot(void *arg)
+{
+	struct nvme_controller *ctrlr = arg;
+
+	if (ctrlr->is_failed || ctrlr->is_failed_admin || ctrlr->is_dying)
+		return;
+	nvme_ctrlr_set_timestamp(ctrlr);
+}
+
+static void
+nvme_ctrlr_configure_timestamp(struct nvme_controller *ctrlr)
+{
+	if (NVMEV(NVME_CTRLR_DATA_ONCS_TIMESTAMP, ctrlr->cdata.oncs) == 0)
+		return;
+
+	/* The mountroot handler registered at attach does the initial set. */
+	if (!root_mounted())
+		return;
+
+	nvme_ctrlr_set_timestamp(ctrlr);
+}
+
 static void
 nvme_ctrlr_configure_int_coalescing(struct nvme_controller *ctrlr)
 {
@@ -1144,6 +1201,7 @@ nvme_ctrlr_start(void *ctrlr_arg, bool resetting)
 	nvme_ctrlr_configure_aer(ctrlr);
 	nvme_ctrlr_configure_apst(ctrlr);
 	nvme_ctrlr_configure_int_coalescing(ctrlr);
+	nvme_ctrlr_configure_timestamp(ctrlr);
 
 	for (i = 0; i < ctrlr->num_io_queues; i++)
 		nvme_io_qpair_enable(&ctrlr->ioq[i]);
@@ -1184,6 +1242,12 @@ nvme_ctrlr_start_config_hook(void *arg)
 		    ctrlr->cdata.nn > nvme_ctrlr_num_namespaces(ctrlr))
 			nvme_printf(ctrlr,
 			    "ignoring Apple-internal namespaces above NSID 1\n");
+
+		if (!root_mounted() &&
+		    NVMEV(NVME_CTRLR_DATA_ONCS_TIMESTAMP, ctrlr->cdata.oncs) != 0)
+			ctrlr->timestamp_tag = EVENTHANDLER_REGISTER(mountroot,
+			    nvme_ctrlr_timestamp_mountroot, ctrlr,
+			    EVENTHANDLER_PRI_ANY);
 
 		ctrlr->is_initialized = true;
 		child = device_add_child(ctrlr->dev, NULL, DEVICE_UNIT_ANY);
@@ -1291,7 +1355,7 @@ nvme_ctrlr_aer_task(void *arg, int pending)
 	case NVME_LOG_ERROR: {
 		struct nvme_error_information_entry *err =
 		    (struct nvme_error_information_entry *)aer->log_page_buffer;
-		for (int i = 0; i < (aer->ctrlr->cdata.elpe + 1); i++)
+		for (uint32_t i = 0; i < aer->log_page_size / sizeof(*err); i++)
 			nvme_error_information_entry_swapbytes(err++);
 		break;
 	}
@@ -1405,9 +1469,12 @@ nvme_ctrlr_shared_handler(void *arg)
 {
 	struct nvme_controller *ctrlr = arg;
 
-	nvme_mmio_write_4(ctrlr, intms, 1);
+	/* INTMS/INTMC are undefined when configured for MSI-X. */
+	if (!ctrlr->is_msix)
+		nvme_mmio_write_4(ctrlr, intms, 1);
 	nvme_ctrlr_poll(ctrlr);
-	nvme_mmio_write_4(ctrlr, intmc, 1);
+	if (!ctrlr->is_msix)
+		nvme_mmio_write_4(ctrlr, intmc, 1);
 }
 
 #define NVME_MAX_PAGES  (int)(1024 / sizeof(vm_page_t))
@@ -1838,6 +1905,11 @@ nvme_ctrlr_destruct(struct nvme_controller *ctrlr, device_t dev)
 	bool	gone;
 
 	ctrlr->is_dying = true;
+
+	if (ctrlr->timestamp_tag != NULL) {
+		EVENTHANDLER_DEREGISTER(mountroot, ctrlr->timestamp_tag);
+		ctrlr->timestamp_tag = NULL;
+	}
 
 	if (ctrlr->resource == NULL)
 		goto nores;

@@ -369,8 +369,6 @@ struct pfctl_state_key {
 };
 
 struct pfctl_state {
-	TAILQ_ENTRY(pfctl_state)	entry;
-
 	uint64_t		 id;
 	uint32_t		 creatorid;
 	uint8_t		 	 direction;
@@ -407,11 +405,6 @@ struct pfctl_state {
 	sa_family_t		 rt_af;
 	uint8_t			 src_node_flags;
 	struct pfctl_rule	 created_by_rule;
-};
-
-TAILQ_HEAD(pfctl_statelist, pfctl_state);
-struct pfctl_states {
-	struct pfctl_statelist	states;
 };
 
 enum pfctl_syncookies_mode {
@@ -508,11 +501,7 @@ struct pfctl_state_filter {
 	bool			include_rule;
 };
 typedef int (*pfctl_get_state_fn)(struct pfctl_state *, void *);
-int pfctl_get_states_iter(pfctl_get_state_fn f, void *arg);
 int pfctl_get_states_h(struct pfctl_handle *h, struct pfctl_state_filter *filter, pfctl_get_state_fn f, void *arg);
-int pfctl_get_filtered_states_iter(struct pfctl_state_filter *filter, pfctl_get_state_fn f, void *arg);
-int	pfctl_get_states(int dev, struct pfctl_states *states);
-void	pfctl_free_states(struct pfctl_states *states);
 int	pfctl_clear_states(int dev, const struct pfctl_kill *kill,
 	    unsigned int *killed);
 int	pfctl_kill_states(int dev, const struct pfctl_kill *kill,
@@ -601,6 +590,9 @@ int	pfctl_clr_astats(struct pfctl_handle *h, const struct pfr_table *tbl,
 	    struct pfr_addr *addr, int size, int *nzero, int flags);
 int	pfctl_test_addrs(struct pfctl_handle *h, const struct pfr_table *tbl,
 	    struct pfr_addr *addr, int size, int *nmatch, int flags);
+int	pfctl_ina_define(struct pfctl_handle *h, struct pfr_table *tbl,
+	    struct pfr_addr *addr, int size, int *nadd, int *naddr,
+	    int ticket, int flags);
 
 struct pfctl_limit_rate {
 	unsigned int	 limit;
@@ -700,5 +692,9 @@ struct pfctl_source_clear {
 	struct pf_addr	 addr;
 };
 int	pfctl_source_clear(struct pfctl_handle *h, struct pfctl_source_clear *);
+
+int	pfctl_flush_fingerprints(struct pfctl_handle *h);
+int	pfctl_get_fingerprint(struct pfctl_handle *h, int idx, struct pf_osfp_ioctl *fp);
+int	pfctl_add_fingerprint(struct pfctl_handle *h, struct pf_osfp_ioctl *fp);
 
 #endif

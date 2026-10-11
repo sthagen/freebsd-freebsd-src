@@ -214,13 +214,12 @@ contrib/openzfs/module/os/freebsd/zfs/zfs_ctldir.c		optional zfs compile-with "$
 contrib/openzfs/module/os/freebsd/zfs/zfs_debug.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zfs_dir.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zfs_file_os.c		optional zfs compile-with "${ZFS_C}"
-contrib/openzfs/module/os/freebsd/zfs/zfs_ioctl_compat.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zfs_ioctl_os.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zfs_racct.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zfs_vfsops.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zfs_vnops_os.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zfs_znode_os.c		optional zfs compile-with "${ZFS_C}"
-contrib/openzfs/module/os/freebsd/zfs/zio_crypt.c		optional zfs compile-with "${ZFS_C}"
+contrib/openzfs/module/os/freebsd/zfs/zio_crypt_os.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/os/freebsd/zfs/zvol_os.c		optional zfs compile-with "${ZFS_C}"
 
 #zfs checksums / zcommon
@@ -378,6 +377,7 @@ contrib/openzfs/module/zfs/zil.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/zfs/zio.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/zfs/zio_checksum.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/zfs/zio_compress.c		optional zfs compile-with "${ZFS_C}"
+contrib/openzfs/module/zfs/zio_crypt.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/zfs/zio_inject.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/zfs/zle.c		optional zfs compile-with "${ZFS_C}"
 contrib/openzfs/module/zfs/zrlock.c		optional zfs compile-with "${ZFS_C}"
@@ -1332,6 +1332,9 @@ dev/bnxt/bnxt_en/bnxt_ulp.c		optional bnxt iflib pci compile-with "${BNXT_C}"
 dev/bnxt/bnxt_en/bnxt_log.c		optional bnxt iflib pci compile-with "${BNXT_C}"
 dev/bnxt/bnxt_en/bnxt_log_data.c	optional bnxt iflib pci compile-with "${BNXT_C}"
 dev/bnxt/bnxt_en/bnxt_coredump.c	optional bnxt iflib pci compile-with "${BNXT_C}"
+dev/bnxt/bnxt_en/bnxt_ptp.c		optional bnxt iflib pci compile-with "${BNXT_C}"
+dev/bnxt/bnxt_en/bnxt_mpc.c		optional bnxt iflib pci compile-with "${BNXT_C}"
+dev/bnxt/bnxt_en/bnxt_ktls.c		optional bnxt iflib pci compile-with "${BNXT_C}"
 dev/bnxt/bnxt_en/if_bnxt.c		optional bnxt iflib pci compile-with "${BNXT_C}"
 dev/bwi/bwimac.c		optional bwi
 dev/bwi/bwiphy.c		optional bwi
@@ -1633,6 +1636,8 @@ dev/dwc/if_dwc.c		optional dwc fdt
 dev/dwc/if_dwc_if.m		optional dwc fdt
 dev/dwc/dwc1000_core.c		optional dwc fdt
 dev/dwc/dwc1000_dma.c		optional dwc fdt
+dev/dwc/dwc4_core.c		optional dwc fdt
+dev/dwc/dwc4_dma.c		optional dwc fdt
 dev/efidev/efidev.c		optional efirt efidev
 dev/efidev/efirt.c		optional efirt
 dev/efidev/efirtc.c		optional efirt efirtc
@@ -2375,10 +2380,6 @@ dev/jme/if_jme.c		optional jme pci
 dev/kbd/kbd.c			optional atkbd | pckbd | sc | ukbd | vt | hkbd
 dev/kbdmux/kbdmux.c		optional kbdmux
 dev/ksyms/ksyms.c		optional ksyms
-dev/le/am7990.c			optional le
-dev/le/am79900.c		optional le
-dev/le/if_le_pci.c		optional le pci
-dev/le/lance.c			optional le
 dev/led/led.c			standard
 dev/lge/if_lge.c		optional lge
 dev/liquidio/base/cn23xx_pf_device.c		optional lio	\
@@ -5417,7 +5418,7 @@ vm/vm_pager.c			standard
 vm/vm_phys.c			standard
 vm/vm_radix.c			standard
 vm/vm_reserv.c			standard
-vm/vm_swapout.c			optional racct
+vm/vm_swapout.c			standard
 vm/vm_unix.c			standard
 vm/vnode_pager.c		standard
 xen/features.c			optional xenhvm

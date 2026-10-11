@@ -103,6 +103,11 @@ struct sbuf;
 #define NVME_CAP_HI_REG_CSS_MASK			(0xff)
 #define NVME_CAP_HI_REG_CSS_NVM_SHIFT			(5)
 #define NVME_CAP_HI_REG_CSS_NVM_MASK			(0x1)
+
+/* CAP.CSS command set support flags */
+#define NVME_CAP_CSS_NVM				(0x01)
+#define NVME_CAP_CSS_IOCSS				(0x40)
+#define NVME_CAP_CSS_NOIOCSS				(0x80)
 #define NVME_CAP_HI_REG_BPS_SHIFT			(13)
 #define NVME_CAP_HI_REG_BPS_MASK			(0x1)
 #define NVME_CAP_HI_REG_CPS_SHIFT			(14)
@@ -152,6 +157,10 @@ struct sbuf;
 #define NVME_CC_REG_EN_MASK				(0x1)
 #define NVME_CC_REG_CSS_SHIFT				(4)
 #define NVME_CC_REG_CSS_MASK				(0x7)
+/* CC.CSS values */
+#define NVME_CC_CSS_NVM					(0x0)
+#define NVME_CC_CSS_IOCSS				(0x6)
+#define NVME_CC_CSS_ADMIN				(0x7)
 #define NVME_CC_REG_MPS_SHIFT				(7)
 #define NVME_CC_REG_MPS_MASK				(0xF)
 #define NVME_CC_REG_AMS_SHIFT				(11)
@@ -369,6 +378,31 @@ enum nvme_psdt {
 #define NVME_CTRLR_DATA_CTRATT_UUID_LIST_SHIFT		(9)
 #define NVME_CTRLR_DATA_CTRATT_UUID_LIST_MASK		(0x1)
 
+/** BPCAP - boot partition capabilities */
+/* RPMB boot partition write protection support */
+#define NVME_CTRLR_DATA_BPCAP_RPMBBPWPS_SHIFT		(0)
+#define NVME_CTRLR_DATA_BPCAP_RPMBBPWPS_MASK		(0x3)
+/* supports Set Features boot partition write protection */
+#define NVME_CTRLR_DATA_BPCAP_SFBPWPS_SHIFT		(2)
+#define NVME_CTRLR_DATA_BPCAP_SFBPWPS_MASK		(0x1)
+
+#define NVME_CTRLR_DATA_BPCAP_RPMBBPWPS_UNSPEC		(0x0)
+#define NVME_CTRLR_DATA_BPCAP_RPMBBPWPS_NO		(0x1)
+#define NVME_CTRLR_DATA_BPCAP_RPMBBPWPS_YES		(0x2)
+
+/** CHSI - CXL HDM support information */
+/* supports CXL host managed device memory */
+#define NVME_CTRLR_DATA_CHSI_CHS_SHIFT			(0)
+#define NVME_CTRLR_DATA_CHSI_CHS_MASK			(0x1)
+
+/** PLSI - power loss signaling information */
+/* supports power loss signaling with emergency power fail */
+#define NVME_CTRLR_DATA_PLSI_PLSEPF_SHIFT		(0)
+#define NVME_CTRLR_DATA_PLSI_PLSEPF_MASK		(0x1)
+/* supports power loss signaling with forced quiescence */
+#define NVME_CTRLR_DATA_PLSI_PLSFQ_SHIFT		(1)
+#define NVME_CTRLR_DATA_PLSI_PLSFQ_MASK			(0x1)
+
 /** OACS - optional admin command support */
 /* supports security send/receive commands */
 #define NVME_CTRLR_DATA_OACS_SECURITY_SHIFT		(0)
@@ -559,6 +593,11 @@ enum nvme_psdt {
 #define NVME_NS_DATA_FLBAS_FORMAT_MASK			(0xF)
 #define NVME_NS_DATA_FLBAS_EXTENDED_SHIFT		(4)
 #define NVME_NS_DATA_FLBAS_EXTENDED_MASK		(0x1)
+#define NVME_NS_DATA_FLBAS_FORMAT_MSB_SHIFT		(5)
+#define NVME_NS_DATA_FLBAS_FORMAT_MSB_MASK		(0x3)
+/* FIDXL width, and the format count below which FIDXU is reserved. */
+#define NVME_NS_DATA_FLBAS_FIDXL_BITS			(4)
+#define NVME_NS_DATA_LBAF_BASE_COUNT			(16)
 
 /** metadata capabilities */
 /* metadata can be transferred as part of data prp list */
@@ -1136,6 +1175,25 @@ enum nvme_activate_action {
 	NVME_AA_ACTIVATE			= 0x2,
 };
 
+/* Timestamp - Data Structure for Set Features / Get Features */
+struct nvme_timestamp_data {
+	uint8_t		tstmp[6];	/* milliseconds since 1970-01-01 UTC */
+	uint8_t		tstmps;		/* attributes, get features only */
+	uint8_t		rsvd7;
+} __packed;
+
+_Static_assert(sizeof(struct nvme_timestamp_data) == 8,
+    "bad size for nvme_timestamp_data");
+
+/** Timestamp attributes */
+#define NVME_TIMESTAMP_TSTMPS_SYNCH_SHIFT		(0)
+#define NVME_TIMESTAMP_TSTMPS_SYNCH_MASK		(0x1)
+#define NVME_TIMESTAMP_TSTMPS_ORIGIN_SHIFT		(1)
+#define NVME_TIMESTAMP_TSTMPS_ORIGIN_MASK		(0x7)
+
+#define NVME_TIMESTAMP_ORIGIN_RESET			(0x0)
+#define NVME_TIMESTAMP_ORIGIN_SET_FEATURES		(0x1)
+
 struct nvme_power_state {
 	/** Maximum Power */
 	uint16_t	mp;			/* Maximum Power */
@@ -1216,7 +1274,19 @@ struct nvme_controller_data {
 	/** Read Recovery Levels Supported */
 	uint16_t		rrls;
 
-	uint8_t			reserved1[9];
+	/** Boot Partition Capabilities */
+	uint8_t			bpcap;
+
+	/** CXL HDM Support Information */
+	uint8_t			chsi;
+
+	/** NVM Subsystem Shutdown Latency */
+	uint32_t		nssl;
+
+	uint8_t			reserved1[2];
+
+	/** Power Loss Signaling Information */
+	uint8_t			plsi;
 
 	/** Controller Type */
 	uint8_t			cntrltype;
@@ -2083,6 +2153,19 @@ extern int nvme_use_nvd;
 
 #endif /* _KERNEL */
 
+static inline uint8_t
+nvme_ns_data_format_index(const struct nvme_namespace_data *nsdata)
+{
+	uint8_t fmt;
+
+	fmt = NVMEV(NVME_NS_DATA_FLBAS_FORMAT, nsdata->flbas);
+	/* FIDXU is valid only above the base count; NLBAF is 0's based. */
+	if (nsdata->nlbaf + 1 > NVME_NS_DATA_LBAF_BASE_COUNT)
+		fmt |= NVMEV(NVME_NS_DATA_FLBAS_FORMAT_MSB, nsdata->flbas) <<
+		    NVME_NS_DATA_FLBAS_FIDXL_BITS;
+	return (fmt);
+}
+
 /* Endianess conversion functions for NVMe structs */
 static inline
 void	nvme_completion_swapbytes(struct nvme_completion *s __unused)
@@ -2126,6 +2209,7 @@ void	nvme_controller_data_swapbytes(struct nvme_controller_data *s __unused)
 	s->oaes = le32toh(s->oaes);
 	s->ctratt = le32toh(s->ctratt);
 	s->rrls = le16toh(s->rrls);
+	s->nssl = le32toh(s->nssl);
 	s->crdt1 = le16toh(s->crdt1);
 	s->crdt2 = le16toh(s->crdt2);
 	s->crdt3 = le16toh(s->crdt3);

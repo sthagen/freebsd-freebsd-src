@@ -28,11 +28,12 @@
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
+#include <sys/cpuset.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/rman.h>
-#include <sys/cpuset.h>
+#include <sys/smp.h>
 
 #include <machine/intr.h>
 #include <machine/resource.h>
@@ -254,14 +255,24 @@ madt_process_gicc(ACPI_SUBTABLE_HEADER *entry, void *arg)
 {
 	struct process_gicc_args *gicc_args;
 	ACPI_MADT_GENERIC_INTERRUPT *gicc;
+	struct pcpu *pcpu;
+	int cpu;
 
 	gicc_args = (struct process_gicc_args *)arg;
 
 	if (entry->Type == ACPI_MADT_TYPE_GENERIC_INTERRUPT) {
 		gicc = (ACPI_MADT_GENERIC_INTERRUPT *)entry;
 
-		if (gicc->IrsId == gicc_args->irs_id)
-			CPU_SET(gicc->CpuInterfaceNumber, &gicc_args->cpuset);
+		if (gicc->IrsId == gicc_args->irs_id) {
+			/* Find CPU ID from gicc->ArmMpidr */
+			CPU_FOREACH(cpu) {
+				pcpu = pcpu_find(cpu);
+				if (pcpu->pc_mpidr != gicc->ArmMpidr)
+					continue;
+				CPU_SET(pcpu->pc_cpuid, &gicc_args->cpuset);
+				break;
+			}
+		}
 	}
 }
 
@@ -363,7 +374,13 @@ gic_v5_acpi_attach(device_t dev)
 	if (sc->gic_pic == NULL)
 		panic("%s: could not register PIC", device_get_nameunit(dev));
 
-	intr_ipi_pic_register(dev, 0);
+#ifdef SMP
+	err = intr_ipi_pic_register(dev, 0);
+	if (err != 0) {
+		device_printf(dev, "Could not register for IPIs\n");
+		goto count_error;
+	}
+#endif
 
 	err = intr_pic_claim_root(dev, ACPI_INTR_XREF, gicv5_intr, sc,
 	    INTR_ROOT_IRQ);
